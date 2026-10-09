@@ -21,8 +21,8 @@ export type Setup =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; openIssues: number }
 
-// One open issue in this repo assigned to the token's owner.
-export type MyIssue = {
+// One open issue in this repo, as the overview lists it.
+export type IssueRow = {
   number: number
   title: string
   milestone: string | null
@@ -34,11 +34,19 @@ export type MyIssue = {
   body: string
 }
 
-// The list of your issues, once setup passes.
-export type Mine =
+// An unassigned issue found blocked on the way to Next: `by` names its open
+// dependencies.
+export type BlockedRow = { issue: IssueRow; by: number[] }
+
+// What's next, once setup passes. In progress: open issues assigned to you.
+// Next: the oldest open, unassigned issue with no open dependencies. Queue:
+// the unassigned issues after Next, oldest first, not checked for
+// dependencies. Blocked: the ones skipped on the way to Next. Issues
+// assigned only to others are left out.
+export type Overview =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'ok'; issues: MyIssue[] }
+  | { kind: 'ok'; inProgress: IssueRow[]; next: IssueRow | null; queue: IssueRow[]; blocked: BlockedRow[] }
   | { kind: 'error'; message: string }
 
 // An issue or pull request another one points at, with its state: open,
@@ -86,8 +94,8 @@ declare module 'claude-code' {
       version: string | null
       token: TokenSource
       setup: Setup
-      mine: Mine
-      // The issue open in the detail view, by number; null shows the list.
+      overview: Overview
+      // The issue open in the detail view, by number; null shows What's next.
       picked: number | null
       detail: Detail
       // Icons chosen in this session, before a reload brings the setting.

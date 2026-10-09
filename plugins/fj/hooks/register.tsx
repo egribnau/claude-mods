@@ -1,8 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Detail, Mine, MyIssue, Repo, Setup, TokenSource } from '../types'
+import type { Detail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
 import { day, dueText, duration, inkOn, loadIssue, wrap } from './issue'
+import { pickNext, waitingText } from './next'
 
 const PANE = 'fj'
 const CONFIGURE = '/plugin configure fj@egribnau-mods'
@@ -12,7 +13,7 @@ const repo = atom({ plugin: 'fj', key: 'repo' } as const, null)
 const version = atom({ plugin: 'fj', key: 'version' } as const, null)
 const token = atom({ plugin: 'fj', key: 'token' } as const, 'none')
 const setup = atom({ plugin: 'fj', key: 'setup' } as const, { kind: 'checking' })
-const mine = atom({ plugin: 'fj', key: 'mine' } as const, { kind: 'idle' })
+const overview = atom({ plugin: 'fj', key: 'overview' } as const, { kind: 'idle' })
 const picked = atom({ plugin: 'fj', key: 'picked' } as const, null)
 const detail = atom({ plugin: 'fj', key: 'detail' } as const, { kind: 'idle' })
 const iconsChosen = atom({ plugin: 'fj', key: 'icons' } as const, null)
@@ -149,7 +150,7 @@ function supported(version: string): boolean {
   return major > 1 || (major === 1 && (minor ?? 0) >= 19)
 }
 
-type RawFound = {
+type RawListed = {
   number: number
   title: string
   created_at: string
@@ -157,43 +158,69 @@ type RawFound = {
   body: string | null
   milestone: { title: string } | null
   labels: { name: string }[] | null
-  repository: { full_name: string }
 }
+type RawFound = RawListed & { repository: { full_name: string } }
+type RawOpen = RawListed & { assignee?: { login: string } | null; assignees?: { login: string }[] | null }
 
-// Your open issues in this repo, oldest first. Forgejo's search covers every
-// repo the token sees, so it is narrowed to this one here.
-async function loadMine($: EngineInterface, r: Repo) {
-  await update($, mine, (): Mine => ({ kind: 'loading' }))
+const toRow = (i: RawListed): IssueRow => ({
+  number: i.number,
+  title: i.title,
+  milestone: i.milestone?.title ?? null,
+  labels: (i.labels ?? []).map(l => l.name),
+  created: i.created_at,
+  url: i.html_url,
+  body: i.body ?? '',
+})
+
+const oldestFirst = (a: IssueRow, b: IssueRow) => a.created.localeCompare(b.created)
+
+// What's next in this repo. Two lists: your open issues, from Forgejo's
+// search (it covers every repo the token sees, so it is narrowed to this
+// one), and all open issues in the repo. Yours are In progress; of the rest,
+// the unassigned ones are walked oldest first for Next.
+async function loadOverview($: EngineInterface, r: Repo) {
+  await update($, overview, (): Overview => ({ kind: 'loading' }))
   const tok = await readToken($)
-  try {
-    const found: RawFound[] = []
+  const headers = { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' }
+  // Every page of a list, 50 at a time.
+  const all = async <T,>(url: string, what: string): Promise<T[]> => {
+    const found: T[] = []
     for (let page = 1; ; page++) {
-      const res = await $.http.fetch(
-        `${base(r)}/repos/issues/search?assigned=true&state=open&type=issues&limit=50&page=${page}`,
-        { method: 'GET', headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' } },
-      )
-      if (!res.ok) throw new Error(`your issues: HTTP ${res.status}`)
-      const batch = JSON.parse(res.text) as RawFound[]
+      const res = await $.http.fetch(`${url}&limit=50&page=${page}`, { method: 'GET', headers })
+      if (!res.ok) throw new Error(`${what}: HTTP ${res.status}`)
+      const batch = JSON.parse(res.text) as T[]
       found.push(...batch)
       if (batch.length < 50) break
     }
-    const issues: MyIssue[] = found
-      .filter(i => i.repository.full_name === slug(r))
-      .sort((a, b) => a.created_at.localeCompare(b.created_at))
-      .map(i => ({
-        number: i.number,
-        title: i.title,
-        milestone: i.milestone?.title ?? null,
-        labels: (i.labels ?? []).map(l => l.name),
-        created: i.created_at,
-        url: i.html_url,
-        body: i.body ?? '',
-      }))
-    await update($, mine, (): Mine => ({ kind: 'ok', issues }))
-    // An open issue that is no longer yours, or closed, closes: the list shows.
-    await update($, picked, n => (n !== null && issues.some(i => i.number === n) ? n : null))
+    return found
+  }
+  try {
+    const found = await all<RawFound>(`${base(r)}/repos/issues/search?assigned=true&state=open&type=issues`, 'your issues')
+    const inProgress = found.filter(i => i.repository.full_name === slug(r)).map(toRow).sort(oldestFirst)
+    const open = await all<RawOpen>(`${base(r)}/repos/${slug(r)}/issues?state=open&type=issues`, 'open issues')
+    const yours = new Set(inProgress.map(i => i.number))
+    const free = open
+      .filter(i => !yours.has(i.number) && !i.assignee && (i.assignees ?? []).length === 0)
+      .map(toRow)
+      .sort(oldestFirst)
+    const { next, queue, blocked } = await pickNext(free, async n => {
+      const res = await $.http
+        .fetch(`${base(r)}/repos/${slug(r)}/issues/${n}/dependencies`, { method: 'GET', headers })
+        .catch(() => null)
+      if (!res?.ok) return null
+      try {
+        const deps = JSON.parse(res.text) as { number: number; state: string }[]
+        return deps.filter(d => d.state === 'open').map(d => d.number)
+      } catch {
+        return null
+      }
+    })
+    await update($, overview, (): Overview => ({ kind: 'ok', inProgress, next, queue, blocked }))
+    // An issue that is closed, or now someone else's, closes: What's next shows.
+    const shown = new Set([...inProgress, ...free].map(i => i.number))
+    await update($, picked, n => (n !== null && shown.has(n) ? n : null))
   } catch (err) {
-    await update($, mine, (): Mine => ({ kind: 'error', message: message(err) }))
+    await update($, overview, (): Overview => ({ kind: 'error', message: message(err) }))
   }
 }
 
@@ -239,17 +266,17 @@ async function openIssue($: EngineInterface, n: number | null) {
   await loadDetail($, r, n)
 }
 
-// Checks setup and, once it passes, loads your issues and, when one is open,
-// that issue again.
+// Checks setup and, once it passes, loads What's next and, when an issue is
+// open, that issue again.
 async function refresh($: EngineInterface): Promise<Repo | null> {
   const r = await check($)
   if (r && (await read($, setup)).kind === 'ready') {
-    await loadMine($, r)
+    await loadOverview($, r)
     const n = await read($, picked)
     if (n !== null) await loadDetail($, r, n)
     else await update($, detail, (): Detail => ({ kind: 'idle' }))
   } else {
-    await update($, mine, (): Mine => ({ kind: 'idle' }))
+    await update($, overview, (): Overview => ({ kind: 'idle' }))
   }
   return r
 }
@@ -272,7 +299,7 @@ function fit(text: string, width: number): string {
 }
 
 // What a draft is made from: the issue, and its last comment when known.
-type DraftSource = Pick<MyIssue, 'number' | 'title' | 'url' | 'body'> & {
+type DraftSource = Pick<IssueRow, 'number' | 'title' | 'url' | 'body'> & {
   lastComment?: { author: string; body: string } | null
 }
 
@@ -415,11 +442,14 @@ export const register: Register = (on, options) => {
     const r = await refresh($)
     if (r) await $.ui.open({ id: PANE, title: `fj · ${slug(r)}` })
     const s = await read($, setup)
-    const m = await read($, mine)
+    const o = await read($, overview)
     if (s.kind !== 'ready' || !r) return { text: 'fj needs setting up: see its pane.' }
-    if (m.kind !== 'ok') return { text: `fj is ready for ${slug(r)}, but could not load your issues.` }
-    const n = m.issues.length
-    return { text: `fj is ready for ${slug(r)}: ${n} ${n === 1 ? 'issue' : 'issues'} assigned to you.` }
+    if (o.kind !== 'ok') return { text: `fj is ready for ${slug(r)}, but could not load its issues.` }
+    if (o.inProgress.length + o.queue.length + o.blocked.length === 0 && !o.next) {
+      return { text: `fj is ready for ${slug(r)}: no open issues.` }
+    }
+    const then = o.next ? `next is #${o.next.number}` : o.blocked.length > 0 ? 'nothing ready' : 'nothing else open'
+    return { text: `fj is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}.` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -428,7 +458,7 @@ export const register: Register = (on, options) => {
     const v = await read($, version)
     const from = await read($, token)
     const s = await read($, setup)
-    const m = await read($, mine)
+    const m = await read($, overview)
     // The pane's full height, so the last rows sit at its bottom.
     const height = e.props.scroll.bodyRows
     const icons = (await read($, iconsChosen)) ?? configIcons
@@ -441,6 +471,14 @@ export const register: Register = (on, options) => {
         {text}
       </Text>
     )
+    // A dim line that keeps its row when the list or detail under it is too
+    // long for the pane: that is cut at its bottom, never by squeezing this out.
+    const fixedLine = (key: string, text: string) => (
+      <Box key={key} flexShrink={0}>
+        {line(`${key}-text`, text, { dimColor: true })}
+      </Box>
+    )
+    const rule = (key: string, name: string) => fixedLine(key, `── ${name} `.padEnd(columns, '─'))
     // A wrapped paragraph in which `a command` shows as a command and an
     // https:// address as a link; the backticks themselves are not drawn.
     const para = (key: string, text: string, props: Record<string, unknown> = {}) => {
@@ -602,10 +640,9 @@ export const register: Register = (on, options) => {
     if (s.kind === 'ready' && r && open !== null) {
       const d = await read($, detail)
       const now = await $.clock.now()
-      const rule = (key: string, name: string) => line(key, `── ${name} `.padEnd(columns, '─'), { dimColor: true })
       const top = (
         <Box key="title" height={1} flexShrink={0}>
-          <Button key="back" label={say(ICON.back, '← My issues')} hotkey="b" onPress={() => openIssue($, null)} />
+          <Button key="back" label={say(ICON.back, "← What's next")} hotkey="b" onPress={() => openIssue($, null)} />
           <Box flexGrow={1} />
           <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => refresh($)} />
         </Box>
@@ -752,34 +789,43 @@ export const register: Register = (on, options) => {
           <Box key="detail" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
             {body}
           </Box>
-          {line('where', `${r.host}/${slug(r)}`, { dimColor: true })}
+          {fixedLine('where', `${r.host}/${slug(r)}`)}
         </Box>
       )
     }
 
-    // Once setup passes and the list has loaded or is loading, the list.
+    // Once setup passes and What's next has loaded or is loading, What's next.
     if (s.kind === 'ready' && r && m.kind !== 'idle' && m.kind !== 'error') {
       const now = await $.clock.now()
       const rows: RenderChildren[] = []
-      if (m.kind === 'loading') rows.push(line('loading', 'Loading your issues…', { dimColor: true }))
-      if (m.kind === 'ok' && m.issues.length === 0) {
-        rows.push(para('none', `No open issues assigned to you in ${slug(r)}.`, { dimColor: true }))
-      }
+      if (m.kind === 'loading') rows.push(line('loading', 'Loading the issues…', { dimColor: true }))
       if (m.kind === 'ok') {
+        const later = [...m.queue, ...m.blocked.map(b => b.issue)]
+        const listed = [...m.inProgress, ...(m.next ? [m.next] : []), ...later]
         // The number column: the longest number and a space, so titles and
         // the lines under them line up whatever the numbers.
-        const numWidth = Math.max(...m.issues.map(i => `#${i.number}`.length), 0) + 1
-        const indent = ' '.repeat(numWidth)
-        for (const i of m.issues) {
-          const facts = [i.milestone ?? 'no milestone', i.labels.join(', '), `opened ${age(i.created, now)} ago`]
-            .filter(Boolean)
-            .join(' · ')
-          rows.push(
-            <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={1}>
-              <Button key={`pick-${i.number}`} plain onPress={() => openIssue($, i.number)}>
-                <Text wrap="truncate-end">
-                  <Text color="suggestion">{`#${i.number}`.padEnd(numWidth)}</Text>
-                  {fit(i.title, columns - numWidth)}
+        const numWidth = Math.max(...listed.map(i => `#${i.number}`.length), 0) + 1
+        // Each row starts with its section's mark, so it says where it
+        // belongs with its heading scrolled away; the Queue's is blank.
+        const MARK = { progress: ['● ', 'success'], next: ['▸ ', 'warning'], queue: ['  ', undefined], blocked: ['⊘ ', 'inactive'] } as const
+        const indent = ' '.repeat(2 + numWidth)
+        // One issue: its mark, number and title, a button that opens its
+        // detail, and under it what is known about it. Next is bold and has
+        // the focus first, so Enter opens it at once.
+        const row = (i: IssueRow, section: keyof typeof MARK, blockedBy?: number[]) => {
+          const facts = blockedBy
+            ? [`blocked by ${blockedBy.map(n => `#${n}`).join(', ')}`, `opened ${age(i.created, now)} ago`].join(' · ')
+            : [i.milestone, i.labels.join(', '), `opened ${age(i.created, now)} ago`].filter(Boolean).join(' · ')
+          const dim = section === 'blocked'
+          const next = section === 'next'
+          const [mark, markColor] = MARK[section]
+          return (
+            <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={1} flexShrink={0}>
+              <Button key={`pick-${i.number}`} plain autoFocus={next || undefined} onPress={() => openIssue($, i.number)}>
+                <Text wrap="truncate-end" bold={next} dimColor={dim}>
+                  <Text color={markColor}>{mark}</Text>
+                  <Text color={dim ? 'inactive' : 'suggestion'}>{`#${i.number}`.padEnd(numWidth)}</Text>
+                  {fit(i.title, columns - 2 - numWidth)}
                 </Text>
               </Button>
               <Box>
@@ -788,19 +834,52 @@ export const register: Register = (on, options) => {
                   {facts}
                 </Text>
               </Box>
-            </Box>,
+            </Box>
           )
         }
+        if (listed.length === 0) {
+          rows.push(para('none', `No open issues in ${slug(r)}.`, { dimColor: true }))
+        } else {
+          rows.push(rule('in-progress', `In progress (${m.inProgress.length})`))
+          if (m.inProgress.length === 0) {
+            rows.push(
+              <Box key="no-progress" flexDirection="column" marginBottom={1} flexShrink={0}>
+                {para('no-progress-text', 'Nothing in progress. Assign yourself an issue to start.', { dimColor: true })}
+              </Box>,
+            )
+          }
+          for (const i of m.inProgress) rows.push(row(i, 'progress'))
+          rows.push(rule('next', 'Next'))
+          if (m.next) rows.push(row(m.next, 'next'))
+          else if (m.blocked.length > 0) {
+            rows.push(
+              <Box key="nothing-ready" flexDirection="column" marginBottom={1} flexShrink={0}>
+                {line('nothing-ready-title', 'Nothing ready', { bold: true })}
+                {para('nothing-ready-why', waitingText(m.blocked), { dimColor: true })}
+              </Box>,
+            )
+          } else {
+            rows.push(
+              <Box key="nothing-else" flexDirection="column" marginBottom={1} flexShrink={0}>
+                {para('nothing-else-text', 'No other open issues.', { dimColor: true })}
+              </Box>,
+            )
+          }
+          if (later.length > 0) {
+            rows.push(rule('queue', `Queue (${later.length})`))
+            for (const i of m.queue) rows.push(row(i, 'queue'))
+            for (const b of m.blocked) rows.push(row(b.issue, 'blocked', b.by))
+          }
+        }
       }
-      const count = m.kind === 'ok' ? ` (${m.issues.length})` : ''
       return (
         <Box flexDirection="column" height={height}>
-          {heading(`My issues${count}`, { label: 'Refresh' })}
+          {heading("What's next", { label: 'Refresh' })}
           <Box key="gap" height={1} flexShrink={0} />
           <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
             {rows}
           </Box>
-          {line('where', `${r.host}/${slug(r)}`, { dimColor: true })}
+          {fixedLine('where', `${r.host}/${slug(r)}`)}
         </Box>
       )
     }
@@ -808,7 +887,7 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column" height={height}>
         <Box key="setup" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-          {m.kind === 'error' && para('mine-error', `Could not load your issues: ${m.message}.`, { color: 'error' })}
+          {m.kind === 'error' && para('overview-error', `Could not load the issues: ${m.message}.`, { color: 'error' })}
           {s.kind === 'ready'
             ? heading('Forgejo for Claude is ready!', { label: 'Refresh' })
             : heading('Set up Forgejo for Claude')}

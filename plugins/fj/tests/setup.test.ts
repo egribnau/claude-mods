@@ -90,6 +90,7 @@ function world(on: On, w: World) {
       const status = w.search ?? 200
       return reply(status, status === 200 ? (page === '1' ? (w.issues ?? []) : []) : {})
     }
+    if (new URL(e.url).pathname.endsWith('/repos/boats/radar/issues')) return reply(200, [])
     const status = w.repo ?? 200
     return reply(status, status === 200 ? { full_name: 'boats/radar', open_issues_count: 7 } : {})
   })
@@ -114,7 +115,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       { url: 'https://git.example.org/api/v1/repos/boats/radar', auth: 'token secret' },
     ])
     // With the list failing to load, the ready screen shows, with why.
-    expect(all[0]).toBe('Could not load your issues: your issues: HTTP 500.')
+    expect(all[0]).toBe('Could not load the issues: your issues: HTTP 500.')
     expect(all[1]).toBe('Forgejo for Claude is ready!')
     expect(all).toEqual(
       expect.arrayContaining([
@@ -125,7 +126,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       ]),
     )
     expect(all).not.toContain('What to do')
-    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar, but could not load your issues.' }))
+    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar, but could not load its issues.' }))
   })
 }
 
@@ -352,6 +353,6 @@ test('r checks again and the list follows once setup passes', TOKEN, async ($, o
   await ui.press({ key: 'refresh' })
 
   const all = await texts(ui)
-  expect(all[0]).toBe('My issues (0)')
-  expect(all).toContain('No open issues assigned to you in boats/radar.')
+  expect(all[0]).toBe("What's next")
+  expect(all).toContain('No open issues in boats/radar.')
 })

@@ -69,11 +69,13 @@ function world(on: On, set: { key: string; value: unknown }[] = [], offered = tr
         ? url.searchParams.get('page') === '1'
           ? [ISSUE]
           : []
-        : url.pathname.endsWith('/issues/29')
-          ? ISSUE
-          : url.pathname.includes('/issues/29/')
-            ? []
-            : { full_name: 'boats/radar', open_issues_count: 1 }
+        : url.pathname.endsWith('/repos/boats/radar/issues')
+          ? []
+          : url.pathname.endsWith('/issues/29')
+            ? ISSUE
+            : url.pathname.includes('/issues/29/')
+              ? []
+              : { full_name: 'boats/radar', open_issues_count: 1 }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
   })
   on('config.list', () => ({ value: offered ? [row('ask')] : [] }))
@@ -98,7 +100,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(all[0]).toBe('Forgejo for Claude is ready!')
     expect(all).toContain('One choice: icons on buttons')
     expect(all).toContain(`[ ${ICON.refresh} ]  [ ${ICON.work} ]  [ ${ICON.open} ]  [ ${ICON.back} ]`)
-    expect(all).not.toContain('My issues (1)')
+    expect(all).not.toContain("What's next")
     await expect(ui.find({ key: 'use-icons' })).resolves.toBeDefined()
     await expect(ui.find({ key: 'keep-text' })).resolves.toBeDefined()
   })
@@ -112,7 +114,7 @@ test('Use icons saves the setting and the buttons become icons', { options: { to
   await ui.press({ key: 'use-icons' })
 
   expect(set).toEqual([{ key: 'fj@egribnau-mods.icons', value: 'icons' }])
-  expect((await texts(ui))[0]).toBe('My issues (1)')
+  expect((await texts(ui))[0]).toBe("What's next")
   expect(await label(ui, 'refresh')).toBe(ICON.refresh)
 
   await ui.press({ key: 'pick-29' })
@@ -148,7 +150,7 @@ test('once chosen in settings, it is not asked again', { options: { token: 'secr
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect((await texts(ui))[0]).toBe('My issues (1)')
+  expect((await texts(ui))[0]).toBe("What's next")
   expect(await label(ui, 'refresh')).toBe(ICON.refresh)
 })
 

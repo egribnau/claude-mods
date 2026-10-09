@@ -115,6 +115,8 @@ function world(on: On, answers: Answers, asked: string[] = [], opened: string[] 
     })
     if (url.pathname.endsWith('/version')) return reply(200, { version: '16.0.5' })
     if (url.pathname.endsWith('/issues/search')) return reply(200, url.searchParams.get('page') === '1' ? [LISTED] : [])
+    // The repo's open issues: only #29, which is yours.
+    if (url.pathname.endsWith('/repos/boats/radar/issues')) return reply(200, [])
     const path = e.url.startsWith(API) ? e.url.slice(API.length) : ''
     if (path === '') return reply(200, { full_name: 'boats/radar', open_issues_count: 9 })
     return path in answers ? reply(200, answers[path]) : reply(404, { message: 'not found' })
@@ -139,7 +141,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await opened($, surface)
     const all = await texts(ui)
 
-    expect(all).not.toContain('My issues (1)')
+    expect(all).not.toContain("What's next")
     for (const want of [
       '#29 Docs: config keys',
       'open · v0.3.0 (due 31 Oct) · 2 comments',
@@ -219,13 +221,13 @@ test('a long description is cut, with how much more there is', TOKEN, async ($, 
   expect(all.some(t => /^… \d+ more lines$/.test(t))).toBe(true)
 })
 
-test('My issues goes back to the list', TOKEN, async ($, on) => {
+test("What's next goes back to the overview", TOKEN, async ($, on) => {
   world(on, FULL)
   const ui = await opened($)
   await ui.press({ key: 'back' })
 
   const all = await texts(ui)
-  expect(all[0]).toBe('My issues (1)')
+  expect(all[0]).toBe("What's next")
   await expect(ui.find({ key: 'work' })).resolves.toBeUndefined()
 })
 
