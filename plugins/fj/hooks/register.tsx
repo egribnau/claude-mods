@@ -110,6 +110,7 @@ type RawFound = {
   title: string
   created_at: string
   html_url: string
+  body: string | null
   milestone: { title: string } | null
   labels: { name: string }[] | null
   repository: { full_name: string }
@@ -142,6 +143,7 @@ async function loadMine($: EngineInterface, r: Repo) {
         labels: (i.labels ?? []).map(l => l.name),
         created: i.created_at,
         url: i.html_url,
+        body: i.body ?? '',
       }))
     await update($, mine, (): Mine => ({ kind: 'ok', issues }))
     // A selected issue that is no longer yours, or closed, is unselected.
@@ -174,6 +176,24 @@ async function openUrl($: EngineInterface, url: string) {
 function fit(text: string, width: number): string {
   if (width <= 0) return ''
   return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`
+}
+
+// The prompt fj drafts for an issue: what to do, where the issue is, and
+// what it says.
+function draftFor(i: MyIssue): string {
+  const head = `Work on #${i.number}: ${i.title}\n${i.url}`
+  const body = i.body.trim()
+  return body ? `${head}\n\n${body}` : head
+}
+
+// Puts the draft for `i` in the prompt box, never sending it: over an empty
+// box, under what is typed there otherwise.
+async function workOn($: EngineInterface, i: MyIssue) {
+  const draft = draftFor(i)
+  const box = await $.prompt.read()
+  const typed = box.text.trim() !== ''
+  const done = await $.prompt.fill(typed ? { text: `\n\n${draft}`, mode: 'append' } : { text: draft, mode: 'replace' })
+  if (!done.isFilled) $.ui.toast(`Could not put #${i.number} in the prompt`)
 }
 
 // How long ago `iso` was, as a short age: 5m, 3h, 6d, 3w, 4mo, 2y.
@@ -436,6 +456,8 @@ export const register: Register = (on, options) => {
               {/* The actions take the blank line under the issue, so selecting moves nothing. */}
               {isPicked && (
                 <Box key="actions" height={1} paddingLeft={numWidth}>
+                  <Button key="work" label="Work on this" hotkey="w" onPress={() => workOn($, i)} />
+                  <Text>{'  '}</Text>
                   <Button key="open" label="Open in browser" hotkey="o" onPress={() => openUrl($, i.url)} />
                 </Box>
               )}

@@ -28,6 +28,8 @@ export type MyIssue = {
   created: string
   // The issue's page on Forgejo.
   url: string
+  // Its description, as written.
+  body: string
 }
 
 // The list of your issues, once setup passes.

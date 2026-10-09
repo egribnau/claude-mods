@@ -32,6 +32,7 @@ function issue(number: number, repo: string, created: string, extra: { milestone
     state: 'open',
     created_at: created,
     html_url: `https://git.example.org/${repo}/issues/${number}`,
+    body: `What #${number} is about.\n\nMore detail.`,
     milestone: extra.milestone ? { title: extra.milestone } : null,
     labels: (extra.labels ?? []).map(name => ({ name })),
     repository: { full_name: repo },
@@ -262,4 +263,67 @@ test('selecting moves nothing: the actions take the blank line under the issue',
   expect(actions.props).toEqual(expect.objectContaining({ height: 1 }))
   expect(actions.props.marginTop).toBeUndefined()
   expect((await row(37)).props.marginBottom).toBe(1)
+})
+
+type Filled = { text: string; mode?: string }[]
+
+function promptBox(on: On, typed: string, filled: Filled, take = true) {
+  on('prompt.read', () => ({ value: { text: typed, cursor: typed.length } }))
+  on('prompt.fill', (_$, e) => {
+    filled.push({ text: e.text, mode: e.mode })
+    return take ? { isFilled: true } : { isFilled: false, refusal: 'dialog' as const }
+  })
+}
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`Work on this drafts a prompt from the issue on ${surface}`, TOKEN, async ($, on) => {
+    const filled: Filled = []
+    world(on, [[issue(29, 'boats/radar', '2026-09-18T09:00:00Z')]])
+    promptBox(on, '', filled)
+
+    await $.command.run(RUN)
+    const ui = await $.ui.mount({ ...PANE, surface })
+    await ui.press({ key: 'pick-29' })
+    const work = (await ui.find({ key: 'work' })) as unknown as { props: Record<string, unknown> }
+    expect(work.props).toEqual(expect.objectContaining({ label: 'Work on this', hotkey: 'w' }))
+    await ui.press({ key: 'work' })
+
+    expect(filled).toEqual([
+      {
+        text: 'Work on #29: Issue 29\nhttps://git.example.org/boats/radar/issues/29\n\nWhat #29 is about.\n\nMore detail.',
+        mode: 'replace',
+      },
+    ])
+  })
+}
+
+test('Work on this goes under what is typed already', TOKEN, async ($, on) => {
+  const filled: Filled = []
+  world(on, [[{ ...issue(29, 'boats/radar', '2026-09-18T09:00:00Z'), body: '  ' }]])
+  promptBox(on, 'also check the README', filled)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'pick-29' })
+  await ui.press({ key: 'work' })
+
+  // An empty body adds nothing after the link.
+  expect(filled).toEqual([{ text: '\n\nWork on #29: Issue 29\nhttps://git.example.org/boats/radar/issues/29', mode: 'append' }])
+})
+
+test('says so when the prompt cannot take the draft', TOKEN, async ($, on) => {
+  const toasts: string[] = []
+  world(on, [[issue(29, 'boats/radar', '2026-09-18T09:00:00Z')]])
+  promptBox(on, '', [], false)
+  on('ui.toast', (_$, e) => {
+    toasts.push(String(e.text))
+    return { value: undefined }
+  })
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'pick-29' })
+  await ui.press({ key: 'work' })
+
+  expect(toasts).toEqual(['Could not put #29 in the prompt'])
 })
