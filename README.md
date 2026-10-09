@@ -30,26 +30,16 @@ plugins/fj/                          a mod: a hooks module, no skills
 
 | Mod | What it does | Requires |
 | --- | --- | --- |
-| `fj` | `/fj [milestone]` opens a pane on the Forgejo repo behind the current directory's `origin`: your open issues ranked as in progress (the current branch's issue, issues with an open PR), next and queue (the selected milestone first, then due date, then age), a milestone's epics with their children, and the selected issue with an Assign to me button | a Forgejo access token; Forgejo or Gitea |
+| `fj` | `/fj` opens a docked pane on the Forgejo repo behind the current directory's `origin`. Starting fresh from 0.13.0: for now it shows the repo, where the token comes from and whether Forgejo answers. The prototype is tagged `fj-prototype`. | a Forgejo access token; Forgejo or Gitea |
 
-`fj` settings, in `/config` under `fj`, except Token, which `/config` does not list: set it with
-`/plugin configure fj@egribnau-mods`. `/fj` says which token it uses (`token: setting`, `FORGEJO_TOKEN` or `none`).
-The pane's **Settings** button (`s`) edits the same settings, shows which of them the session
-offers, and where the token comes from.
-
-- **Epic label**: the label that marks an issue as an epic. Default `epic`.
-- **Children heading**: the `## ` heading above an epic's checklist of child issues. Default `Children`.
-- **Token**: a Forgejo access token, kept in secure storage. Left empty, the plugin reads
-  `FORGEJO_TOKEN` from the environment — which the desktop app does not pass on from
-  `~/.zshenv`, so set it here to use `/fj` there.
-- **Login**: your Forgejo login, for Assign to me. Left empty, the plugin asks Forgejo, which needs a token with the `read:user` scope.
-
-Reading needs a token with `read:issue`; assigning needs `write:issue`.
+`fj` has one setting, **Token**: a Forgejo access token, kept in secure storage. `/config` does not
+list it: set it with `/plugin configure fj@egribnau-mods`. Left empty, the plugin reads
+`FORGEJO_TOKEN` from the environment, which the desktop app does not pass on from `~/.zshenv`.
+The pane says which one it uses. Reading needs a token with `read:issue`.
 
 `fj` is for the terminal. A Code session in the Claude desktop app loads it but gets none of its
 settings: `/config` lists no rows for it there, the secret Token stays empty, and the app does not
-pass on `FORGEJO_TOKEN` from `~/.zshenv`. The pane's Settings screen shows this per session.
-The desktop app also runs the copy `claude plugin update fj@egribnau-mods` made from the last commit, not
+pass on `FORGEJO_TOKEN` from `~/.zshenv`. The desktop app also runs the copy `claude plugin update fj@egribnau-mods` made from the last commit, not
 the working folder.
 
 To edit `fj` and see each change without a push, add this working copy as a marketplace

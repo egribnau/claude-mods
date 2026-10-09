@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "fj",
-      "description": "Forgejo in a pane: your issues ranked as in progress, next and queue, a milestone's epics and their children, and the selected issue's detail",
+      "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
       "source": "./plugins/fj",
       "category": "productivity"
     }
