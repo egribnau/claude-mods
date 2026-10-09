@@ -108,10 +108,9 @@ for (const surface of ['terminal', 'desktop'] as const) {
         '✓ Forgejo 12.0.1 at git.example.org',
         '✓ Token   from the Token setting',
         '✓ Access  7 open issues',
-        'Ready.',
       ]),
     )
-    expect(all[0]).toBe('Forgejo for Claude'
+    expect(all[0]).toBe('Forgejo for Claude is ready!'
     )
     expect(all).not.toContain('What to do')
     expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar.' }))
@@ -288,6 +287,6 @@ test('r checks again and the guide goes once it passes', TOKEN, async ($, on) =>
   await ui.press({ key: 'refresh' })
 
   const all = await texts(ui)
-  expect(all).toContain('Ready.')
+  expect(all[0]).toBe('Forgejo for Claude is ready!')
   expect(all).not.toContain('What to do')
 })

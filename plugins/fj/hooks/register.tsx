@@ -278,9 +278,7 @@ export const register: Register = (on, options) => {
     })
 
     const body: RenderChildren[] = []
-    if (s.kind === 'ready') {
-      body.push(line('ready', 'Ready.', { color: 'success', bold: true }))
-    } else if (s.kind !== 'checking') {
+    if (s.kind !== 'ready' && s.kind !== 'checking') {
       const about = intro(s, r, tokenText)
       if (about) body.push(para('intro', about), <Box key="gap-intro" height={1} />)
       const actions = todo(s, r, tokenText)
@@ -292,7 +290,9 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
-        {line('title', s.kind === 'ready' ? 'Forgejo for Claude' : 'Set up Forgejo for Claude', { bold: true })}
+        {s.kind === 'ready'
+          ? line('title', 'Forgejo for Claude is ready!', { bold: true, color: 'success' })
+          : line('title', 'Set up Forgejo for Claude', { bold: true })}
         {steps}
         <Box key="gap" height={1} />
         {body}
