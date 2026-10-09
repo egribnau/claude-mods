@@ -7,9 +7,9 @@
   },
   "plugins": [
     {
-      "name": "fj",
-      "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
-      "source": "./plugins/fj",
+      "name": "whats-next",
+      "description": "Your issues and what's next, from Forgejo or GitLab, in a docked pane",
+      "source": "./plugins/whats-next",
       "category": "productivity"
     }
   ]

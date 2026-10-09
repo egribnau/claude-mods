@@ -10,12 +10,12 @@ export type TokenSource = { setting: 'Forgejo tokens' | 'GitLab.com token' | 'Pr
 export type Setup =
   | { kind: 'checking' }
   // `dir`: where the session runs, `~` for the home folder. `origin`: the
-  // remote's URL when it names no host fj can read.
+  // remote's URL when it names no host What's Next can read.
   | { kind: 'no-repo'; reason: 'not-git' | 'no-origin' | 'bad-origin'; dir: string; origin?: string }
   // `reason`: the host answered, but not as Forgejo or Gitea; it did not
-  // answer at all; or it runs a version older than fj needs.
+  // answer at all; or it runs a version older than What's Next needs.
   | { kind: 'not-forgejo'; reason: 'other' | 'no-answer' | 'too-old'; detail: string }
-  // A forge fj knows but does not show issues of yet.
+  // A forge What's Next knows but does not show issues of yet.
   | { kind: 'unsupported'; forge: 'github' }
   | { kind: 'no-token' }
   | { kind: 'token-refused' }
@@ -25,7 +25,7 @@ export type Setup =
   | { kind: 'no-scope'; missing?: 'read:user' | 'read_api' }
   | { kind: 'not-found' }
   | { kind: 'error'; message: string }
-  // `login`: who the token belongs to, from /user. `actions`: whether fj may
+  // `login`: who the token belongs to, from /user. `actions`: whether What's Next may
   // assign and close.
   // `features`: whether the repo tracks time, has dependencies and has
   // epics; what it turned off is not asked for, and the pane leaves it out.
@@ -33,10 +33,10 @@ export type Setup =
 
 export type Features = { time: boolean; deps: boolean; epics: boolean }
 
-// Whether fj may assign and close issues: the token needs write:issue (on
+// Whether What's Next may assign and close issues: the token needs write:issue (on
 // GitLab api) and you push rights on the repo (on GitLab Reporter or
 // higher, `role`). `unknown`: the forge would not list the token's scopes,
-// so the buttons show and the forge has the last word. `later`: fj cannot
+// so the buttons show and the forge has the last word. `later`: What's Next cannot
 // assign or close on this forge yet.
 export type Actions = { kind: 'ok' } | { kind: 'read-only'; reason: 'scope' | 'push' | 'role' | 'later' } | { kind: 'unknown' }
 
@@ -151,7 +151,7 @@ export type Picker = { options: { value: string; label: string; due?: string | n
 
 declare module 'claude-code' {
   interface PluginState {
-    fj: {
+    'whats-next': {
       repo: Repo | null
       // The forge at the repo's host, with its version, as the pane shows it.
       version: string | null
@@ -163,7 +163,7 @@ declare module 'claude-code' {
       picked: StateFamily<number | null>
       detail: StateFamily<Detail>
       epics: Epics
-      // fj's panes that are open, by id: with more than one the engine draws
+      // What's Next's panes that are open, by id: with more than one the engine draws
       // tabs naming them, so the title rows leave the names out.
       panesOpen: string[]
       // The milestone the person picked; null starts on the picker's first.

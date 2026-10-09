@@ -2,11 +2,11 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 const PANE = {
-  plugin: 'fj',
+  plugin: 'whats-next',
   component: 'Pane',
-  requestId: 'fj',
+  requestId: 'next',
   props: {
-    title: 'fj',
+    title: "What's Next",
     isFocused: false,
     bodyColumns: 50,
     placement: 'dock',
@@ -19,7 +19,7 @@ const PANE = {
 const TOKEN = { options: { token: 'secret', icons: 'text', compact: 'off' } }
 
 const RUN = {
-  command: 'fj',
+  command: 'next',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 170 },
@@ -71,7 +71,7 @@ function world(on: On, w: World) {
               : fail(`unexpected: ${cmd}`)
     return { value: { ...out, isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  // A FORGEJO_TOKEN in the environment, which fj must not read.
+  // A FORGEJO_TOKEN in the environment, which What's Next must not read.
   on('env.get', (_$, e) => {
     w.envRead?.push(e.name)
     return { value: 'from-env' }
@@ -101,7 +101,7 @@ function world(on: On, w: World) {
     if (new URL(e.url).pathname.endsWith('/repos/boats/radar/issues')) return reply(200, [])
     if (new URL(e.url).pathname.endsWith('/api/v1/users/alice/tokens')) {
       if (w.scopes === null) return reply(401, { message: 'basic auth required' })
-      return reply(200, [{ name: 'fj', token_last_eight: 'secret', scopes: w.scopes ?? ['read:issue'] }])
+      return reply(200, [{ name: 'whats-next', token_last_eight: 'secret', scopes: w.scopes ?? ['read:issue'] }])
     }
     if (new URL(e.url).pathname.endsWith('/api/v1/user')) {
       const status = w.user ?? 200
@@ -125,7 +125,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     const all = await texts(ui)
 
-    expect(opened.at(-1)).toEqual(expect.objectContaining({ id: 'fj', title: "What's next" }))
+    expect(opened.at(-1)).toEqual(expect.objectContaining({ id: 'next', title: "What's next" }))
     expect(asked.slice(0, 2)).toEqual([
       { url: 'https://git.example.org/api/v1/version', auth: undefined },
       { url: 'https://git.example.org/api/v1/repos/boats/radar', auth: 'token secret' },
@@ -133,7 +133,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(asked[2]).toEqual({ url: 'https://git.example.org/api/v1/user', auth: 'token secret' })
     // With the list failing to load, the ready screen shows, with why.
     expect(all[0]).toBe('Could not load the issues: your issues: HTTP 500.')
-    expect(all[1]).toBe('Forgejo for Claude is ready!')
+    expect(all[1]).toBe("What's Next is ready!")
     expect(all).toEqual(
       expect.arrayContaining([
         '✓ Repo    boats/radar',
@@ -143,7 +143,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       ]),
     )
     expect(all).not.toContain('What to do')
-    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar, but could not load its issues.' }))
+    expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar, but could not load its issues." }))
   })
 }
 
@@ -158,25 +158,25 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const all = await texts(ui)
 
     expect(all).toEqual([
-      'Set up Forgejo for Claude',
-      '✗ Repo    no Forgejo repo here',
+      "Set up What's Next",
+      '✗ Repo    no repo here',
       '· Forge   needs a repo',
       '✓ Token   from Forgejo tokens',
       '· Access  needs a repo',
       '· Actions needs a repo',
-      'fj shows the issues of the repo this session runs in. ~/Documents/notes is not a git repo, so there is nothing to show here.',
+      "What's Next shows the issues of the repo this session runs in. ~/Documents/notes is not a git repo, so there is nothing to show here.",
       'What to do',
-      '1. If this folder belongs on Forgejo: git init and git remote add origin https://your-forgejo/owner/repo.git, then press r.',
+      '1. If this folder belongs on a forge: git init and git remote add origin https://your-forge/owner/repo.git, then press r.',
       // The commands, drawn in their own color inside that line.
       'git init',
-      'git remote add origin https://your-forgejo/owner/repo.git',
+      'git remote add origin https://your-forge/owner/repo.git',
     ])
     const cmd = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'git init')
     expect(cmd?.props.color).toBe('warning')
     await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
     expect(asked).toEqual([])
-    expect(opened.map(o => o.title)).toEqual(['fj'])
-    expect(out).toEqual(expect.objectContaining({ text: 'fj needs setting up: see its pane.' }))
+    expect(opened.map(o => o.title)).toEqual(["What's Next"])
+    expect(out).toEqual(expect.objectContaining({ text: "What's Next needs setting up: see its pane." }))
   })
 }
 
@@ -198,8 +198,8 @@ test('a repo without origin', TOKEN, async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('fj shows the issues of the repo this session runs in. This repo has no remote origin.')
-  expect(all).toContain('1. If this repo is on Forgejo: git remote add origin https://your-forgejo/owner/repo.git, then press r.')
+  expect(all).toContain("What's Next shows the issues of the repo this session runs in. This repo has no remote origin.")
+  expect(all).toContain('1. If this repo is on a forge: git remote add origin https://your-forge/owner/repo.git, then press r.')
 })
 
 test('an origin that names no host is quoted', TOKEN, async ($, on) => {
@@ -209,12 +209,12 @@ test('an origin that names no host is quoted', TOKEN, async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('fj shows the issues of the repo this session runs in. origin is /srv/git/radar, which names no host.')
-  expect(all).toContain('1. If this repo is on Forgejo: git remote set-url origin https://your-forgejo/owner/repo.git, then press r.')
+  expect(all).toContain("What's Next shows the issues of the repo this session runs in. origin is /srv/git/radar, which names no host.")
+  expect(all).toContain('1. If this repo is on a forge: git remote set-url origin https://your-forge/owner/repo.git, then press r.')
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`a host that runs no forge fj knows: says so, with nothing to do, on ${surface}`, TOKEN, async ($, on) => {
+  test(`a host that runs no forge What's Next knows: says so, with nothing to do, on ${surface}`, TOKEN, async ($, on) => {
     const asked: World['asked'] = []
     world(on, { forge: 404, asked })
 
@@ -223,13 +223,13 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const all = await texts(ui)
 
     expect(all).toEqual([
-      'Set up Forgejo for Claude',
+      "Set up What's Next",
       '✓ Repo    boats/radar',
       '✗ Forge   no known forge at git.example.org',
-      '· Token   needs Forgejo',
-      '· Access  needs Forgejo',
-      '· Actions needs Forgejo',
-      'git.example.org does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (HTTP 404 for /api/v1/version). fj has nothing to show for this repo.',
+      '· Token   needs a forge',
+      '· Access  needs a forge',
+      '· Actions needs a forge',
+      "git.example.org does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (HTTP 404 for /api/v1/version). What's Next has nothing to show for this repo.",
     ])
     await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
     // The token goes to no host that is not Forgejo.
@@ -251,13 +251,13 @@ test('github.com: known without asking, and not supported', TOKEN, async ($, on)
   const all = await texts(ui)
 
   expect(all).toEqual([
-    'Set up Forgejo for Claude',
+    "Set up What's Next",
     '✓ Repo    boats/radar',
     '✗ Forge   GitHub at github.com, not supported',
-    '· Token   needs Forgejo',
-    '· Access  needs Forgejo',
-    '· Actions needs Forgejo',
-    'github.com runs GitHub. fj does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.',
+    '· Token   needs a forge',
+    '· Access  needs a forge',
+    '· Actions needs a forge',
+    "github.com runs GitHub. What's Next does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.",
   ])
   expect(asked).toEqual([])
 })
@@ -319,7 +319,7 @@ test('a version older than 1.19 is too old', TOKEN, async ($, on) => {
 
   expect(all).toContain('✗ Forge   Gitea 1.18.5, too old')
   expect(all).toContain(
-    'fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). git.example.org runs Gitea 1.18.5.',
+    "What's Next needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). git.example.org runs Gitea 1.18.5.",
   )
 })
 
@@ -352,12 +352,12 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   expect(all).toContain('✗ Token   none found')
   expect(all).toContain('· Access  ')
   expect(all).toContain(
-    '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
+    '1. Create a token at https://git.example.org/user/settings/applications with write:issue, read:repository and read:user; read:issue instead of write:issue is read only.',
   )
   // The address is a link, the command a command; neither keeps punctuation.
   expect(all).toContain('https://git.example.org/user/settings/applications')
-  expect(all).toContain('/plugin configure fj@egribnau-mods')
-  expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as Forgejo tokens, alone or as git.example.org=<token> next to tokens for other hosts.')
+  expect(all).toContain('/plugin configure whats-next@egribnau-mods')
+  expect(all).toContain('2. Run /plugin configure whats-next@egribnau-mods and paste it as Forgejo tokens, alone or as git.example.org=<token> next to tokens for other hosts.')
   expect(all.some(t => t.includes('Press r'))).toBe(false)
   // Checking again ends the guide, as a button of its own.
   await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
@@ -378,7 +378,7 @@ for (const [name, w, want] of [
     const out = await $.command.run(RUN)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await texts(ui)).toContain(want)
-    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar, but could not load its issues.' }))
+    expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar, but could not load its issues." }))
   })
 }
 
@@ -390,12 +390,12 @@ test('a token without read:user: says it needs that scope too', TOKEN, async ($,
 
   expect(all).toContain('✗ Access  no read:user')
   expect(all).toContain(
-    'The token from Forgejo tokens reads boats/radar, but not who it belongs to: fj needs read:user too.',
+    "The token from Forgejo tokens reads boats/radar, but not who it belongs to: What's Next needs read:user too.",
   )
   expect(all).toContain(
-    '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
+    '1. Create a token at https://git.example.org/user/settings/applications with write:issue, read:repository and read:user; read:issue instead of write:issue is read only.',
   )
-  expect(out).toEqual(expect.objectContaining({ text: 'fj needs setting up: see its pane.' }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next needs setting up: see its pane." }))
 })
 
 for (const [status, label, about, first] of [
@@ -403,13 +403,13 @@ for (const [status, label, about, first] of [
     401,
     'token refused',
     'Forgejo did not accept the token from Forgejo tokens: it may be mistyped, expired or revoked.',
-    '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
+    '1. Create a token at https://git.example.org/user/settings/applications with write:issue, read:repository and read:user; read:issue instead of write:issue is read only.',
   ],
   [
     403,
     'no permission',
     'The token from Forgejo tokens is valid but may not read this repo.',
-    '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
+    '1. Create a token at https://git.example.org/user/settings/applications with write:issue, read:repository and read:user; read:issue instead of write:issue is read only.',
   ],
   [
     404,

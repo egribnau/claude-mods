@@ -2,11 +2,11 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { ConfigRow, On } from 'claude-code'
 
 const PANE = {
-  plugin: 'fj',
+  plugin: 'whats-next',
   component: 'Pane',
-  requestId: 'fj',
+  requestId: 'next',
   props: {
-    title: 'fj',
+    title: "What's Next",
     isFocused: false,
     bodyColumns: 50,
     placement: 'dock',
@@ -16,7 +16,7 @@ const PANE = {
 } as const
 
 const RUN = {
-  command: 'fj',
+  command: 'next',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 170 },
@@ -43,12 +43,12 @@ const ISSUE = {
 
 function row(value: string, field = 'icons', options = ['ask', 'icons', 'text']): ConfigRow {
   return {
-    key: `fj@egribnau-mods.${field}`,
+    key: `whats-next@egribnau-mods.${field}`,
     label: field,
     kind: 'choice',
     value,
     options,
-    provider: { plugin: 'fj', tier: 'user' },
+    provider: { plugin: 'whats-next', tier: 'user' },
     isLocked: false,
   } as unknown as ConfigRow
 }
@@ -99,7 +99,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     const all = await texts(ui)
 
-    expect(all[0]).toBe('Forgejo for Claude is ready!')
+    expect(all[0]).toBe("What's Next is ready!")
     expect(all).toContain('One choice: icons on buttons')
     expect(all).toContain(`[ ${ICON.refresh} ]  [ ${ICON.work} ]  [ ${ICON.open} ]  [ ${ICON.back} ]`)
     expect(all).not.toContain("What's next")
@@ -115,7 +115,7 @@ test('Use icons saves the setting and the buttons become icons', { options: { to
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'use-icons' })
 
-  expect(set).toEqual([{ key: 'fj@egribnau-mods.icons', value: 'icons' }])
+  expect(set).toEqual([{ key: 'whats-next@egribnau-mods.icons', value: 'icons' }])
   expect((await texts(ui))[0]).toBe("What's next")
   expect(await label(ui, 'refresh')).toBe(ICON.refresh)
 
@@ -132,7 +132,7 @@ test('Keep text saves the setting and the buttons keep their words', { options: 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'keep-text' })
 
-  expect(set).toEqual([{ key: 'fj@egribnau-mods.icons', value: 'text' }])
+  expect(set).toEqual([{ key: 'whats-next@egribnau-mods.icons', value: 'text' }])
   expect(await label(ui, 'refresh')).toBe('Refresh')
 })
 
@@ -196,7 +196,7 @@ for (const [button, value, gap] of [
     await $.command.run(RUN)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: button })
-    expect(set).toEqual([{ key: 'fj@egribnau-mods.compact', value }])
+    expect(set).toEqual([{ key: 'whats-next@egribnau-mods.compact', value }])
     expect((await texts(ui))[0]).toBe("What's next")
     const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
     expect(boxes.find(b => b.key === 'issue-29')?.props.marginBottom).toBe(gap)
@@ -216,10 +216,10 @@ test('a change in /config wins over the choice made in onboarding', { options: {
   // The person's own change in the /config menu.
   const change = (field: string, value: string, previous: string) =>
     $.config.set({
-      key: `fj@egribnau-mods.${field}`,
+      key: `whats-next@egribnau-mods.${field}`,
       value,
       previous,
-      provider: { plugin: 'fj', tier: 'user' },
+      provider: { plugin: 'whats-next', tier: 'user' },
       origin: { kind: 'composer' },
     })
   await change('compact', 'off', 'on')

@@ -118,7 +118,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     return typeof raw === 'string' ? raw : { kind: 'not-forgejo', reason: 'other', detail: `HTTP ${res.status} for /api/v1/version` }
   }
 
-  // Whether fj may assign and close: the token's scopes, from the list of the
+  // Whether What's Next may assign and close: the token's scopes, from the list of the
   // account's tokens (the one ending in the same eight characters), and push
   // rights on the repo. A list Forgejo refuses leaves it unknown.
   async function mayAct(login: string, push: boolean): Promise<Actions> {
@@ -139,7 +139,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     check,
     name: 'Forgejo',
     tokensUrl: `https://${r.host}/user/settings/applications`,
-    scopes: 'read:issue, read:repository and read:user',
+    scopes: 'write:issue, read:repository and read:user; read:issue instead of write:issue is read only',
     writeScope: 'write:issue',
     setting: 'Forgejo tokens',
 

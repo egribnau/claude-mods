@@ -5,11 +5,11 @@ import type { TestBody } from 'claude-code/testing'
 type Engine = Parameters<TestBody>[0]
 
 const PANE = {
-  plugin: 'fj',
+  plugin: 'whats-next',
   component: 'Pane',
-  requestId: 'fj',
+  requestId: 'next',
   props: {
-    title: 'fj',
+    title: "What's Next",
     isFocused: false,
     bodyColumns: 60,
     placement: 'dock',
@@ -19,7 +19,7 @@ const PANE = {
 } as const
 
 const RUN = {
-  command: 'fj',
+  command: 'next',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 170 },
@@ -100,7 +100,7 @@ type Rights = {
   push?: boolean
   // The token's scopes as /users/alice/tokens lists them; null: that list is refused.
   scopes?: readonly string[] | null
-  // The writes fj sends, and what Forgejo answers them.
+  // The writes What's Next sends, and what Forgejo answers them.
   sent?: { method: string; path: string; body: unknown }[]
   refuse?: { status: number; message: string }
   // Whether the repo tracks time and has dependencies; both when left out.
@@ -133,7 +133,7 @@ function world(on: On, answers: Answers, asked: string[] = [], opened: string[] 
       if (rights.scopes === null) return reply(401, { message: 'basic auth required' })
       return reply(200, [
         { name: 'other', token_last_eight: 'abcdefgh', scopes: ['all'] },
-        { name: 'fj', token_last_eight: 'secret', scopes: rights.scopes ?? ['read:issue', 'read:repository', 'read:user'] },
+        { name: 'whats-next', token_last_eight: 'secret', scopes: rights.scopes ?? ['read:issue', 'read:repository', 'read:user'] },
       ])
     }
     if (e.init?.method === 'PATCH') {
@@ -320,7 +320,7 @@ test('an issue opened again is shown from memory until Refresh', TOKEN, async ($
 
   await ui.press({ key: 'refresh' })
   expect(issue()).toBe(4)
-  // /fj asks again too.
+  // /next asks again too.
   await $.command.run(RUN)
   expect(issue()).toBe(6)
 })

@@ -17,7 +17,7 @@ const NOW = Date.parse('2026-10-09T12:00:00Z')
 
 const SELF = {
   id: 4711,
-  name: 'fj',
+  name: 'whats-next',
   revoked: false,
   created_at: '2026-09-01T08:12:44.512Z',
   description: '',
@@ -89,7 +89,7 @@ type Extra = {
   title?: string
 }
 
-// An issue: `id` is global and never what fj shows; `iid` is the number in
+// An issue: `id` is global and never what What's Next shows; `iid` is the number in
 // the project.
 function issue(iid: number, created: string, extra: Extra = {}) {
   const assignees = (extra.assignees ?? []).map((u, k) => person(u, 900 + k))
@@ -737,7 +737,7 @@ test('issue: a closed one stays closed, and a missing one throws', async () => {
   await expect(t.issue(404, { time: false, deps: false, epics: false })).rejects.toThrow('#404: HTTP 404')
 })
 
-// Assign and close. The ids fj saw are kept per host for the whole run, so
+// Assign and close. The ids What's Next saw are kept per host for the whole run, so
 // each test has a host of its own.
 
 const at = (host: string): Repo => ({ ...R, host })
@@ -829,11 +829,11 @@ test("a refusal says GitLab's message, its fields' messages, its error, or the s
 // The pane, on gitlab.com
 
 const PANE = {
-  plugin: 'fj',
+  plugin: 'whats-next',
   component: 'Pane',
-  requestId: 'fj',
+  requestId: 'next',
   props: {
-    title: 'fj',
+    title: "What's Next",
     isFocused: false,
     bodyColumns: 50,
     placement: 'dock',
@@ -843,7 +843,7 @@ const PANE = {
 } as const
 
 const RUN = {
-  command: 'fj',
+  command: 'next',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 170 },
@@ -949,7 +949,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     // gitlab.com is known by name: the first request is the token's.
     expect(asked?.slice(0, 3).map(a => a.url)).toEqual([`${BASE}/personal_access_tokens/self`, `${BASE}/user`, PROJECT])
     expect(asked?.every(a => a.token === 'glpat-x' && a.auth === undefined)).toBe(true)
-    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar, but could not load its issues.' }))
+    expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar, but could not load its issues." }))
   })
 }
 
@@ -975,7 +975,7 @@ test("gitlab.com: What's next shows your issue and the free ones by iid", GL, as
   const bug = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'bug')
   expect(bug?.props.color).toBe('#d9534f')
   expect(all.slice(-4)).toEqual(['gitlab.com/', 'boats/radar', '3 open · ', '1 yours'])
-  expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 1 in progress, next is #14.' }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14." }))
 })
 
 type Btn = { key: string; props: Record<string, unknown> }
@@ -1015,7 +1015,7 @@ test('gitlab.com without a token: how to make one for GitLab, and nothing asked'
   expect(all).toContain('✗ Token   none found')
   expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
   expect(all).toContain('https://gitlab.com/-/user_settings/personal_access_tokens')
-  expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as GitLab.com token.')
+  expect(all).toContain('2. Run /plugin configure whats-next@egribnau-mods and paste it as GitLab.com token.')
   expect(all.some(t => t.includes('Forgejo tokens') || t.includes('read:issue'))).toBe(false)
   expect(asked).toEqual([])
 })
@@ -1035,7 +1035,7 @@ test('gitlab.com refusing the token: says GitLab did not accept it', GL, async (
   expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
 })
 
-const EPICS_PANE = { ...PANE, requestId: 'fj-epics', props: { ...PANE.props, title: 'Epics' } } as const
+const EPICS_PANE = { ...PANE, requestId: 'next-epics', props: { ...PANE.props, title: 'Epics' } } as const
 
 test('gitlab.com Free: an epic with its related issues in the Epics pane, no blockers asked and no error', GL, async ($, on) => {
   const asked: World['asked'] = []

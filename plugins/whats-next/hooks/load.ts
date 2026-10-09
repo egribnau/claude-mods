@@ -3,7 +3,7 @@ import { groupsFor, type MilestoneRow } from './epics'
 import { pickNext } from './next'
 import { message, type EpicRow, type Tracker } from './tracker'
 
-// What fj remembers of a repo until the next Refresh or /fj, so the picker
+// What is remembered of a repo until the next Refresh or /next, so the picker
 // can switch without asking the tracker again: its open milestones, your
 // open issues and the free ones, the blockers checked so far, the epics,
 // and the children of each epic loaded so far.

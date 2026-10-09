@@ -11,29 +11,32 @@ import { epicGroups, loadRepo, whatsNext, type Memory } from './load'
 import { waitingText } from './next'
 import { message, type Send, type Tracker } from './tracker'
 
-const PANE = 'fj'
-const EPICS_PANE = 'fj-epics'
-const CONFIGURE = '/plugin configure fj@egribnau-mods'
+const PANE = 'next'
+const EPICS_PANE = 'next-epics'
+const CONFIGURE = '/plugin configure whats-next@egribnau-mods'
+// The command, and the one it falls back to when another has /next.
+const COMMAND = 'next'
+const FALLBACK_COMMAND = 'whats-next'
 
-const repo = atom({ plugin: 'fj', key: 'repo' } as const, null)
-const version = atom({ plugin: 'fj', key: 'version' } as const, null)
-const token = atom({ plugin: 'fj', key: 'token' } as const, null)
-const setup = atom({ plugin: 'fj', key: 'setup' } as const, { kind: 'checking' })
-const overview = atom({ plugin: 'fj', key: 'overview' } as const, { kind: 'idle' })
+const repo = atom({ plugin: 'whats-next', key: 'repo' } as const, null)
+const version = atom({ plugin: 'whats-next', key: 'version' } as const, null)
+const token = atom({ plugin: 'whats-next', key: 'token' } as const, null)
+const setup = atom({ plugin: 'whats-next', key: 'setup' } as const, { kind: 'checking' })
+const overview = atom({ plugin: 'whats-next', key: 'overview' } as const, { kind: 'idle' })
 // Per pane, keyed by its id: each opens issues in a detail view of its own.
-const picked = atom({ plugin: 'fj', key: 'picked' } as const, null)
-const detail = atom({ plugin: 'fj', key: 'detail' } as const, { kind: 'idle' })
-const iconsChosen = atom({ plugin: 'fj', key: 'icons' } as const, null)
-const compactChosen = atom({ plugin: 'fj', key: 'compact' } as const, null)
-const epics = atom({ plugin: 'fj', key: 'epics' } as const, { kind: 'idle' })
-const unfolded = atom({ plugin: 'fj', key: 'unfolded' } as const, [])
-const panesOpen = atom({ plugin: 'fj', key: 'panesOpen' } as const, [])
-const milestonePick = atom({ plugin: 'fj', key: 'milestonePick' } as const, null)
-const picker = atom({ plugin: 'fj', key: 'picker' } as const, null)
-const pickerOpen = atom({ plugin: 'fj', key: 'pickerOpen' } as const, false)
-const requests = atom({ plugin: 'fj', key: 'requests' } as const, null)
+const picked = atom({ plugin: 'whats-next', key: 'picked' } as const, null)
+const detail = atom({ plugin: 'whats-next', key: 'detail' } as const, { kind: 'idle' })
+const iconsChosen = atom({ plugin: 'whats-next', key: 'icons' } as const, null)
+const compactChosen = atom({ plugin: 'whats-next', key: 'compact' } as const, null)
+const epics = atom({ plugin: 'whats-next', key: 'epics' } as const, { kind: 'idle' })
+const unfolded = atom({ plugin: 'whats-next', key: 'unfolded' } as const, [])
+const panesOpen = atom({ plugin: 'whats-next', key: 'panesOpen' } as const, [])
+const milestonePick = atom({ plugin: 'whats-next', key: 'milestonePick' } as const, null)
+const picker = atom({ plugin: 'whats-next', key: 'picker' } as const, null)
+const pickerOpen = atom({ plugin: 'whats-next', key: 'pickerOpen' } as const, false)
+const requests = atom({ plugin: 'whats-next', key: 'requests' } as const, null)
 
-// Every request fj sends the forge, counted, so Debug can say what each action cost.
+// Every request What's Next sends the forge, counted, so Debug can say what each action cost.
 let requestsMade = 0
 const send =
   ($: EngineInterface): Send =>
@@ -70,7 +73,7 @@ let configIcons = 'ask'
 let configCompact = 'ask'
 // The Epic label setting: the label that makes an issue an epic.
 let configLabel = 'epic'
-// The Debug setting: count fj's requests on a line under the repo line.
+// The Debug setting: count What's Next's requests on a line under the repo line.
 let configDebug = false
 
 // Nerd Font icons for the buttons (Material Design set).
@@ -90,7 +93,7 @@ const ICON = {
 async function chooseIcons($: EngineInterface, value: 'icons' | 'text') {
   await update($, iconsChosen, () => value)
   const rows = await $.config.list()
-  const row = rows.find(r => /^fj(@[^.]*)?\.icons$/.test(r.key))
+  const row = rows.find(r => /^whats-next(@[^.]*)?\.icons$/.test(r.key))
   if (!row) return
   const done = await $.config.set({ key: row.key, value })
   if (done.deny !== undefined) $.ui.toast(`Icons not saved: ${done.deny}`)
@@ -100,7 +103,7 @@ async function chooseIcons($: EngineInterface, value: 'icons' | 'text') {
 async function chooseCompact($: EngineInterface, value: 'on' | 'off') {
   await update($, compactChosen, () => value)
   const rows = await $.config.list()
-  const row = rows.find(r => /^fj(@[^.]*)?\.compact$/.test(r.key))
+  const row = rows.find(r => /^whats-next(@[^.]*)?\.compact$/.test(r.key))
   if (!row) return
   const done = await $.config.set({ key: row.key, value })
   if (done.deny !== undefined) $.ui.toast(`Compact not saved: ${done.deny}`)
@@ -191,7 +194,7 @@ async function check($: EngineInterface): Promise<Repo | null> {
   return r
 }
 
-// What fj remembers of the repo until the next Refresh or /fj.
+// The repo as loaded, kept until the next Refresh or /next.
 let memory: Memory | null = null
 
 // Whether the tracker turned a feature off; a setup check from older code
@@ -281,7 +284,7 @@ async function pickMilestone($: EngineInterface, value: string) {
 }
 
 // The issues read for a detail view, by repo and number, kept until the next
-// Refresh or /fj, so opening one again asks Forgejo nothing.
+// Refresh or /next, so opening one again asks Forgejo nothing.
 const issuesRead = new Map<string, IssueDetail>()
 
 // Reads issue `n` for the detail view of pane `pane`, or shows it from memory.
@@ -342,13 +345,13 @@ async function refresh($: EngineInterface): Promise<Repo | null> {
 // The Epics pane follows a load that found the first open epic, or none
 // left: it opens as a tab next to What's next, without the focus, or
 // closes. An Epics pane the person closed while there were epics stays
-// closed until /fj. One opened without the person asking (a reload) may
+// closed until /next. One opened without the person asking (a reload) may
 // wait undrawn on a narrow terminal; the next Refresh, which they ask for,
 // opens it again so it is drawn.
 async function followEpics($: EngineInterface, before: Epics) {
   const after = await read($, epics)
   if (after.kind !== 'ok') return
-  // The engine's record says whether it is drawn; without it, fj's own
+  // The engine's record says whether it is drawn; without it, What's Next's own
   // list of open panes, taken as drawn.
   const panes = await $.ui.panes().catch(async () => (await read($, panesOpen)).map(id => ({ id, isPlaced: true })))
   const pane = panes.find(p => p.id === EPICS_PANE)
@@ -419,7 +422,7 @@ type DraftSource = Pick<IssueRow, 'number' | 'title' | 'url' | 'body'> & {
   lastComment?: { author: string; body: string } | null
 }
 
-// The prompt fj drafts for an issue: what to do, where the issue is, what it
+// The prompt What's Next drafts for an issue: what to do, where the issue is, what it
 // says, and the last word on it.
 function draftFor(i: DraftSource): string {
   const parts = [`Work on #${i.number}: ${i.title}\n${i.url}`]
@@ -492,7 +495,7 @@ const STOPPED_AT: Record<Setup['kind'], number> = {
 // repo.
 function intro(s: Setup, r: Repo | null, t: Tracker | null, v: string | null, tokenText: string): string | null {
   const name = t?.name ?? 'Forgejo'
-  const what = 'fj shows the issues of the repo this session runs in.'
+  const what = "What's Next shows the issues of the repo this session runs in."
   switch (s.kind) {
     case 'no-repo':
       return s.reason === 'not-git'
@@ -504,9 +507,9 @@ function intro(s: Setup, r: Repo | null, t: Tracker | null, v: string | null, to
       return `${name} did not accept the token ${tokenText}: it may be mistyped, expired or revoked.`
     case 'no-scope':
       return s.missing === 'read_api'
-        ? `The token ${tokenText} may not read ${r ? slug(r) : 'the repo'}: fj needs read_api.`
+        ? `The token ${tokenText} may not read ${r ? slug(r) : 'the repo'}: What's Next needs read_api.`
         : s.missing
-          ? `The token ${tokenText} reads ${r ? slug(r) : 'the repo'}, but not who it belongs to: fj needs ${s.missing} too.`
+          ? `The token ${tokenText} reads ${r ? slug(r) : 'the repo'}, but not who it belongs to: What's Next needs ${s.missing} too.`
           : `The token ${tokenText} is valid but may not read this repo.`
     case 'not-found':
       return `${r ? slug(r) : 'The repo'}, from origin, was not found, or the token's owner cannot see it.`
@@ -517,11 +520,11 @@ function intro(s: Setup, r: Repo | null, t: Tracker | null, v: string | null, to
       return s.reason === 'no-answer'
         ? `${host} did not answer (${s.detail}). Check that https://${host} opens from this computer.`
         : s.reason === 'too-old'
-          ? `fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). ${host} runs ${s.detail}.`
-          : `${host} does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (${s.detail}). fj has nothing to show for this repo.`
+          ? `What's Next needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). ${host} runs ${s.detail}.`
+          : `${host} does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (${s.detail}). What's Next has nothing to show for this repo.`
     }
     case 'unsupported':
-      return `${r?.host ?? 'This host'} runs ${v ?? 'GitHub'}. fj does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.`
+      return `${r?.host ?? 'This host'} runs ${v ?? 'GitHub'}. What's Next does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.`
     default:
       return null
   }
@@ -531,8 +534,8 @@ function intro(s: Setup, r: Repo | null, t: Tracker | null, v: string | null, to
 // `t`: the tracker, which says where it makes tokens, once there is a repo.
 function todo(s: Setup, r: Repo | null, t: Tracker | null): string[] {
   const page = t?.tokensUrl ?? 'Settings › Applications in Forgejo'
-  const create = `Create a token at ${page} with ${t?.scopes ?? 'read:issue, read:repository and read:user'}.`
-  const host = r?.host ?? 'your-forgejo'
+  const create = `Create a token at ${page} with ${t?.scopes ?? 'write:issue, read:repository and read:user; read:issue instead of write:issue is read only'}.`
+  const host = r?.host ?? 'your-forge'
   // GitLab has a setting per kind of host, so no host=token hint there.
   const set = [
     t?.name === 'GitLab'
@@ -541,13 +544,13 @@ function todo(s: Setup, r: Repo | null, t: Tracker | null): string[] {
   ]
   switch (s.kind) {
     case 'no-repo': {
-      const remote = 'https://your-forgejo/owner/repo.git'
+      const remote = 'https://your-forge/owner/repo.git'
       return [
         s.reason === 'not-git'
-          ? `If this folder belongs on Forgejo: \`git init\` and \`git remote add origin ${remote}\`, then press r.`
+          ? `If this folder belongs on a forge: \`git init\` and \`git remote add origin ${remote}\`, then press r.`
           : s.reason === 'no-origin'
-            ? `If this repo is on Forgejo: \`git remote add origin ${remote}\`, then press r.`
-            : `If this repo is on Forgejo: \`git remote set-url origin ${remote}\`, then press r.`,
+            ? `If this repo is on a forge: \`git remote add origin ${remote}\`, then press r.`
+            : `If this repo is on a forge: \`git remote set-url origin ${remote}\`, then press r.`,
       ]
     }
     case 'not-forgejo':
@@ -571,18 +574,18 @@ function todo(s: Setup, r: Repo | null, t: Tracker | null): string[] {
   }
 }
 
-// A pane closing, by fj or by the person: the other one, now without a tab,
+// A pane closing, by What's Next or by the person: the other one, now without a tab,
 // names itself in its title row again.
 const paneClosed: Hook<'ui.close'> = async ($, e, next) => {
   await update($, panesOpen, ids => ids.filter(id => id !== e.id))
   return next(e)
 }
 
-// A change to Icons or Compact in /config, or by fj's own choice buttons:
+// A change to Icons or Compact in /config, or by What's Next's own choice buttons:
 // the session follows it, so the setting wins over an earlier choice.
 const settingChanged: Hook<'config.set'> = async ($, e, next) => {
   const done = await next(e)
-  const field = /^fj(?:@[^.]*)?\.(icons|compact)$/.exec(e.key)?.[1]
+  const field = /^whats-next(?:@[^.]*)?\.(icons|compact)$/.exec(e.key)?.[1]
   const value = String(e.value)
   if (field === 'icons' && (value === 'icons' || value === 'text' || value === 'ask')) {
     configIcons = value
@@ -666,7 +669,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     actions: 'assign and close',
   }
   const failText: Record<Step, string> = {
-    repo: 'no Forgejo repo here',
+    repo: 'no repo here',
     forge:
       s.kind === 'not-forgejo' && s.reason === 'no-answer'
         ? `no answer from ${r?.host ?? 'this host'}`
@@ -689,7 +692,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const at = STOPPED_AT[s.kind]
   // Without a repo, or on a Forgejo too old, the token is still checked: it
   // needs no answer from the forge. The steps that do say so; the token too,
-  // where fj has no setting for the forge or knows none.
+  // where What's Next has no setting for the forge or knows none.
   const noRepo = s.kind === 'no-repo'
   const noForge = s.kind === 'not-forgejo' || s.kind === 'unsupported'
   const tokenChecked = noRepo || (s.kind === 'not-forgejo' && s.reason === 'too-old')
@@ -711,7 +714,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           : noRepo
             ? 'needs a repo'
             : noForge
-              ? 'needs Forgejo'
+              ? 'needs a forge'
               : ''
     // Actions that cannot be done are no failure: setup passes, read only.
     if (step === 'actions' && s.kind === 'ready' && s.actions.kind !== 'ok') {
@@ -875,7 +878,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       </Box>
     )
   }
-  // With another fj pane open the engine draws tabs that name both, so a
+  // With another What's Next pane open the engine draws tabs that name both, so a
   // title row leaves its pane's name out.
   const tabbed = (await read($, panesOpen)).some(id => id !== e.requestId)
   // A heading with, on its right, the pane's own action when it has one.
@@ -902,13 +905,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     return (
       <Box flexDirection="column" height={height}>
         <Box key="choice" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-          {heading('Forgejo for Claude is ready!')}
+          {heading("What's Next is ready!")}
           {steps}
           <Box key="gap" height={1} />
           {line('ask', 'One choice: icons on buttons', { bold: true })}
           {para(
             'why',
-            'fj can show its buttons as Nerd Font icons, which keeps them narrow. Look at the four below: do they show as icons, or as boxes or question marks?',
+            "What's Next can show its buttons as Nerd Font icons, which keeps them narrow. Look at the four below: do they show as icons, or as boxes or question marks?",
           )}
           <Box key="gap-glyphs" height={1} />
           <Box key="glyphs" height={1}>
@@ -934,7 +937,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Button key="keep-text" label="Keep text" onPress={() => chooseIcons($, 'text')} />
           </Box>
           <Box key="gap-later" height={1} />
-          {para('later', 'Asked once. Change it later in /config, under fj: Icons.', { dimColor: true })}
+          {para('later', "Asked once. Change it later in /config, under What's Next: Icons.", { dimColor: true })}
         </Box>
       </Box>
     )
@@ -963,7 +966,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     return (
       <Box flexDirection="column" height={height}>
         <Box key="choice" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-          {heading('Forgejo for Claude is ready!')}
+          {heading("What's Next is ready!")}
           {steps}
           <Box key="gap" height={1} />
           {line('ask', 'One more choice: space between rows', { bold: true })}
@@ -980,7 +983,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Button key="compact" label="Compact" onPress={() => chooseCompact($, 'on')} />
           </Box>
           <Box key="gap-later" height={1} />
-          {para('later', 'Asked once, after Icons. Change it later in /config, under fj: Compact.', { dimColor: true })}
+          {para('later', "Asked once, after Icons. Change it later in /config, under What's Next: Compact.", { dimColor: true })}
         </Box>
       </Box>
     )
@@ -1080,7 +1083,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const comments = `${i.comments} ${i.comments === 1 ? 'comment' : 'comments'}`
 
       // What is left for the description and the last comment.
-      // Assign and close, when fj may: setup's Actions step says so.
+      // Assign and close, when What's Next may: setup's Actions step says so.
       const acts = s.kind === 'ready' ? s.actions : ({ kind: 'read-only', reason: 'scope' } as const)
       const canAct = acts.kind !== 'read-only'
       const mine = s.kind === 'ready' && i.assignees.includes(s.login)
@@ -1148,7 +1151,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             para(
               'read-only',
               acts.kind === 'read-only' && acts.reason === 'later'
-                ? `fj cannot assign or close ${t?.name ?? 'its'} issues yet.`
+                ? `What's Next cannot assign or close ${t?.name ?? 'its'} issues yet.`
                 : acts.kind === 'read-only' && acts.reason === 'role'
                   ? `Assign and close need Reporter or higher on ${slug(r)}.`
                   : `Assign and close need a token with ${t?.writeScope ?? 'write:issue'}: the setup guide's steps make one.`,
@@ -1407,7 +1410,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         }
       }
     }
-    // The repo, and once loaded how many open issues fj counted and how
+    // The repo, and once loaded how many open issues What's Next counted and how
     // many are yours, in In progress green.
     const open = m.kind === 'ok' ? m.inProgress.length + (m.next ? 1 : 0) + m.queue.length + m.blocked.length : null
     const repoLine = (
@@ -1438,8 +1441,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       <Box key="setup" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
         {m.kind === 'error' && para('overview-error', `Could not load the issues: ${m.message}.`, { color: 'error' })}
         {s.kind === 'ready'
-          ? heading('Forgejo for Claude is ready!', { label: 'Refresh' })
-          : heading('Set up Forgejo for Claude')}
+          ? heading("What's Next is ready!", { label: 'Refresh' })
+          : heading("Set up What's Next")}
         {steps}
         <Box key="gap" height={1} />
         {body}
@@ -1448,24 +1451,25 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   )
 }
 
-// /fj opens both panes; /fj next (n) and /fj epics (e) put that one in front.
-async function runFj($: EngineInterface, word: string) {
+// /next opens both panes with What's next in front, and so does /next next
+// (n); /next epics (e) puts Epics in front. `name`: the command as registered.
+async function runNext($: EngineInterface, name: string, word: string) {
   const lower = word.toLowerCase()
-  const want = lower === '' ? 'both' : lower === 'next' || lower === 'n' ? 'next' : lower === 'epics' || lower === 'e' ? 'epics' : null
-  if (!want) return { text: `fj does not know "${word}". Try /fj next (or n), /fj epics (or e), or /fj for both.` }
-  const openNext = async (title: string, focus?: true) => {
-    await $.ui.open({ id: PANE, title, ...(focus ? { focus } : {}) })
+  const want = lower === '' || lower === 'next' || lower === 'n' ? 'both' : lower === 'epics' || lower === 'e' ? 'epics' : null
+  if (!want) return { text: `/${name} does not know "${word}". Try /${name} for What's next in front, or /${name} epics (or e) for Epics.` }
+  const openNext = async (title: string) => {
+    await $.ui.open({ id: PANE, title })
     await update($, panesOpen, ids => (ids.includes(PANE) ? ids : [...ids, PANE]))
   }
   // Epics alone opens nothing until it knows there are epics to show.
-  if (want !== 'epics') await openNext('fj')
+  if (want !== 'epics') await openNext("What's Next")
   const r = await refresh($)
   const s = await read($, setup)
   const ep = await read($, epics)
   const hasEpics = ep.kind === 'ok' && ep.openEpics > 0
   if (want === 'epics' && (s.kind !== 'ready' || !r)) {
-    await openNext('fj')
-    return { text: 'fj needs setting up: see its pane.' }
+    await openNext("What's Next")
+    return { text: "What's Next needs setting up: see its pane." }
   }
   if (want === 'epics' && r && !hasEpics) {
     return { text: ep.kind === 'error' ? `Could not load the epics: ${ep.message}.` : `No open epics in ${slug(r)}.` }
@@ -1478,21 +1482,20 @@ async function runFj($: EngineInterface, word: string) {
   } else if (ep.kind === 'ok' && (await read($, panesOpen)).includes(EPICS_PANE)) {
     await $.ui.close({ id: EPICS_PANE })
   }
-  if (want === 'next' && r) await openNext("What's next", true)
   const o = await read($, overview)
-  if (s.kind !== 'ready' || !r) return { text: 'fj needs setting up: see its pane.' }
+  if (s.kind !== 'ready' || !r) return { text: "What's Next needs setting up: see its pane." }
   const pk = await read($, picker)
   const showing = pk?.options.find(x => x.value === pk.pick)?.label ?? 'All'
   if (want === 'epics' && ep.kind === 'ok') {
-    return { text: `fj epics for ${slug(r)}: ${ep.openEpics} open, showing ${showing}.` }
+    return { text: `Epics for ${slug(r)}: ${ep.openEpics} open, showing ${showing}.` }
   }
-  if (o.kind !== 'ok') return { text: `fj is ready for ${slug(r)}, but could not load its issues.` }
+  if (o.kind !== 'ok') return { text: `What's Next is ready for ${slug(r)}, but could not load its issues.` }
   if (o.inProgress.length + o.queue.length + o.blocked.length === 0 && !o.next) {
-    return { text: `fj is ready for ${slug(r)}: no open issues.` }
+    return { text: `What's Next is ready for ${slug(r)}: no open issues.` }
   }
   const then = o.next ? `next is #${o.next.number}` : o.blocked.length > 0 ? 'nothing ready' : 'nothing else open'
   const filter = pk && pk.pick !== 'all' ? ` (${showing})` : ''
-  return { text: `fj is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}${filter}.` }
+  return { text: `What's Next is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}${filter}.` }
 }
 
 export const register: Register = (on, options) => {
@@ -1505,22 +1508,31 @@ export const register: Register = (on, options) => {
   configDebug = options.debug === true
 
   on('session.start', async ($, e, next) => {
+    // /next, unless another plugin, the person or an MCP server has it:
+    // then /whats-next. A `next` whose plugin the engine does not name
+    // cannot be told from another's, so it counts as taken.
+    const commands = await $.command.list().catch(() => [])
+    const taken = commands.some(c => c.name === COMMAND && !(c.source === 'plugin' && c.plugin !== undefined && /^whats-next(@|$)/.test(c.plugin)))
     await $.command.register({
-      name: 'fj',
-      description: 'Open the Forgejo pane for this repo',
-      argumentHint: '[next|epics]',
+      name: taken ? FALLBACK_COMMAND : COMMAND,
+      description: "Your issues and what's next, for this repo",
+      argumentHint: '[epics]',
     })
+    if (taken) $.ui.toast("/next is taken by another command: What's Next is /whats-next in this session.")
     // A reload brings new code but keeps the session's state, which the old
-    // code wrote. With fj's panes open, load once, so they show what this
+    // code wrote. With What's Next's panes open, load once, so they show what this
     // code would.
     if ((await read($, panesOpen)).length > 0) await counted($, 'reload', () => refresh($))
     return next(e)
   })
 
-  on('command.run', { command: 'fj' }, async ($, e) => {
-    const word = e.args.trim()
-    return counted($, word ? `/fj ${word}` : '/fj', () => runFj($, word))
-  })
+  // Both names: only the one registered reaches here.
+  for (const command of [COMMAND, FALLBACK_COMMAND]) {
+    on('command.run', { command }, async ($, e) => {
+      const word = e.args.trim()
+      return counted($, word ? `/${command} ${word}` : `/${command}`, () => runNext($, command, word))
+    })
+  }
 
   on('config.set', settingChanged)
   on('ui.close', { id: PANE }, paneClosed)

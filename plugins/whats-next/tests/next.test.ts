@@ -6,11 +6,11 @@ import { pickNext, waitingText } from '../hooks/next'
 import type { IssueRow } from '../types'
 
 const PANE = {
-  plugin: 'fj',
+  plugin: 'whats-next',
   component: 'Pane',
-  requestId: 'fj',
+  requestId: 'next',
   props: {
-    title: 'fj',
+    title: "What's Next",
     isFocused: false,
     bodyColumns: 50,
     placement: 'dock',
@@ -20,7 +20,7 @@ const PANE = {
 } as const
 
 const RUN = {
-  command: 'fj',
+  command: 'next',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 170 },
@@ -185,7 +185,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '5 open · ',
       '1 yours',
     ])
-    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 1 in progress, next is #29.' }))
+    expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #29." }))
   })
 }
 
@@ -244,7 +244,7 @@ test('everything blocked: Nothing ready, and what it waits on', TOKEN, async ($,
   expect(all).toContain('#33, #34, #37 wait on #35, #37')
   expect(all).toContain(rule('Queue (3)'))
   expect(all).toContain('blocked by #37, #35 · opened 3w ago')
-  expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 0 in progress, nothing ready.' }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 0 in progress, nothing ready." }))
 })
 
 test('nothing assigned to you: says how to start', TOKEN, async ($, on) => {
@@ -265,7 +265,7 @@ test('only your issues open: no other open issues', TOKEN, async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   expect(await texts(ui)).toContain('No other open issues.')
-  expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 1 in progress, nothing else open.' }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, nothing else open." }))
 })
 
 test('no open issues at all: says so, without sections', TOKEN, async ($, on) => {
@@ -276,7 +276,7 @@ test('no open issues at all: says so, without sections', TOKEN, async ($, on) =>
 
   expect(all).toContain('No open issues in boats/radar.')
   expect(all.some(t => t.startsWith('── '))).toBe(false)
-  expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: no open issues.' }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: no open issues." }))
 })
 
 test('dependencies turned off: the oldest unassigned issue is Next', TOKEN, async ($, on) => {
@@ -284,7 +284,7 @@ test('dependencies turned off: the oldest unassigned issue is Next', TOKEN, asyn
   world(on, { ...REPO, deps: 'off' }, asked)
   const out = await $.command.run(RUN)
 
-  expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 1 in progress, next is #33.' }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #33." }))
   expect(asked.filter(u => u.endsWith('/dependencies'))).toHaveLength(1)
 })
 
@@ -303,7 +303,7 @@ test('reads every page of both lists', TOKEN, async ($, on) => {
       .map(u => new URL(u).searchParams.get('page'))
   expect(pages('/repos/issues/search')).toEqual(['1', '2'])
   expect(pages('/repos/boats/radar/issues')).toEqual(['1', '2'])
-  expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 1 in progress, next is #7.' }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #7." }))
 })
 
 test('a failed list says why', TOKEN, async ($, on) => {
@@ -312,7 +312,7 @@ test('a failed list says why', TOKEN, async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   expect(await texts(ui)).toContain('Could not load the issues: open issues: HTTP 500.')
-  expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar, but could not load its issues.' }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar, but could not load its issues." }))
 })
 
 test('clicking an issue in the queue opens its detail, and back returns', TOKEN, async ($, on) => {
@@ -422,7 +422,7 @@ test('starts on the milestone due first, and every section keeps to it', TOKEN, 
   // The milestone picked is not repeated under every issue.
   expect(all).toContain('bug · opened 2w ago')
   expect(all.some(t => t.startsWith('v1.2 · '))).toBe(false)
-  expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 1 in progress, next is #37 (v1.2).' }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #37 (v1.2)." }))
 })
 
 test('picking No milestone shows the issues without one, and All shows every one', TOKEN, async ($, on) => {

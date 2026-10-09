@@ -19,7 +19,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
   const get = (url: string) => send(url, { method: 'GET', headers })
   const ids = idsAt(r.host)
   // A linked issue's web_url starts with this when it is in this project:
-  // links may reach into other projects, which fj leaves out.
+  // links may reach into other projects, which What's Next leaves out.
   const here = `https://${r.host}/${slug}/-/issues/`
   const epicLabel = label.toLowerCase()
   const isEpic = (names: string[]) => names.some(l => l.toLowerCase() === epicLabel)
@@ -46,7 +46,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
     return res.ok ? null : refusal(res)
   }
 
-  // A login's user id, from what fj saw before or else from GitLab's exact
+  // A login's user id, from what was seen before or else from GitLab's exact
   // match on the username; a string says why there is none.
   async function idOf(login: string): Promise<number | string> {
     const seen = ids.get(login)
@@ -207,7 +207,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       return found.map(i => ({ ...toRow(i), assignees: (i.assignees ?? []).map(a => a.username) }))
     },
 
-    // GitLab matches labels without regard to case; so does fj.
+    // GitLab matches labels without regard to case; so does What's Next.
     async epics(): Promise<EpicRow[]> {
       const found = await fetchAll<RawIssue>(
         `${project}/issues?state=all&labels=${encodeURIComponent(label)}&with_labels_details=true`,
@@ -317,7 +317,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
 }
 
 // An issue as GitLab lists it: `iid` is its number in the project, `id` one
-// across the whole instance, which fj never shows.
+// across the whole instance, which What's Next never shows.
 type RawUser = { id?: number; username: string }
 type RawIssue = {
   iid: number
@@ -394,7 +394,7 @@ const depsByProject = new Map<string, boolean>()
 // Each project's label colours, by its API URL, read once for the run.
 const coloursByProject = new Map<string, Promise<Map<string, string>>>()
 
-// The user ids fj saw on each host, by username: assigning takes ids.
+// The user ids seen on each host, by username: assigning takes ids.
 const idsByHost = new Map<string, Map<string, number>>()
 function idsAt(host: string): Map<string, number> {
   let ids = idsByHost.get(host)

@@ -54,6 +54,6 @@ export type Tracker = {
   close(n: number, closed: boolean): Promise<string | null>
 }
 
-// An error's message, without the host's `fj: $.http.fetch: ` in front.
+// An error's message, without the host's `whats-next: $.http.fetch: ` in front.
 export const message = (err: unknown) =>
   (err instanceof Error ? err.message : String(err)).replace(/^[\w-]+: \$\.[\w.]+: /, '')

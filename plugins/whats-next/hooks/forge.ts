@@ -2,7 +2,7 @@ import { message, type Send } from './tracker'
 
 // The forge a repo's host runs. `version`: as the forge names it, raw for
 // Forgejo (`12.0.1+gitea-1.22.0`); null when it would not say, and for
-// github.com. `unknown`: no forge fj knows answered; `no-answer`: the host
+// github.com. `unknown`: no forge What's Next knows answered; `no-answer`: the host
 // did not answer at all.
 export type Forge =
   | { kind: 'forgejo'; version: string }

@@ -25,7 +25,7 @@ const at = (host: string) => {
 
 const SELF = {
   id: 4711,
-  name: 'fj',
+  name: 'whats-next',
   revoked: false,
   created_at: '2026-09-01T08:12:44.512Z',
   description: '',
@@ -101,7 +101,7 @@ type Extra = {
   state?: string
 }
 
-// An issue: `id` is global and never what fj shows; `iid` is the number in
+// An issue: `id` is global and never what What's Next shows; `iid` is the number in
 // the project. Time in seconds, as time_stats has it.
 function issue(iid: number, extra: Extra = {}) {
   const assignees = (extra.assignees ?? []).map(a => person(a.username, a.id))
@@ -520,11 +520,11 @@ test('the tracker writes with api', () => {
 // The pane, on gitlab.com
 
 const PANE = {
-  plugin: 'fj',
+  plugin: 'whats-next',
   component: 'Pane',
-  requestId: 'fj',
+  requestId: 'next',
   props: {
-    title: 'fj',
+    title: "What's Next",
     isFocused: false,
     bodyColumns: 60,
     placement: 'dock',
@@ -534,7 +534,7 @@ const PANE = {
 } as const
 
 const RUN = {
-  command: 'fj',
+  command: 'next',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 170 },
@@ -560,7 +560,7 @@ type Pane = {
   issue?: ReturnType<typeof issue>
   // Your issues answering 500, so setup's steps stay on screen.
   mineFails?: boolean
-  // The writes fj sends, and what GitLab answers them.
+  // The writes What's Next sends, and what GitLab answers them.
   sent?: { path: string; body: Record<string, unknown> }[]
   refuse?: { status: number; body: unknown }
   asked?: string[]
@@ -626,7 +626,7 @@ const texts = async (ui: Ui) => ((await ui.findAll({ type: 'Text' })) as { text:
 const keys = async (ui: Ui) => ((await ui.findAll({ type: 'Button' })) as { key: string }[]).map(b => b.key)
 const labelOf = async (ui: Ui, key: string) => ((await ui.find({ key })) as { props: Record<string, unknown> } | undefined)?.props.label
 
-// /fj, then #14 picked from What's next.
+// /next, then #14 picked from What's next.
 async function opened($: Engine) {
   await $.command.run(RUN)
   const ui = (await $.ui.mount({ ...PANE, surface: 'terminal' })) as Ui

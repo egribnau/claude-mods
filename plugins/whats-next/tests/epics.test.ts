@@ -5,9 +5,9 @@ import { bar, groupsFor, openChildren, pickerOptions, summary, tally } from '../
 import type { EpicChild } from '../types'
 
 const EPICS_PANE = {
-  plugin: 'fj',
+  plugin: 'whats-next',
   component: 'Pane',
-  requestId: 'fj-epics',
+  requestId: 'next-epics',
   props: {
     title: 'Epics',
     isFocused: false,
@@ -19,7 +19,7 @@ const EPICS_PANE = {
 } as const
 
 const RUN = {
-  command: 'fj',
+  command: 'next',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 170 },
@@ -160,8 +160,8 @@ test("the Epics pane opens next to What's next when the repo has an open epic", 
   const opened: { id: string; title?: string }[] = []
   world(on, REPO, [], opened)
   await $.command.run(RUN)
-  expect(opened.at(-1)).toEqual({ id: 'fj-epics', title: 'Epics' })
-  expect(opened.filter(p => p.id === 'fj').at(-1)?.title).toBe("What's next")
+  expect(opened.at(-1)).toEqual({ id: 'next-epics', title: 'Epics' })
+  expect(opened.filter(p => p.id === 'next').at(-1)?.title).toBe("What's next")
 })
 
 test('with both panes open, the tabs name them and neither title row repeats the name', TOKEN, async ($, on) => {
@@ -170,7 +170,7 @@ test('with both panes open, the tabs name them and neither title row repeats the
   const epics = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   expect(await texts(epics)).not.toContain('Epics')
   await expect(epics.find({ key: 'refresh' })).resolves.toBeDefined()
-  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   expect(await texts(next)).not.toContain("What's next")
 })
 
@@ -178,27 +178,27 @@ test('once the other pane is closed, the title row names its pane again', TOKEN,
   const w: World = { ...REPO }
   world(on, w)
   await $.command.run(RUN)
-  // The last epic closes, so /fj closes the Epics pane.
+  // The last epic closes, so /next closes the Epics pane.
   w.epics = [epic(3, 'Project setup', { state: 'closed' })]
   await $.command.run(RUN)
-  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   expect((await texts(next))[0]).toBe("What's next")
 })
 
 const run = (args: string) => ({ ...RUN, args })
 
 for (const args of ['epics', 'e', ' E ']) {
-  test(`/fj ${args.trim()} opens Epics in front of What's next`, TOKEN, async ($, on) => {
+  test(`/next ${args.trim()} opens Epics in front of What's next`, TOKEN, async ($, on) => {
     const opened: Opened[] = []
     world(on, REPO, [], opened)
     const out = await $.command.run(run(args))
-    expect(opened.at(-1)).toEqual({ id: 'fj-epics', title: 'Epics', focus: true })
-    expect(opened.some(p => p.id === 'fj')).toBe(true)
-    expect(out).toEqual(expect.objectContaining({ text: 'fj epics for boats/radar: 5 open, showing v1.2.' }))
+    expect(opened.at(-1)).toEqual({ id: 'next-epics', title: 'Epics', focus: true })
+    expect(opened.some(p => p.id === 'next')).toBe(true)
+    expect(out).toEqual(expect.objectContaining({ text: 'Epics for boats/radar: 5 open, showing v1.2.' }))
   })
 }
 
-test('/fj epics with no open epic opens nothing and says so', TOKEN, async ($, on) => {
+test('/next epics with no open epic opens nothing and says so', TOKEN, async ($, on) => {
   const opened: Opened[] = []
   world(on, { epics: [] }, [], opened)
   const out = await $.command.run(run('epics'))
@@ -207,27 +207,27 @@ test('/fj epics with no open epic opens nothing and says so', TOKEN, async ($, o
 })
 
 for (const args of ['next', 'n']) {
-  test(`/fj ${args} brings What's next to the front, the Epics tab beside it`, TOKEN, async ($, on) => {
+  test(`/next ${args} does what /next does: What's next in front, the Epics tab beside it`, TOKEN, async ($, on) => {
     const opened: Opened[] = []
     world(on, REPO, [], opened)
     const out = await $.command.run(run(args))
-    expect(opened.at(-1)).toEqual({ id: 'fj', title: "What's next", focus: true })
-    expect(opened.some(p => p.id === 'fj-epics')).toBe(true)
-    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: no open issues.' }))
+    expect(opened.filter(p => p.id === 'next').at(-1)).toEqual({ id: 'next', title: "What's next" })
+    expect(opened.at(-1)).toEqual({ id: 'next-epics', title: 'Epics' })
+    expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: no open issues." }))
   })
 }
 
-test('/fj with an unknown word opens nothing and says what it knows', TOKEN, async ($, on) => {
+test('/next with an unknown word opens nothing and says what it knows', TOKEN, async ($, on) => {
   const opened: Opened[] = []
   world(on, REPO, [], opened)
   const out = await $.command.run(run('milestones'))
   expect(opened).toEqual([])
   expect(out).toEqual(
-    expect.objectContaining({ text: 'fj does not know "milestones". Try /fj next (or n), /fj epics (or e), or /fj for both.' }),
+    expect.objectContaining({ text: `/next does not know "milestones". Try /next for What's next in front, or /next epics (or e) for Epics.` }),
   )
 })
 
-test('after a reload, with its panes open, fj loads by itself', TOKEN, async ($, on) => {
+test("after a reload, with its panes open, What's Next loads by itself", TOKEN, async ($, on) => {
   const asked: string[] = []
   world(on, REPO, asked)
   await $.command.run(RUN)
@@ -236,7 +236,7 @@ test('after a reload, with its panes open, fj loads by itself', TOKEN, async ($,
   expect(asked.length).toBeGreaterThan(before)
 })
 
-test('a session that starts with no fj pane open loads nothing', TOKEN, async ($, on) => {
+test("a session that starts with no What's Next pane open loads nothing", TOKEN, async ($, on) => {
   const asked: string[] = []
   world(on, REPO, asked)
   await $.session.start({ cwd: '/Users/jdoe/dev/radar', surface: 'terminal', isInteractive: true })
@@ -247,24 +247,24 @@ test('with no open epic there is no Epics pane', TOKEN, async ($, on) => {
   const opened: { id: string; title?: string }[] = []
   world(on, { epics: [epic(3, 'Project setup', { state: 'closed' })] }, [], opened)
   await $.command.run(RUN)
-  expect(opened.some(p => p.id === 'fj-epics')).toBe(false)
+  expect(opened.some(p => p.id === 'next-epics')).toBe(false)
 })
 
-test('once the last epic is closed, /fj closes the Epics pane', TOKEN, async ($, on) => {
+test('once the last epic is closed, /next closes the Epics pane', TOKEN, async ($, on) => {
   const closed: string[] = []
   const w: World = { ...REPO }
   world(on, w, [], [], closed)
   await $.command.run(RUN)
   w.epics = [epic(3, 'Project setup', { state: 'closed' })]
   await $.command.run(RUN)
-  expect(closed).toEqual(['fj-epics'])
+  expect(closed).toEqual(['next-epics'])
 })
 
 test('epics are found by the Epic label setting', { options: { ...TOKEN.options, label: 'theme' } }, async ($, on) => {
   const opened: { id: string; title?: string }[] = []
   world(on, { ...REPO, label: 'theme', epics: REPO.epics?.map(e => ({ ...(e as object), labels: [{ name: 'theme' }] })) }, [], opened)
   await $.command.run(RUN)
-  expect(opened.at(-1)?.id).toBe('fj-epics')
+  expect(opened.at(-1)?.id).toBe('next-epics')
 })
 
 test('starts on the open milestone due first, its epics folded', TOKEN, async ($, on) => {
@@ -423,7 +423,7 @@ test("an issue opened in Epics leaves What's next as it was", TOKEN, async ($, o
   await epics.press({ key: 'fold-20' })
   await epics.press({ key: 'child-51' })
 
-  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   expect(await texts(next)).toContain('No open issues in v1.2.')
   await expect(next.find({ key: 'back' })).resolves.toBeUndefined()
 })
@@ -518,7 +518,7 @@ test("a pick in Epics is What's next's pick too", TOKEN, async ($, on) => {
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-m:v1.3' })
-  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   expect(await label(next)).toBe('v1.3 ▾')
   expect(await texts(next)).toContain('No open issues in v1.3.')
 })
@@ -589,7 +589,7 @@ test('with Debug on, a line under the repo line counts the requests of each acti
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   const first = asked.length
-  expect(await counter(ui)).toEqual(['↯ /fj: ', String(first), ' requests', String(first), ' this session'])
+  expect(await counter(ui)).toEqual(['↯ /next: ', String(first), ' requests', String(first), ' this session'])
 
   await ui.press({ key: 'fold-20' })
   await ui.press({ key: 'child-51' })
@@ -690,12 +690,12 @@ test('Refresh opens the Epics pane once the first open epic exists, without the 
   const w: World = { milestones: REPO.milestones, epics: [] }
   world(on, w, [], opened)
   await $.command.run(RUN)
-  expect(opened.map(o => o.id)).not.toContain('fj-epics')
+  expect(opened.map(o => o.id)).not.toContain('next-epics')
 
   w.epics = [epic(40, 'First epic', { milestone: 'v1.2' })]
-  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   await next.press({ key: 'refresh' })
-  expect(opened.at(-1)).toEqual({ id: 'fj-epics', title: 'Epics' })
+  expect(opened.at(-1)).toEqual({ id: 'next-epics', title: 'Epics' })
 })
 
 test('Refresh closes the Epics pane once the last open epic is closed', TOKEN, async ($, on) => {
@@ -703,11 +703,11 @@ test('Refresh closes the Epics pane once the last open epic is closed', TOKEN, a
   const w: World = { ...REPO }
   world(on, w, [], [], closed)
   await $.command.run(RUN)
-  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
 
   w.epics = [epic(3, 'Project setup', { milestone: 'v1.2', state: 'closed' })]
   await next.press({ key: 'refresh' })
-  expect(closed).toContain('fj-epics')
+  expect(closed).toContain('next-epics')
 })
 
 test('an Epics pane waiting undrawn is opened again by Refresh, so it is drawn', TOKEN, async ($, on) => {
@@ -716,16 +716,16 @@ test('an Epics pane waiting undrawn is opened again by Refresh, so it is drawn',
   // The engine's record: Epics open, but not placed (a narrow terminal).
   on('ui.panes', () => ({
     value: [
-      { id: 'fj', title: "What's next", isShown: true, isFocused: false, isPlaced: true },
-      { id: 'fj-epics', title: 'Epics', isShown: false, isFocused: false, isPlaced: false },
+      { id: 'next', title: "What's next", isShown: true, isFocused: false, isPlaced: true },
+      { id: 'next-epics', title: 'Epics', isShown: false, isFocused: false, isPlaced: false },
     ],
   }))
   await $.command.run(RUN)
-  const count = opened.filter(o => o.id === 'fj-epics').length
+  const count = opened.filter(o => o.id === 'next-epics').length
 
-  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   await next.press({ key: 'refresh' })
-  expect(opened.filter(o => o.id === 'fj-epics').length).toBe(count + 1)
+  expect(opened.filter(o => o.id === 'next-epics').length).toBe(count + 1)
 })
 
 test('a drawn Epics pane is not opened again by Refresh', TOKEN, async ($, on) => {
@@ -733,23 +733,23 @@ test('a drawn Epics pane is not opened again by Refresh', TOKEN, async ($, on) =
   world(on, REPO, [], opened)
   on('ui.panes', () => ({
     value: [
-      { id: 'fj', title: "What's next", isShown: true, isFocused: false, isPlaced: true },
-      { id: 'fj-epics', title: 'Epics', isShown: false, isFocused: false, isPlaced: true },
+      { id: 'next', title: "What's next", isShown: true, isFocused: false, isPlaced: true },
+      { id: 'next-epics', title: 'Epics', isShown: false, isFocused: false, isPlaced: true },
     ],
   }))
   await $.command.run(RUN)
-  const count = opened.filter(o => o.id === 'fj-epics').length
+  const count = opened.filter(o => o.id === 'next-epics').length
 
-  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   await next.press({ key: 'refresh' })
-  expect(opened.filter(o => o.id === 'fj-epics').length).toBe(count)
+  expect(opened.filter(o => o.id === 'next-epics').length).toBe(count)
 })
 
 test('once Refresh closes the Epics pane, the title row names What\'s next again', TOKEN, async ($, on) => {
   const w: World = { ...REPO }
   world(on, w)
   await $.command.run(RUN)
-  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   w.epics = [epic(3, 'Project setup', { state: 'closed' })]
   await next.press({ key: 'refresh' })
   expect(await texts(next)).toContain("What's next")

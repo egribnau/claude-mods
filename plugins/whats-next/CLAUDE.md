@@ -1,4 +1,4 @@
-# fj: notes for working on this mod
+# What's Next: notes for working on this mod
 
 ## Way of working
 
@@ -14,8 +14,8 @@
 
 ## Testing
 
-- `claude plugin test plugins/fj`, `claude plugin validate plugins/fj`, and
-  `tsc` with the tsconfig from the types file header.
+- `claude plugin test plugins/whats-next`, `claude plugin validate
+  plugins/whats-next`, and `tsc` with the tsconfig from the types file header.
 - `mock.clock(on)` is needed once the pane renders ages. `prompt.fill` hooks
   return `{ isFilled }` itself; ops like `process.run` and `http.fetch` return
   `{ value }`; a failing fetch is `{ deny: '...' }`. One `on(event)` per event

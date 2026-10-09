@@ -1,0 +1,66 @@
+{
+  "name": "whats-next",
+  "version": "0.45.0",
+  "description": "Your issues and what's next, from Forgejo or GitLab, in a docked pane",
+  "author": {
+    "name": "Erwin Gribnau"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "token": {
+      "type": "string",
+      "title": "Forgejo tokens",
+      "description": "Forgejo or Gitea access tokens, kept in secure storage. A bare token is for every host; more hosts take host=token pairs separated by spaces. A pair wins over a bare token. Needs write:issue, read:repository and read:user to assign and close; read:issue instead of write:issue is read only.",
+      "default": "",
+      "sensitive": true
+    },
+    "gitlabComToken": {
+      "type": "string",
+      "title": "GitLab.com token",
+      "description": "A gitlab.com access token, kept in secure storage. api lets What's Next assign and close; read_api is read only.",
+      "default": "",
+      "sensitive": true
+    },
+    "gitlabTokens": {
+      "type": "string",
+      "title": "Private GitLab token",
+      "description": "An access token for your own GitLab, any host but gitlab.com, kept in secure storage. api lets What's Next assign and close; read_api is read only. host=token pairs separated by spaces still work for more than one host.",
+      "default": "",
+      "sensitive": true
+    },
+    "label": {
+      "type": "string",
+      "title": "Epic label",
+      "description": "The label that makes an issue an epic. Its children are the issues it depends on; on GitLab, the issues it links as related.",
+      "default": "epic"
+    },
+    "debug": {
+      "type": "boolean",
+      "title": "Debug",
+      "description": "Count What's Next's requests to the forge, on a line under the repo line: the last action's and the session's.",
+      "default": false
+    },
+    "compact": {
+      "type": "string",
+      "title": "Compact",
+      "description": "Lists without an empty line between rows. ask: What's Next asks once, after setup.",
+      "default": "ask",
+      "options": [
+        "ask",
+        "on",
+        "off"
+      ]
+    },
+    "icons": {
+      "type": "string",
+      "title": "Icons",
+      "description": "Buttons as Nerd Font icons, which needs a Nerd Font in the terminal, or as words. ask: What's Next asks once, after setup.",
+      "default": "ask",
+      "options": [
+        "ask",
+        "icons",
+        "text"
+      ]
+    }
+  }
+}

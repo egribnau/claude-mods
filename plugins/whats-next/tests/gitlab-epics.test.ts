@@ -29,7 +29,7 @@ const at = (host: string) => {
 
 const SELF = {
   id: 4711,
-  name: 'fj',
+  name: 'whats-next',
   revoked: false,
   created_at: '2026-09-01T08:12:44.512Z',
   description: '',
@@ -139,7 +139,7 @@ type Extra = {
 }
 
 // An issue as a list gives it with with_labels_details: labels as objects.
-// `id` is global and never what fj shows; `iid` is the number in the project.
+// `id` is global and never what What's Next shows; `iid` is the number in the project.
 function issue(host: string, iid: number, extra: Extra = {}) {
   const assignees = (extra.assignees ?? []).map(a => person(a, PEOPLE[a] ?? 500))
   const project = extra.project ?? 'boats/radar'
@@ -589,11 +589,11 @@ test('milestones: closed of total from issues_statistics, a failed one 0/0', asy
 const H = 'gitlab.com'
 
 const PANE = {
-  plugin: 'fj',
+  plugin: 'whats-next',
   component: 'Pane',
-  requestId: 'fj',
+  requestId: 'next',
   props: {
-    title: 'fj',
+    title: "What's Next",
     isFocused: false,
     bodyColumns: 60,
     placement: 'dock',
@@ -604,12 +604,12 @@ const PANE = {
 
 const EPICS_PANE = {
   ...PANE,
-  requestId: 'fj-epics',
+  requestId: 'next-epics',
   props: { ...PANE.props, title: 'Epics', bodyColumns: 50 },
 } as const
 
 const RUN = {
-  command: 'fj',
+  command: 'next',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 170 },
@@ -725,7 +725,7 @@ test('GitLab Free: the Epics pane shows the epic in its milestone, x/y closed, i
   await clock.set(NOW)
   const { epics } = await panes($)
 
-  expect(opened.some(p => p.id === 'fj-epics')).toBe(true)
+  expect(opened.some(p => p.id === 'next-epics')).toBe(true)
   let all = await texts(epics)
   expect(all.slice(0, 3)).toEqual(['── ', 'v1.2', ' · due 31 Oct · 2/7 closed '])
   // One of its four children is closed.

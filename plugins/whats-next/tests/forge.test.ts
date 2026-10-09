@@ -143,11 +143,11 @@ for (const [f, name] of [
 // The pane
 
 const PANE = {
-  plugin: 'fj',
+  plugin: 'whats-next',
   component: 'Pane',
-  requestId: 'fj',
+  requestId: 'next',
   props: {
-    title: 'fj',
+    title: "What's Next",
     isFocused: false,
     bodyColumns: 50,
     placement: 'dock',
@@ -157,7 +157,7 @@ const PANE = {
 } as const
 
 const RUN = {
-  command: 'fj',
+  command: 'next',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 170 },
@@ -200,7 +200,7 @@ function world(on: On, remote: string, replies: Record<string, Reply>, asked: As
     })
     if (r) return reply(r.status, r.body ?? {}, r.headers)
     if (path.endsWith('/api/v1/user')) return reply(200, { login: 'alice' })
-    if (path.endsWith('/api/v1/users/alice/tokens')) return reply(200, [{ name: 'fj', scopes: ['read:issue'] }])
+    if (path.endsWith('/api/v1/users/alice/tokens')) return reply(200, [{ name: 'whats-next', scopes: ['read:issue'] }])
     if (path.endsWith('/repos/issues/search')) return reply(500, {})
     if (path.endsWith('/repos/boats/radar/issues')) return reply(200, [])
     if (path.endsWith('/api/v1/repos/boats/radar')) {
@@ -259,7 +259,7 @@ test('gitlab.com with no GitLab token: none found, and how to make one', opts('b
   expect(all).toContain('✗ Token   none found')
   expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
   expect(all).toContain(
-    '2. Run /plugin configure fj@egribnau-mods and paste it as GitLab.com token.',
+    '2. Run /plugin configure whats-next@egribnau-mods and paste it as GitLab.com token.',
   )
   expect(asked).toEqual([])
 })
@@ -286,7 +286,7 @@ test('gitlab.com: the bare token in Private GitLab token is not for gitlab.com',
   const all = await texts(ui)
 
   expect(all).toContain('✗ Token   none found')
-  expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as GitLab.com token.')
+  expect(all).toContain('2. Run /plugin configure whats-next@egribnau-mods and paste it as GitLab.com token.')
   expect(asked).toEqual([])
 })
 
@@ -312,11 +312,11 @@ test('gitlab.com: a token without read_api says it needs that scope', opts('', '
   const all = await texts(ui)
 
   expect(all).toContain('✗ Access  no read_api')
-  expect(all).toContain('The token from GitLab.com token may not read boats/radar: fj needs read_api.')
+  expect(all).toContain("The token from GitLab.com token may not read boats/radar: What's Next needs read_api.")
   expect(asked).toHaveLength(1)
 })
 
-test('github.com: not supported, asked nothing, the token needs Forgejo', opts('bare'), async ($, on) => {
+test('github.com: not supported, asked nothing, the token needs a forge', opts('bare'), async ($, on) => {
   const asked: Asked = []
   world(on, 'git@github.com:boats/radar.git', {}, asked)
 
@@ -328,10 +328,10 @@ test('github.com: not supported, asked nothing, the token needs Forgejo', opts('
   expect(all).toEqual(
     expect.arrayContaining([
       '✗ Forge   GitHub at github.com, not supported',
-      '· Token   needs Forgejo',
-      '· Access  needs Forgejo',
-      '· Actions needs Forgejo',
-      'github.com runs GitHub. fj does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.',
+      '· Token   needs a forge',
+      '· Access  needs a forge',
+      '· Actions needs a forge',
+      "github.com runs GitHub. What's Next does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.",
     ]),
   )
 })
@@ -378,7 +378,7 @@ test('self-hosted GitLab with no token: GitLab.com token is not used, and the gu
 
   expect(all).toContain('✗ Token   none found')
   expect(all).toContain('1. Create a token at https://gitlab.example.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
-  expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as Private GitLab token.')
+  expect(all).toContain('2. Run /plugin configure whats-next@egribnau-mods and paste it as Private GitLab token.')
   expect(asked.map(a => a.url)).toEqual([
     'https://gitlab.example.com/api/v1/version',
     'https://gitlab.example.com/api/v4/version',
@@ -394,9 +394,9 @@ test('GitHub Enterprise: found by probing, with no token sent', opts('bare'), as
   const all = await texts(ui)
 
   expect(all).toContain('✗ Forge   GitHub Enterprise 3.12.4 at github.example.com, not supported')
-  expect(all).toContain('· Token   needs Forgejo')
+  expect(all).toContain('· Token   needs a forge')
   expect(all).toContain(
-    'github.example.com runs GitHub Enterprise 3.12.4. fj does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.',
+    "github.example.com runs GitHub Enterprise 3.12.4. What's Next does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.",
   )
   expect(asked).toHaveLength(3)
   expect(asked.every(a => a.auth === undefined)).toBe(true)
@@ -413,10 +413,10 @@ test('a host no known forge answers for: says so, with no token sent', opts('bar
   expect(all).toEqual(
     expect.arrayContaining([
       '✗ Forge   no known forge at code.example.com',
-      '· Token   needs Forgejo',
-      '· Access  needs Forgejo',
-      '· Actions needs Forgejo',
-      'code.example.com does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (HTTP 404 for /api/v1/version). fj has nothing to show for this repo.',
+      '· Token   needs a forge',
+      '· Access  needs a forge',
+      '· Actions needs a forge',
+      "code.example.com does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (HTTP 404 for /api/v1/version). What's Next has nothing to show for this repo.",
     ]),
   )
   expect(asked.every(a => a.auth === undefined)).toBe(true)
