@@ -26,6 +26,8 @@ export type MyIssue = {
   milestone: string | null
   labels: string[]
   created: string
+  // The issue's page on Forgejo.
+  url: string
 }
 
 // The list of your issues, once setup passes.
@@ -43,6 +45,8 @@ declare module 'claude-code' {
       token: TokenSource
       setup: Setup
       mine: Mine
+      // The issue selected in the list, by number.
+      picked: number | null
     }
   }
 }

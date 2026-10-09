@@ -12,6 +12,7 @@ const version = atom({ plugin: 'fj', key: 'version' } as const, null)
 const token = atom({ plugin: 'fj', key: 'token' } as const, 'none')
 const setup = atom({ plugin: 'fj', key: 'setup' } as const, { kind: 'checking' })
 const mine = atom({ plugin: 'fj', key: 'mine' } as const, { kind: 'idle' })
+const picked = atom({ plugin: 'fj', key: 'picked' } as const, null)
 
 // The Token setting, read in `register`; a reload reads it again.
 let configToken: string | null = null
@@ -108,6 +109,7 @@ type RawFound = {
   number: number
   title: string
   created_at: string
+  html_url: string
   milestone: { title: string } | null
   labels: { name: string }[] | null
   repository: { full_name: string }
@@ -139,8 +141,11 @@ async function loadMine($: EngineInterface, r: Repo) {
         milestone: i.milestone?.title ?? null,
         labels: (i.labels ?? []).map(l => l.name),
         created: i.created_at,
+        url: i.html_url,
       }))
     await update($, mine, (): Mine => ({ kind: 'ok', issues }))
+    // A selected issue that is no longer yours, or closed, is unselected.
+    await update($, picked, n => (n !== null && issues.some(i => i.number === n) ? n : null))
   } catch (err) {
     await update($, mine, (): Mine => ({ kind: 'error', message: message(err) }))
   }
@@ -152,6 +157,16 @@ async function refresh($: EngineInterface): Promise<Repo | null> {
   if (r && (await read($, setup)).kind === 'ready') await loadMine($, r)
   else await update($, mine, (): Mine => ({ kind: 'idle' }))
   return r
+}
+
+// Opens `url` in the browser of the computer the session runs on: `open`
+// on macOS, `xdg-open` elsewhere.
+async function openUrl($: EngineInterface, url: string) {
+  for (const cmd of ['open', 'xdg-open']) {
+    const run = await $.process.run([cmd, url]).catch(() => null)
+    if (run?.exitCode === 0) return
+  }
+  $.ui.toast(`Could not open a browser for ${url}`)
 }
 
 // How long ago `iso` was, as a short age: 5m, 3h, 6d, 3w, 4mo, 2y.
@@ -382,22 +397,35 @@ export const register: Register = (on, options) => {
         rows.push(para('none', `No open issues assigned to you in ${slug(r)}.`, { dimColor: true }))
       }
       if (m.kind === 'ok') {
+        const sel = await read($, picked)
         for (const i of m.issues) {
+          const isPicked = sel === i.number
           const facts = [i.milestone ?? 'no milestone', i.labels.join(', '), `opened ${age(i.created, now)} ago`]
             .filter(Boolean)
             .join(' · ')
           rows.push(
             <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={1}>
-              <Box>
-                <Text color="suggestion">{`#${i.number}`.padEnd(5)}</Text>
-                <Text wrap="truncate-end">{i.title}</Text>
-              </Box>
+              <Button
+                key={`pick-${i.number}`}
+                plain
+                onPress={() => update($, picked, n => (n === i.number ? null : i.number))}
+              >
+                <Text wrap="truncate-end" bold={isPicked} inverse={isPicked}>
+                  <Text color="suggestion">{`#${i.number}`.padEnd(5)}</Text>
+                  {i.title}
+                </Text>
+              </Button>
               <Box>
                 <Text>{'     '}</Text>
                 <Text wrap="truncate-end" dimColor>
                   {facts}
                 </Text>
               </Box>
+              {isPicked && (
+                <Box key="actions" height={1} marginTop={1} paddingLeft={5}>
+                  <Button key="open" label="Open in browser" hotkey="o" onPress={() => openUrl($, i.url)} />
+                </Box>
+              )}
             </Box>,
           )
         }
