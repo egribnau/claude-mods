@@ -30,7 +30,7 @@ plugins/fj/                          a mod: a hooks module, no skills
 
 | Mod | What it does | Requires |
 | --- | --- | --- |
-| `fj` | `/fj [milestone]` opens a pane on the Forgejo repo behind the current directory's `origin`: the oldest open issue assigned to you, a milestone's epics with their children, and the selected issue with an Assign to me button | a Forgejo access token; Forgejo or Gitea |
+| `fj` | `/fj [milestone]` opens a pane on the Forgejo repo behind the current directory's `origin`: your open issues ranked as in progress (the current branch's issue, issues with an open PR), next and queue (the selected milestone first, then due date, then age), a milestone's epics with their children, and the selected issue with an Assign to me button | a Forgejo access token; Forgejo or Gitea |
 
 `fj` settings, in `/config` under `fj`, except Token, which `/config` does not list: set it with
 `/plugin configure fj@egribnau-mods`. `/fj` says which token it uses (`token: setting`, `FORGEJO_TOKEN` or `none`).

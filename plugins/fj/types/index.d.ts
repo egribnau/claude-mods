@@ -1,6 +1,15 @@
 export type Milestone = { id: number; title: string; state: string }
 
-export type Assigned = { number: number; title: string }
+// One open issue assigned to you in this repo, with what ranks it.
+export type Mine = {
+  number: number
+  title: string
+  milestone: number | null
+  due: string | null
+  created: string
+  // Why it counts as in progress ('branch', 'PR #61'), or null.
+  working: string | null
+}
 
 export type Detail = {
   number: number
@@ -38,7 +47,7 @@ declare module 'claude-code' {
       epics: Epic[]
       status: Status
       expanded: number[]
-      assigned: Assigned | null
+      mine: Mine[]
       assignedStatus: Status
       picked: number | null
       listTop: number

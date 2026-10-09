@@ -1,11 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Assigned, Child, Detail, Epic, Milestone, Status } from '../types'
+import type { Child, Detail, Epic, Milestone, Mine, Status } from '../types'
 
 type RawIssue = { number: number; title: string; state: string; body: string | null }
 type RawMilestone = { id: number; title: string; state: string }
-type RawFound = RawIssue & { created_at: string; repository: { full_name: string } }
+type RawFound = RawIssue & {
+  created_at: string
+  due_date?: string | null
+  milestone?: { id: number } | null
+  labels?: { name: string }[] | null
+  repository: { full_name: string }
+}
+type RawPull = { number: number; body: string | null; head: { ref: string } }
 type RawDetail = RawIssue & {
   created_at: string
   updated_at: string
@@ -26,7 +33,7 @@ const selected = atom({ plugin: 'fj', key: 'selected' } as const, null)
 const epics = atom({ plugin: 'fj', key: 'epics' } as const, [])
 const status = atom({ plugin: 'fj', key: 'status' } as const, { kind: 'idle' })
 const expanded = atom({ plugin: 'fj', key: 'expanded' } as const, [])
-const assigned = atom({ plugin: 'fj', key: 'assigned' } as const, null)
+const mine = atom({ plugin: 'fj', key: 'mine' } as const, [])
 const assignedStatus = atom({ plugin: 'fj', key: 'assignedStatus' } as const, {
   kind: 'idle',
 })
@@ -129,7 +136,7 @@ async function assignMe($: EngineInterface, src: Source, n: number) {
         body: { assignees: [...now, login] },
       })
     }
-    await Promise.all([pick($, src, n), loadAssigned($, src)])
+    await Promise.all([pick($, src, n), loadMine($, src)])
   } catch (err) {
     $.ui.toast(`Not assigned: ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -163,9 +170,58 @@ async function pick($: EngineInterface, src: Source, n: number) {
   }
 }
 
-// The open issue in this repo assigned to the token's owner that was opened
-// first. The search covers every repo the token sees, so it is narrowed here.
-async function loadAssigned($: EngineInterface, src: Source) {
+// The issue number a branch name carries: `137-x`, `feature/137-x`,
+// `issue-137`, `gh_137`. A version such as `release/1.2` carries none.
+function issueOfBranch(name: string): number | null {
+  const m = /^(?:[\w.-]+\/)*(?:(?:issue|gh)[-_]?)?(\d+)(?:[-_/]|$)/i.exec(name.trim())
+  return m?.[1] ? Number(m[1]) : null
+}
+
+// The issues an open PR works on: its branch's number, and each one its body
+// closes with a keyword Forgejo knows (`Closes #12`, `fixes #3`).
+function issuesOfPull(pr: RawPull): number[] {
+  const out = new Set<number>()
+  const n = issueOfBranch(pr.head.ref)
+  if (n !== null) out.add(n)
+  for (const m of (pr.body ?? '').matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)/gi)) {
+    out.add(Number(m[1]))
+  }
+  return [...out]
+}
+
+// Your open issues split into what you are on, the one to do next, and the
+// rest. In progress: the current branch's issue, then the ones an open PR
+// works on. The others in order: the milestone `current` first, then the
+// earliest due date (none last), then the oldest.
+function ranked(list: readonly Mine[], current: number | null) {
+  const progress = list
+    .filter(i => i.working !== null)
+    .sort((a, b) => Number(b.working === 'branch') - Number(a.working === 'branch') || a.number - b.number)
+  const rest = list
+    .filter(i => i.working === null)
+    .sort(
+      (a, b) =>
+        Number(b.milestone !== null && b.milestone === current) -
+          Number(a.milestone !== null && a.milestone === current) ||
+        (a.due ?? '￿').localeCompare(b.due ?? '￿') ||
+        a.created.localeCompare(b.created),
+    )
+  return { progress, next: rest[0] ?? null, queue: rest.slice(1) }
+}
+
+// The status line: what you are on and what is next.
+async function showStatus($: EngineInterface) {
+  const r = ranked(await read($, mine), await read($, selected))
+  const on = r.progress[0] ? `on #${r.progress[0].number}` : null
+  const next = r.next ? `next #${r.next.number}` : null
+  const parts = [on, next].filter(Boolean)
+  $.ui.status(parts.length > 0 ? `fj ${parts.join(' · ')}` : undefined)
+}
+
+// Your open issues in this repo, epics left out, each with what ranks it. The
+// search covers every repo the token sees, so it is narrowed here. The branch
+// and the PRs only mark issues in progress: when either can't be read, none is.
+async function loadMine($: EngineInterface, src: Source) {
   await update($, assignedStatus, (): Status => ({ kind: 'loading' }))
   try {
     const instance = src.api.replace(/\/repos\/[^/]+\/[^/]+$/, '')
@@ -176,13 +232,32 @@ async function loadAssigned($: EngineInterface, src: Source) {
       found.push(...raw)
       if (raw.length < 50) break
     }
-    const oldest = found
-      .filter(i => i.repository.full_name === src.slug)
-      .sort((a, b) => a.created_at.localeCompare(b.created_at))[0]
-    await update($, assigned, (): Assigned | null =>
-      oldest ? { number: oldest.number, title: oldest.title } : null,
+    const here = found.filter(
+      i => i.repository.full_name === src.slug && !(i.labels ?? []).some(l => l.name === src.label),
     )
+
+    const run = await $.process.run(['git', 'branch', '--show-current']).catch(() => null)
+    const onBranch = run?.exitCode === 0 ? issueOfBranch(run.stdout) : null
+    const byPull = new Map<number, number>()
+    try {
+      const pulls = (await get($, src, '/pulls?state=open&limit=50')) as RawPull[]
+      for (const pr of pulls) for (const n of issuesOfPull(pr)) if (!byPull.has(n)) byPull.set(n, pr.number)
+    } catch {
+      // No PRs to go on; the branch alone marks work in progress.
+    }
+
+    const list: Mine[] = here.map(i => ({
+      number: i.number,
+      title: i.title,
+      milestone: i.milestone?.id ?? null,
+      due: i.due_date ? i.due_date.slice(0, 10) : null,
+      created: i.created_at,
+      working:
+        i.number === onBranch ? 'branch' : byPull.has(i.number) ? `PR #${byPull.get(i.number)}` : null,
+    }))
+    await update($, mine, () => list)
     await update($, assignedStatus, (): Status => ({ kind: 'idle' }))
+    await showStatus($)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     await update($, assignedStatus, (): Status => ({ kind: 'error', message }))
@@ -233,6 +308,7 @@ async function fail($: EngineInterface, err: unknown) {
 
 async function loadEpics($: EngineInterface, src: Source, milestone: number) {
   await update($, selected, () => milestone)
+  await showStatus($)
   await update($, status, (): Status => ({ kind: 'loading' }))
   try {
     const label = encodeURIComponent(src.label)
@@ -322,7 +398,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'fj',
-      description: 'Show the oldest issue assigned to you and the epics of a milestone',
+      description: 'Show your issues (in progress, next, queue) and the epics of a milestone',
       argumentHint: '[milestone]',
     })
 
@@ -338,13 +414,13 @@ export const register: Register = (on, options) => {
       await $.ui.open({ id: PANE, title: 'Epics' })
       await update($, milestones, () => [])
       await update($, epics, () => [])
-      await update($, assigned, () => null)
+      await update($, mine, () => [])
       await fail($, err)
       await update($, assignedStatus, (): Status => ({ kind: 'idle' }))
       return { text: 'Epics pane opened.' }
     }
     await $.ui.open({ id: PANE, title: `Epics · ${src.slug}` })
-    await Promise.all([refresh($, src, wanted), loadAssigned($, src)])
+    await Promise.all([refresh($, src, wanted), loadMine($, src)])
 
     const from = `(token: ${await tokenSource($)})`
     return { text: wanted ? `Epics of ${wanted} ${from}.` : `Epics pane opened ${from}.` }
@@ -362,7 +438,7 @@ export const register: Register = (on, options) => {
     const list = await read($, epics)
     const st = await read($, status)
     const open = await read($, expanded)
-    const mine = await read($, assigned)
+    const mineList = await read($, mine)
     const mineSt = await read($, assignedStatus)
     const current = await read($, picked)
     const shown = await read($, detail)
@@ -374,7 +450,19 @@ export const register: Register = (on, options) => {
     const rows = e.props.scroll.bodyRows
     // Every part has a fixed height and every line is one row, so the three
     // always add up to the pane and nothing is pushed out of it.
-    const topRows = 2
+    // Your issues: in progress, then next, then the queue, as many as a
+    // quarter of the pane holds, the last row saying how many more there are.
+    const r = ranked(mineList, sel)
+    const mineRows = [
+      ...r.progress.map(i => ({ i, mark: '⎇', color: 'success', bold: false })),
+      ...(r.next ? [{ i: r.next, mark: '▸', color: 'warning', bold: true }] : []),
+      ...r.queue.map(i => ({ i, mark: ' ', color: 'text', bold: false })),
+    ]
+    const mineRoom = Math.max(2, Math.floor(rows * 0.25))
+    const shownMine = mineRows.length <= mineRoom ? mineRows : mineRows.slice(0, mineRoom - 1)
+    const moreMine = mineRows.length - shownMine.length
+    const topRows =
+      1 + (mineSt.kind === 'idle' ? Math.max(1, Math.min(mineRows.length, mineRoom)) : 1)
     const detailRows = Math.max(6, Math.floor(rows * 0.4))
     const middleRows = Math.max(4, rows - topRows - detailRows)
     const listRoom = middleRows - 2
@@ -392,9 +480,17 @@ export const register: Register = (on, options) => {
     const choose = (n: number) => using($, 'detail', s => pick($, s, n))
     // One issue as a one-row button that selects it: the title cut to what fits
     // in front of `#number`, coloured by state.
-    const issueRow = (key: string, n: number, title: string, state: string, lead: number) => (
+    const issueRow = (
+      key: string,
+      n: number,
+      title: string,
+      state: string,
+      lead: number,
+      color?: string,
+      bold?: boolean,
+    ) => (
       <Button key={key} plain onPress={() => choose(n)}>
-        <Text wrap="truncate-end" color={stateColor(state)} inverse={current === n}>
+        <Text wrap="truncate-end" color={color ?? stateColor(state)} bold={bold} inverse={current === n}>
           {fit(title, columns - lead - ` #${n}`.length)} #{n}
         </Text>
       </Button>
@@ -490,8 +586,15 @@ export const register: Register = (on, options) => {
           {rule('Assigned to you')}
           {mineSt.kind === 'loading' && line('Loading…', { dimColor: true })}
           {mineSt.kind === 'error' && line(mineSt.message, { color: 'red' })}
-          {mineSt.kind === 'idle' && !mine && line('Nothing assigned to you.', { dimColor: true })}
-          {mineSt.kind === 'idle' && mine && issueRow('assigned', mine.number, mine.title, 'open', 0)}
+          {mineSt.kind === 'idle' && mineRows.length === 0 && line('Nothing assigned to you.', { dimColor: true })}
+          {mineSt.kind === 'idle' &&
+            shownMine.map(({ i, mark, color, bold }) => (
+              <Box key={`mine-row-${i.number}`}>
+                <Text color={color}>{mark} </Text>
+                {issueRow(`mine-${i.number}`, i.number, i.title, 'open', 2, color, bold)}
+              </Box>
+            ))}
+          {mineSt.kind === 'idle' && moreMine > 0 && line(`  +${moreMine} more`, { dimColor: true })}
         </Box>
 
         <Box flexDirection="column" height={middleRows} flexShrink={0} overflow="hidden">
@@ -515,7 +618,7 @@ export const register: Register = (on, options) => {
               label="Refresh"
               hotkey="r"
               onPress={() =>
-                using($, 'list', s => Promise.all([refresh($, s, ''), loadAssigned($, s)]))
+                using($, 'list', s => Promise.all([refresh($, s, ''), loadMine($, s)]))
               }
             />
             <Text> </Text>

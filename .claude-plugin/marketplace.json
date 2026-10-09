@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "fj",
-      "description": "Forgejo in a pane: the oldest issue assigned to you, a milestone's epics and their children, and the selected issue's detail",
+      "description": "Forgejo in a pane: your issues ranked as in progress, next and queue, a milestone's epics and their children, and the selected issue's detail",
       "source": "./plugins/fj",
       "category": "productivity"
     }
