@@ -1177,26 +1177,52 @@ export const register: Register = (on, options) => {
   configLabel = String(options.label ?? 'epic').trim() || 'epic'
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'fj', description: 'Open the Forgejo pane for this repo' })
+    await $.command.register({
+      name: 'fj',
+      description: 'Open the Forgejo pane for this repo',
+      argumentHint: '[next|epics]',
+    })
     return next(e)
   })
 
+  // /fj opens both panes; /fj next (n) and /fj epics (e) put that one in front.
   on('command.run', { command: 'fj' }, async ($, e) => {
-    await $.ui.open({ id: PANE, title: 'fj' })
-    await update($, panesOpen, ids => (ids.includes(PANE) ? ids : [...ids, PANE]))
+    const word = e.args.trim()
+    const lower = word.toLowerCase()
+    const want = lower === '' ? 'both' : lower === 'next' || lower === 'n' ? 'next' : lower === 'epics' || lower === 'e' ? 'epics' : null
+    if (!want) return { text: `fj does not know "${word}". Try /fj next (or n), /fj epics (or e), or /fj for both.` }
+    const openNext = async (title: string, focus?: true) => {
+      await $.ui.open({ id: PANE, title, ...(focus ? { focus } : {}) })
+      await update($, panesOpen, ids => (ids.includes(PANE) ? ids : [...ids, PANE]))
+    }
+    // Epics alone opens nothing until it knows there are epics to show.
+    if (want !== 'epics') await openNext('fj')
     const r = await refresh($)
-    if (r) await $.ui.open({ id: PANE, title: "What's next" })
-    // The Epics pane, a tab next to What's next, only while there are open epics.
+    const s = await read($, setup)
     const ep = await read($, epics)
-    if (ep.kind === 'ok' && ep.openEpics > 0) {
-      await $.ui.open({ id: EPICS_PANE, title: 'Epics' })
+    const hasEpics = ep.kind === 'ok' && ep.openEpics > 0
+    if (want === 'epics' && (s.kind !== 'ready' || !r)) {
+      await openNext('fj')
+      return { text: 'fj needs setting up: see its pane.' }
+    }
+    if (want === 'epics' && r && !hasEpics) {
+      return { text: ep.kind === 'error' ? `Could not load the epics: ${ep.message}.` : `No open epics in ${slug(r)}.` }
+    }
+    if (r) await openNext("What's next")
+    // The Epics pane, a tab next to What's next, only while there are open epics.
+    if (hasEpics) {
+      await $.ui.open({ id: EPICS_PANE, title: 'Epics', ...(want === 'epics' ? { focus: true as const } : {}) })
       await update($, panesOpen, ids => (ids.includes(EPICS_PANE) ? ids : [...ids, EPICS_PANE]))
     } else if (ep.kind === 'ok' && (await read($, panesOpen)).includes(EPICS_PANE)) {
       await $.ui.close({ id: EPICS_PANE })
     }
-    const s = await read($, setup)
+    if (want === 'next' && r) await openNext("What's next", true)
     const o = await read($, overview)
     if (s.kind !== 'ready' || !r) return { text: 'fj needs setting up: see its pane.' }
+    if (want === 'epics' && ep.kind === 'ok') {
+      const showing = ep.options.find(x => x.value === ep.pick)?.label ?? 'All'
+      return { text: `fj epics for ${slug(r)}: ${ep.openEpics} open, showing ${showing}.` }
+    }
     if (o.kind !== 'ok') return { text: `fj is ready for ${slug(r)}, but could not load its issues.` }
     if (o.inProgress.length + o.queue.length + o.blocked.length === 0 && !o.next) {
       return { text: `fj is ready for ${slug(r)}: no open issues.` }

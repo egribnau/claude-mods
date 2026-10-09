@@ -56,7 +56,9 @@ type World = {
 }
 
 // A repo that passes setup, has no other open issues, and answers `w`.
-function world(on: On, w: World, asked: string[] = [], opened: { id: string; title?: string }[] = [], closed: string[] = []) {
+type Opened = { id: string; title?: string; focus?: true }
+
+function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], closed: string[] = []) {
   const clock = mock.clock(on)
   on('process.run', (_$, e) => {
     const cmd = e.argv.join(' ')
@@ -64,7 +66,7 @@ function world(on: On, w: World, asked: string[] = [], opened: { id: string; tit
     return { value: { exitCode: 0, stdout: `${stdout}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('ui.open', (_$, e) => {
-    opened.push({ id: e.id, title: e.title })
+    opened.push({ id: e.id, title: e.title, ...(e.focus ? { focus: true as const } : {}) })
     return { value: { isPlaced: true } }
   })
   on('ui.close', (_$, e) => {
@@ -173,6 +175,48 @@ test('once the other pane is closed, the title row names its pane again', TOKEN,
   await $.command.run(RUN)
   const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
   expect((await texts(next))[0]).toBe("What's next")
+})
+
+const run = (args: string) => ({ ...RUN, args })
+
+for (const args of ['epics', 'e', ' E ']) {
+  test(`/fj ${args.trim()} opens Epics in front of What's next`, TOKEN, async ($, on) => {
+    const opened: Opened[] = []
+    world(on, REPO, [], opened)
+    const out = await $.command.run(run(args))
+    expect(opened.at(-1)).toEqual({ id: 'fj-epics', title: 'Epics', focus: true })
+    expect(opened.some(p => p.id === 'fj')).toBe(true)
+    expect(out).toEqual(expect.objectContaining({ text: 'fj epics for boats/radar: 5 open, showing v1.2.' }))
+  })
+}
+
+test('/fj epics with no open epic opens nothing and says so', TOKEN, async ($, on) => {
+  const opened: Opened[] = []
+  world(on, { epics: [] }, [], opened)
+  const out = await $.command.run(run('epics'))
+  expect(opened).toEqual([])
+  expect(out).toEqual(expect.objectContaining({ text: 'No open epics in boats/radar.' }))
+})
+
+for (const args of ['next', 'n']) {
+  test(`/fj ${args} brings What's next to the front, the Epics tab beside it`, TOKEN, async ($, on) => {
+    const opened: Opened[] = []
+    world(on, REPO, [], opened)
+    const out = await $.command.run(run(args))
+    expect(opened.at(-1)).toEqual({ id: 'fj', title: "What's next", focus: true })
+    expect(opened.some(p => p.id === 'fj-epics')).toBe(true)
+    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: no open issues.' }))
+  })
+}
+
+test('/fj with an unknown word opens nothing and says what it knows', TOKEN, async ($, on) => {
+  const opened: Opened[] = []
+  world(on, REPO, [], opened)
+  const out = await $.command.run(run('milestones'))
+  expect(opened).toEqual([])
+  expect(out).toEqual(
+    expect.objectContaining({ text: 'fj does not know "milestones". Try /fj next (or n), /fj epics (or e), or /fj for both.' }),
+  )
 })
 
 test('with no open epic there is no Epics pane', TOKEN, async ($, on) => {
