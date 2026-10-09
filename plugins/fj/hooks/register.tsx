@@ -803,7 +803,8 @@ export const register: Register = (on, options) => {
         const later = [...m.queue, ...m.blocked.map(b => b.issue)]
         const listed = [...m.inProgress, ...(m.next ? [m.next] : []), ...later]
         // The number column: the longest number and a space, so titles and
-        // the lines under them line up whatever the numbers.
+        // the lines under them line up whatever the numbers. Numbers sit at
+        // its right, their last digits in line.
         const numWidth = Math.max(...listed.map(i => `#${i.number}`.length), 0) + 1
         // Each row starts with its section's mark, so it says where it
         // belongs with its heading scrolled away; the Queue's is blank.
@@ -824,7 +825,7 @@ export const register: Register = (on, options) => {
               <Button key={`pick-${i.number}`} plain autoFocus={next || undefined} onPress={() => openIssue($, i.number)}>
                 <Text wrap="truncate-end" bold={next} dimColor={dim}>
                   <Text color={markColor}>{mark}</Text>
-                  <Text color={dim ? 'inactive' : 'suggestion'}>{`#${i.number}`.padEnd(numWidth)}</Text>
+                  <Text color={dim ? 'inactive' : 'suggestion'}>{`${`#${i.number}`.padStart(numWidth - 1)} `}</Text>
                   {fit(i.title, columns - 2 - numWidth)}
                 </Text>
               </Button>
@@ -872,6 +873,18 @@ export const register: Register = (on, options) => {
           }
         }
       }
+      // The repo, and once loaded how many open issues fj counted and how
+      // many are yours, in In progress green.
+      const open = m.kind === 'ok' ? m.inProgress.length + (m.next ? 1 : 0) + m.queue.length + m.blocked.length : null
+      const repoLine = (
+        <Box key="where" height={1} flexShrink={0}>
+          <Text dimColor>{`${r.host}/`}</Text>
+          <Text bold wrap="truncate-end">{slug(r)}</Text>
+          <Box flexGrow={1} />
+          {m.kind === 'ok' && <Text dimColor>{`${open} open · `}</Text>}
+          {m.kind === 'ok' && <Text color="success">{`${m.inProgress.length} yours`}</Text>}
+        </Box>
+      )
       return (
         <Box flexDirection="column" height={height}>
           {heading("What's next", { label: 'Refresh' })}
@@ -879,7 +892,8 @@ export const register: Register = (on, options) => {
           <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
             {rows}
           </Box>
-          {fixedLine('where', `${r.host}/${slug(r)}`)}
+          {fixedLine('where-rule', '─'.repeat(columns))}
+          {repoLine}
         </Box>
       )
     }

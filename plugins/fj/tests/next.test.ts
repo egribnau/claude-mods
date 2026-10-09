@@ -155,7 +155,11 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '#33 ',
       '      ',
       'blocked by #37 · opened 4w ago',
-      'git.example.org/boats/radar',
+      '─'.repeat(50),
+      'git.example.org/',
+      'boats/radar',
+      '5 open · ',
+      '1 yours',
     ])
     expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 1 in progress, next is #29.' }))
   })
@@ -247,7 +251,7 @@ test('no open issues at all: says so, without sections', TOKEN, async ($, on) =>
   const all = await texts(ui)
 
   expect(all).toContain('No open issues in boats/radar.')
-  expect(all.some(t => t.startsWith('──'))).toBe(false)
+  expect(all.some(t => t.startsWith('── '))).toBe(false)
   expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: no open issues.' }))
 })
 
@@ -305,11 +309,22 @@ test('the repo line sits at the bottom of the pane, however long the list', TOKE
   expect((boxes[0] as unknown as { props: { height?: number } }).props.height).toBe(rows)
   const list = boxes.find(b => b.key === 'list') as unknown as { props: Record<string, unknown> }
   expect(list.props).toEqual(expect.objectContaining({ flexGrow: 1, flexShrink: 1, overflow: 'hidden' }))
-  expect((await texts(ui)).at(-1)).toBe('git.example.org/boats/radar')
+  expect((await texts(ui)).slice(-4)).toEqual(['git.example.org/', 'boats/radar', '30 open · ', '0 yours'])
 })
 
 // A list taller than the pane is cut at its bottom; the section rules and the
 // repo line keep their row instead of being squeezed out.
+test('the repo line names the repo and counts the open issues, yours in green', TOKEN, async ($, on) => {
+  world(on, REPO)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
+  expect(all.find(t => t.text === 'git.example.org/')?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === 'boats/radar')?.props.bold).toBe(true)
+  expect(all.find(t => t.text === '5 open · ')?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === '1 yours')?.props.color).toBe('success')
+})
+
 test('the section rules and the repo line keep their row when the list is too long', TOKEN, async ($, on) => {
   const mine = Array.from({ length: 5 }, (_, k) => issue(100 + k, '2026-09-01T00:00:00Z', { assignees: ['alice'] }))
   const free = Array.from({ length: 30 }, (_, k) => issue(200 + k, '2026-09-02T00:00:00Z'))
@@ -318,7 +333,7 @@ test('the section rules and the repo line keep their row when the list is too lo
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 12 } }, surface: 'terminal' })
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
-  for (const key of ['in-progress', 'next', 'queue', 'where']) {
+  for (const key of ['in-progress', 'next', 'queue', 'where-rule', 'where']) {
     expect(boxes.find(b => b.key === key)?.props.flexShrink).toBe(0)
   }
 })
@@ -348,7 +363,7 @@ test('long titles are cut to one line, and numbers of any width line up', TOKEN,
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 30 }, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('▸ #7    Issue 7')
+  expect(all).toContain('▸    #7 Issue 7')
   const long1000 = all.find(t => t.startsWith('  #1000 A title far too'))
   expect(long1000?.endsWith('…')).toBe(true)
   expect(long1000?.length).toBe(30)
