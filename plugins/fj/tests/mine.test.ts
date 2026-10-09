@@ -91,7 +91,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       'Issue 51',
       '     ',
       'v1.2 · opened 3h ago',
-      'boats/radar · Forgejo 16.0.5 at git.example.org',
+      'git.example.org/boats/radar',
     ])
     expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 3 issues assigned to you.' }))
   })

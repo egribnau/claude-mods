@@ -395,7 +395,7 @@ export const register: Register = (on, options) => {
           <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
             {rows}
           </Box>
-          {line('where', `${slug(r)} · Forgejo ${v ?? ''} at ${r.host}`, { dimColor: true })}
+          {line('where', `${r.host}/${slug(r)}`, { dimColor: true })}
           <Box key="buttons" height={1} flexShrink={0}>
             <Button key="refresh" label="Refresh" hotkey="r" onPress={() => refresh($)} />
           </Box>
