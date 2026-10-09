@@ -7,7 +7,8 @@
   "(proposal)" or "(built, <version>)". Build only after the maintainer
   agrees; keep the canvas in step with the code.
 - Bump the version in `.claude-plugin/plugin.json` with each change, update the
-  README when behaviour changes. Commit and push only when asked; the
+  README when behaviour changes. Milestones name a theme, not a version: a
+  milestone's issues each bump the version as they land. Commit and push only when asked; the
   maintainer pushes.
 - No em-dashes in anything written; commas and periods instead.
 

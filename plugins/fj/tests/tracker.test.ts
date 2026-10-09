@@ -45,6 +45,7 @@ function fake(f: Fake, calls: string[] = []): Tracker {
     tokensUrl: 'fake:tokens',
     scopes: 'fake scopes',
     setting: 'Forgejo tokens',
+    writeScope: 'fake:write',
     check: async () => ({ version: 'fake', setup: { kind: 'checking' } }),
     milestones: async () => {
       calls.push('milestones')

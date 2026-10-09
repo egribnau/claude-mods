@@ -219,7 +219,7 @@ const GITLAB: Record<string, Reply> = {
   '/api/v4/projects/boats%2Fradar/issues': { status: 500 },
 }
 
-test('gitlab.com: ready, its token from GitLab tokens, read only for now', opts('bare', 'gitlab.example.com=glpat-a gitlab.com=glpat-b'), async ($, on) => {
+test('gitlab.com: ready, its token from GitLab tokens, read only with read_api', opts('bare', 'gitlab.example.com=glpat-a gitlab.com=glpat-b'), async ($, on) => {
   const asked: Asked = []
   world(on, 'git@gitlab.com:boats/radar.git', GITLAB, asked)
 
@@ -233,7 +233,7 @@ test('gitlab.com: ready, its token from GitLab tokens, read only for now', opts(
       '✓ Forge   GitLab at gitlab.com',
       '✓ Token   for gitlab.com from GitLab tokens',
       '✓ Access  3 open issues, as alice',
-      '· Actions read only on GitLab for now',
+      '· Actions read only, token lacks api',
     ]),
   )
   expect(asked.slice(0, 3).map(a => a.url)).toEqual([
@@ -253,7 +253,7 @@ test('gitlab.com with no GitLab token: none found, and how to make one', opts('b
   const all = await texts(ui)
 
   expect(all).toContain('✗ Token   none found')
-  expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with read_api.')
+  expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
   expect(all).toContain(
     '2. Run /plugin configure fj@egribnau-mods and paste it as GitLab tokens, alone or as gitlab.com=<token> next to tokens for other hosts.',
   )

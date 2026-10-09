@@ -140,6 +140,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     name: 'Forgejo',
     tokensUrl: `https://${r.host}/user/settings/applications`,
     scopes: 'read:issue, read:repository and read:user',
+    writeScope: 'write:issue',
     setting: 'Forgejo tokens',
 
     async milestones(): Promise<MilestoneRow[]> {
@@ -387,6 +388,7 @@ async function loadIssue(get: Get, n: number, features: Features): Promise<Issue
     due: i.due_date,
     branch: i.ref ? i.ref.replace(/^refs\/(heads|tags)\//, '') : null,
     logged: logged ? logged.reduce((sum, t) => sum + t.time, 0) : null,
+    estimate: null,
     labels: (i.labels ?? []).map(l => ({ name: l.name, color: l.color })),
     assignees: (i.assignees ?? []).map(a => a.login),
     blockedBy: list<RawRef>(deps)?.map(ref) ?? null,

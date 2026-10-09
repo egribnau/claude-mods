@@ -1,6 +1,6 @@
 {
   "name": "fj",
-  "version": "0.41.0",
+  "version": "0.42.0",
   "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
   "author": {
     "name": "Erwin Gribnau"
@@ -17,7 +17,7 @@
     "gitlabTokens": {
       "type": "string",
       "title": "GitLab tokens",
-      "description": "GitLab access tokens, kept in secure storage, in the same form as Forgejo tokens. Needs read_api.",
+      "description": "GitLab access tokens, kept in secure storage, in the same form as Forgejo tokens. Needs api to assign and close, or read_api for read only.",
       "default": "",
       "sensitive": true
     },

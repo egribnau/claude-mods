@@ -31,6 +31,8 @@ export type Tracker = {
   tokensUrl: string
   scopes: string
   setting: TokenSetting
+  // The scope a token needs to assign and close.
+  writeScope: string
   // The open milestones; none when the list is refused.
   milestones(): Promise<MilestoneRow[]>
   // Your open issues in this repo, and all its open issues.

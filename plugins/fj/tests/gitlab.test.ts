@@ -149,13 +149,14 @@ const pageHeaders = (page: number, next: string, total: number) => ({
 // The fake Send.
 
 type Reply = { status: number; body?: unknown; headers?: Record<string, string> } | 'down'
-type Asked = { url: string; method: string; headers: Record<string, string> }
+type Asked = { url: string; method: string; headers: Record<string, string>; body?: unknown }
 
-// A Send answering through `route`, recording each request.
-function fakeSend(route: (url: URL) => Reply, asked: Asked[] = []): Send {
-  return (async (url: string, init?: { method?: string; headers?: Record<string, string> }) => {
-    asked.push({ url, method: init?.method ?? 'GET', headers: init?.headers ?? {} })
-    const r = route(new URL(url))
+// A Send answering through `route`, recording each request with its JSON body.
+function fakeSend(route: (url: URL, method: string) => Reply, asked: Asked[] = []): Send {
+  return (async (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+    const method = init?.method ?? 'GET'
+    asked.push({ url, method, headers: init?.headers ?? {}, ...(init?.body ? { body: JSON.parse(init.body) } : {}) })
+    const r = route(new URL(url), method)
     if (r === 'down') throw new Error('connect ECONNREFUSED')
     return {
       status: r.status,
@@ -181,13 +182,24 @@ function checkRoute(c: Check = {}) {
   }
 }
 
+// SELF's token has read_api only, so read only whatever the role.
 const READY = {
   kind: 'ready',
   openIssues: 7,
   login: 'alice',
-  actions: { kind: 'read-only', reason: 'later' },
-  features: { time: false, deps: false, epics: false },
+  actions: { kind: 'read-only', reason: 'scope' },
+  features: { time: true, deps: false, epics: false },
 }
+
+// The project with your access levels in it and in its group.
+const access = (project: number | null, group: number | null) => ({
+  ...PROJ,
+  permissions: {
+    project_access: project === null ? null : { access_level: project, notification_level: 3 },
+    group_access: group === null ? null : { access_level: group, notification_level: 3 },
+  },
+})
+const API = { status: 200, body: { ...SELF, scopes: ['api'] } }
 
 // check()
 
@@ -210,8 +222,30 @@ test('check: the version detection found is shown', async () => {
   expect(got.setup).toEqual(READY)
 })
 
-test('check: a token with api passes as well as one with read_api', async () => {
-  const got = await gitlab(fakeSend(checkRoute({ self: { status: 200, body: { ...SELF, scopes: ['api'] } } })), R, 'glpat-x', null).check()
+test('check: a token with api and Developer may assign and close', async () => {
+  const asked: Asked[] = []
+  const got = await gitlab(fakeSend(checkRoute({ self: API, project: { status: 200, body: access(30, null) } }), asked), R, 'glpat-x', null).check()
+  expect(got.setup).toEqual({ ...READY, actions: { kind: 'ok' } })
+  expect(asked).toHaveLength(3)
+})
+
+test('check: the higher of the project and group role counts, Reporter is enough', async () => {
+  const at = async (project: number | null, group: number | null) =>
+    (await gitlab(fakeSend(checkRoute({ self: API, project: { status: 200, body: access(project, group) } })), R, 'glpat-x', null).check())
+      .setup
+  expect(await at(10, 20)).toMatchObject({ actions: { kind: 'ok' } })
+  expect(await at(20, null)).toMatchObject({ actions: { kind: 'ok' } })
+  expect(await at(10, 10)).toMatchObject({ actions: { kind: 'read-only', reason: 'role' } })
+  expect(await at(null, null)).toMatchObject({ actions: { kind: 'read-only', reason: 'role' } })
+})
+
+test('check: a token with api but no permissions in the answer is read only by role', async () => {
+  const got = await gitlab(fakeSend(checkRoute({ self: API })), R, 'glpat-x', null).check()
+  expect(got.setup).toEqual({ ...READY, actions: { kind: 'read-only', reason: 'role' } })
+})
+
+test('check: read_api only is read only by scope, even as Maintainer', async () => {
+  const got = await gitlab(fakeSend(checkRoute({ project: { status: 200, body: access(40, null) } })), R, 'glpat-x', null).check()
   expect(got.setup).toEqual(READY)
 })
 
@@ -239,11 +273,15 @@ test('check: a token with only read_user lacks read_api', async () => {
   expect(got.setup).toEqual({ kind: 'no-scope', missing: 'read_api' })
 })
 
-test('check: an older GitLab without personal_access_tokens/self still reaches ready', async () => {
+test('check: an older GitLab without personal_access_tokens/self still reaches ready, its actions unknown', async () => {
   const asked: Asked[] = []
-  const got = await gitlab(fakeSend(checkRoute({ self: { status: 404, body: { error: '404 Not Found' } } }), asked), R, 'glpat-x', null).check()
-  expect(got.setup).toEqual(READY)
+  const old = { status: 404, body: { error: '404 Not Found' } }
+  const got = await gitlab(fakeSend(checkRoute({ self: old, project: { status: 200, body: access(30, null) } }), asked), R, 'glpat-x', null).check()
+  expect(got.setup).toEqual({ ...READY, actions: { kind: 'unknown' } })
   expect(asked).toHaveLength(3)
+  // Below Reporter it is read only all the same.
+  const guest = await gitlab(fakeSend(checkRoute({ self: old, project: { status: 200, body: access(10, null) } })), R, 'glpat-x', null).check()
+  expect(guest.setup).toMatchObject({ actions: { kind: 'read-only', reason: 'role' } })
 })
 
 test('check: /user refused with 403 means read_api is missing', async () => {
@@ -296,7 +334,8 @@ test('the tracker names GitLab, its scope, its setting and where to make a token
     setting: string
   }
   expect(t.name).toBe('GitLab')
-  expect(t.scopes).toBe('read_api')
+  expect(t.scopes).toBe('api, or read_api for read only')
+  expect(t.writeScope).toBe('api')
   expect(t.setting).toBe('GitLab tokens')
   expect(t.tokensUrl).toBe('https://gitlab.com/-/user_settings/personal_access_tokens')
 })
@@ -437,7 +476,7 @@ test('no epics, blockers or children on GitLab yet, and nothing asked for them',
 
 // One issue
 
-test('issue: one request by iid, mapped for the detail view', async () => {
+test('issue: three requests by iid, mapped for the detail view; notes and merge requests refused leave them out', async () => {
   const asked: Asked[] = []
   const raw = {
     ...issue(12, '2026-09-25T09:00:00.000Z', { milestone: V12, labels: ['bug'], assignees: ['alice'] }),
@@ -465,7 +504,8 @@ test('issue: one request by iid, mapped for the detail view', async () => {
     milestone: { title: 'v1.2', due: '2026-10-31' },
     due: '2026-10-20',
     branch: null,
-    logged: null,
+    logged: 0,
+    estimate: null,
     labels: [{ name: 'bug', color: 'd9534f' }],
     assignees: ['alice'],
     blockedBy: null,
@@ -474,7 +514,102 @@ test('issue: one request by iid, mapped for the detail view', async () => {
     commits: null,
     lastComment: null,
   })
-  expect(asked.map(a => a.url)).toEqual([`${PROJECT}/issues/12`])
+  expect(asked.map(a => a.url)).toEqual([
+    `${PROJECT}/issues/12`,
+    `${PROJECT}/issues/12/notes?sort=desc&order_by=created_at&per_page=20`,
+    `${PROJECT}/issues/12/related_merge_requests`,
+  ])
+})
+
+const note = (author: string, created: string, body: string, system = false) => ({
+  id: 9000 + Date.parse(created) / 1000,
+  type: null,
+  body,
+  author: person(author, 800),
+  created_at: created,
+  updated_at: created,
+  system,
+  noteable_id: 160000444,
+  noteable_type: 'Issue',
+  noteable_iid: 12,
+  resolvable: false,
+  confidential: false,
+  internal: false,
+})
+
+const mr = (iid: number, title: string, state: string) => ({
+  id: 310000000 + iid,
+  iid,
+  project_id: 52117834,
+  title,
+  description: '',
+  state,
+  source_branch: `${iid}-fix`,
+  target_branch: 'main',
+  author: person('jdoe', 777),
+  web_url: `https://gitlab.com/boats/radar/-/merge_requests/${iid}`,
+})
+
+test('issue: time spent and estimate, the last note that is no system note, and related merge requests', async () => {
+  const raw = {
+    ...issue(12, '2026-09-25T09:00:00.000Z'),
+    time_stats: { time_estimate: 14400, total_time_spent: 5400, human_time_estimate: '4h', human_total_time_spent: '1h 30m' },
+  }
+  const notes = [
+    note('alice', '2026-10-08T09:30:00.000Z', 'assigned to @alice', true),
+    note('mvos', '2026-10-07T15:00:00.000Z', 'Seen on v1.1 too.'),
+    note('jdoe', '2026-10-01T10:00:00.000Z', 'First.'),
+  ]
+  const merges = [mr(31, 'Fix the radar sweep', 'opened'), mr(29, 'Try a sweep', 'closed'), mr(30, 'Sweep, again', 'merged')]
+  const t = gitlab(
+    fakeSend(u =>
+      u.pathname === `${ISSUES}/12`
+        ? { status: 200, body: raw }
+        : u.pathname === `${ISSUES}/12/notes`
+          ? { status: 200, body: notes }
+          : u.pathname === `${ISSUES}/12/related_merge_requests`
+            ? { status: 200, body: merges }
+            : { status: 404 },
+    ),
+    R,
+    'glpat-x',
+    null,
+  )
+  const got = await t.issue(12, { time: false, deps: false, epics: false })
+
+  expect(got.logged).toBe(5400)
+  expect(got.estimate).toBe(14400)
+  expect(got.lastComment).toEqual({ author: 'mvos', when: '2026-10-07T15:00:00.000Z', body: 'Seen on v1.1 too.' })
+  expect(got.pulls).toEqual([
+    { number: 31, title: 'Fix the radar sweep', state: 'open' },
+    { number: 29, title: 'Try a sweep', state: 'closed' },
+    { number: 30, title: 'Sweep, again', state: 'merged' },
+  ])
+  expect(got.commits).toBe(null)
+  expect(got.branch).toBe(null)
+  expect(got.blockedBy).toBe(null)
+  expect(got.blocks).toBe(null)
+})
+
+test('issue: only system notes leave no last comment, and no time_stats leaves time unknown', async () => {
+  const { time_stats: _, ...raw } = issue(12, '2026-09-25T09:00:00.000Z')
+  const t = gitlab(
+    fakeSend(u =>
+      u.pathname === `${ISSUES}/12`
+        ? { status: 200, body: raw }
+        : u.pathname === `${ISSUES}/12/notes`
+          ? { status: 200, body: [note('jdoe', '2026-10-01T10:00:00.000Z', 'changed the description', true)] }
+          : { status: 200, body: [] },
+    ),
+    R,
+    'glpat-x',
+    null,
+  )
+  const got = await t.issue(12, { time: false, deps: false, epics: false })
+  expect(got.lastComment).toBe(null)
+  expect(got.logged).toBe(null)
+  expect(got.estimate).toBe(null)
+  expect(got.pulls).toEqual([])
 })
 
 test('issue: a closed one stays closed, and a missing one throws', async () => {
@@ -493,12 +628,93 @@ test('issue: a closed one stays closed, and a missing one throws', async () => {
   await expect(t.issue(404, { time: false, deps: false, epics: false })).rejects.toThrow('#404: HTTP 404')
 })
 
-test('assign and close send nothing and say why', async () => {
+// Assign and close. The ids fj saw are kept per host for the whole run, so
+// each test has a host of its own.
+
+const at = (host: string): Repo => ({ ...R, host })
+const ISSUE_12 = (host: string) => `https://${host}/api/v4/projects/boats%2Fradar/issues/12`
+
+// Answers check, the issue lists and /users by username from `users`; PUT
+// on issue 12 with `put`.
+function writeRoute(put: Reply, users: Record<string, number> = {}) {
+  return (u: URL, method: string): Reply => {
+    if (method === 'PUT') return u.pathname.endsWith('/issues/12') ? put : { status: 404 }
+    if (u.pathname === '/api/v4/users') {
+      const name = u.searchParams.get('username') ?? ''
+      return { status: 200, body: name in users ? [{ ...person(name, users[name] ?? 0) }] : [] }
+    }
+    if (u.pathname === ISSUES) return { status: 200, body: OPEN_FOR_IDS, headers: pageHeaders(1, '', 1) }
+    return checkRoute()(u)
+  }
+}
+const OPEN_FOR_IDS = [issue(15, '2026-09-01T09:00:00.000Z', { assignees: ['jdoe'] })]
+
+test('assign: you, known from check, in assignee_id with JSON, and nothing looked up', async () => {
   const asked: Asked[] = []
-  const t = gitlab(fakeSend(checkRoute(), asked), R, 'glpat-x', null)
-  expect(await t.assign(12, ['alice'])).toBe('fj cannot change GitLab issues yet.')
-  expect(await t.close(12, true)).toBe('fj cannot change GitLab issues yet.')
-  expect(asked).toEqual([])
+  const t = gitlab(fakeSend(writeRoute({ status: 200, body: {} }), asked), at('gl-a.example'), 'glpat-x', null)
+  await t.check()
+  asked.length = 0
+
+  expect(await t.assign(12, ['alice'])).toBe(null)
+  expect(asked).toHaveLength(1)
+  expect(asked[0]?.url).toBe(ISSUE_12('gl-a.example'))
+  expect(asked[0]?.method).toBe('PUT')
+  expect(asked[0]?.headers['Content-Type']).toBe('application/json')
+  expect(asked[0]?.headers['PRIVATE-TOKEN']).toBe('glpat-x')
+  expect(asked[0]?.body).toEqual({ assignee_id: 991 })
+})
+
+test('assign: nobody is assignee_id 0', async () => {
+  const asked: Asked[] = []
+  const t = gitlab(fakeSend(writeRoute({ status: 200, body: {} }), asked), at('gl-b.example'), 'glpat-x', null)
+  expect(await t.assign(12, [])).toBe(null)
+  expect(asked.map(a => a.body)).toEqual([{ assignee_id: 0 }])
+})
+
+test('assign: ids from an issue list, else looked up by username; several go in assignee_ids', async () => {
+  const asked: Asked[] = []
+  const t = gitlab(fakeSend(writeRoute({ status: 200, body: {} }, { mvos: 1234 }), asked), at('gl-c.example'), 'glpat-x', null)
+  await t.open()
+  asked.length = 0
+
+  expect(await t.assign(12, ['jdoe', 'mvos'])).toBe(null)
+  expect(asked.map(a => a.url)).toEqual(['https://gl-c.example/api/v4/users?username=mvos', ISSUE_12('gl-c.example')])
+  // jdoe is the issue's author (777) and its assignee (900): the assignee came last.
+  expect(asked[1]?.body).toEqual({ assignee_ids: [900, 1234] })
+
+  // Looked up once, kept.
+  asked.length = 0
+  expect(await t.assign(12, ['mvos'])).toBe(null)
+  expect(asked.map(a => a.body)).toEqual([{ assignee_id: 1234 }])
+})
+
+test('assign: a login GitLab does not know is named, and nothing is changed', async () => {
+  const asked: Asked[] = []
+  const t = gitlab(fakeSend(writeRoute({ status: 200, body: {} }), asked), at('gl-d.example'), 'glpat-x', null)
+  expect(await t.assign(12, ['ghost'])).toBe('no GitLab user ghost')
+  expect(asked.every(a => a.method === 'GET')).toBe(true)
+})
+
+test('close and reopen: state_event', async () => {
+  const asked: Asked[] = []
+  const t = gitlab(fakeSend(writeRoute({ status: 200, body: {} }), asked), at('gl-e.example'), 'glpat-x', null)
+  expect(await t.close(12, true)).toBe(null)
+  expect(await t.close(12, false)).toBe(null)
+  expect(asked.map(a => [a.method, a.url, a.body])).toEqual([
+    ['PUT', ISSUE_12('gl-e.example'), { state_event: 'close' }],
+    ['PUT', ISSUE_12('gl-e.example'), { state_event: 'reopen' }],
+  ])
+})
+
+test("a refusal says GitLab's message, its fields' messages, its error, or the status", async () => {
+  const why = async (put: Reply) => gitlab(fakeSend(writeRoute(put)), at('gl-f.example'), 'glpat-x', null).close(12, true)
+  expect(await why({ status: 403, body: { message: '403 Forbidden' } })).toBe('403 Forbidden')
+  expect(await why({ status: 400, body: { message: { assignee_ids: ['is invalid'], state_event: ['is unknown'] } } })).toBe(
+    'is invalid, is unknown',
+  )
+  expect(await why({ status: 401, body: { error: 'invalid_token' } })).toBe('invalid_token')
+  expect(await why({ status: 502, body: {} })).toBe('HTTP 502')
+  expect(await why('down')).toBe('connect ECONNREFUSED')
 })
 
 // The pane, on gitlab.com
@@ -591,7 +807,7 @@ const OPEN = [
 ]
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`gitlab.com: setup passes, read only for now, on ${surface}`, GL, async ($, on) => {
+  test(`gitlab.com: setup passes, read only with a read_api token, on ${surface}`, GL, async ($, on) => {
     const asked: World['asked'] = []
     // Your issues failing keeps the steps on screen.
     world(on, { mineStatus: 500, open: OPEN, asked })
@@ -607,7 +823,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
         '✓ Forge   GitLab at gitlab.com',
         '✓ Token   for gitlab.com from GitLab tokens',
         '✓ Access  7 open issues, as alice',
-        '· Actions read only on GitLab for now',
+        '· Actions read only, token lacks api',
       ]),
     )
     expect(all).not.toContain('What to do')
@@ -678,7 +894,7 @@ test('gitlab.com without a token: how to make one for GitLab, and nothing asked'
 
   expect(all).toContain('✓ Forge   GitLab at gitlab.com')
   expect(all).toContain('✗ Token   none found')
-  expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with read_api.')
+  expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
   expect(all).toContain('https://gitlab.com/-/user_settings/personal_access_tokens')
   expect(all).toContain(
     '2. Run /plugin configure fj@egribnau-mods and paste it as GitLab tokens, alone or as gitlab.com=<token> next to tokens for other hosts.',
@@ -699,5 +915,5 @@ test('gitlab.com refusing the token: says GitLab did not accept it', GL, async (
   expect(all).toContain(
     'GitLab did not accept the token for gitlab.com from GitLab tokens: it may be mistyped, expired or revoked.',
   )
-  expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with read_api.')
+  expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
 })

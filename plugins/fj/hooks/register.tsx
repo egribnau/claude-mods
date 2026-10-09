@@ -681,8 +681,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           : s.actions.reason === 'later'
             ? `read only on ${t?.name ?? 'this forge'} for now`
             : s.actions.reason === 'scope'
-              ? 'read only, token lacks write:issue'
-              : `read only, ${s.login} may not push here`
+              ? `read only, token lacks ${t?.writeScope ?? 'write:issue'}`
+              : s.actions.reason === 'role'
+                ? `read only, ${s.login} is below Reporter here`
+                : `read only, ${s.login} may not push here`
       return line(`step-${step}`, `· ${LABEL[step].padEnd(8)}${why}`, { color: 'inactive' })
     }
     return line(`step-${step}`, `${mark} ${LABEL[step].padEnd(8)}${text}`, { color })
@@ -994,7 +996,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         facts.push(keyed('due', 'Due', <Text color={due.passed ? 'error' : 'warning'}>{due.text}</Text>))
       }
       if (i.branch) facts.push(keyed('branch', 'Branch', <Text color="success">{i.branch}</Text>))
-      if (i.logged) facts.push(keyed('time', 'Time', <Text>{`${duration(i.logged)} logged`}</Text>))
+      const time = i.logged
+        ? `${duration(i.logged)} logged${i.estimate ? ` of ${duration(i.estimate)} estimated` : ''}`
+        : i.estimate
+          ? `${duration(i.estimate)} estimated`
+          : null
+      if (time) facts.push(keyed('time', 'Time', <Text>{time}</Text>))
       if (i.labels.length > 0) {
         facts.push(
           keyed(
@@ -1098,7 +1105,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               'read-only',
               acts.kind === 'read-only' && acts.reason === 'later'
                 ? `fj cannot assign or close ${t?.name ?? 'its'} issues yet.`
-                : "Assign and close need a token with write:issue: the setup guide's steps make one.",
+                : acts.kind === 'read-only' && acts.reason === 'role'
+                  ? `Assign and close need Reporter or higher on ${slug(r)}.`
+                  : `Assign and close need a token with ${t?.writeScope ?? 'write:issue'}: the setup guide's steps make one.`,
               { dimColor: true },
             )}
           {error && para('action-error', error, { color: 'error' })}

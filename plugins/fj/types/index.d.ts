@@ -33,11 +33,12 @@ export type Setup =
 
 export type Features = { time: boolean; deps: boolean; epics: boolean }
 
-// Whether fj may assign and close issues: the token needs write:issue and
-// you push rights on the repo. `unknown`: Forgejo would not list the token's
-// scopes, so the buttons show and Forgejo has the last word. `later`: fj
-// cannot assign or close on this forge yet (GitLab).
-export type Actions = { kind: 'ok' } | { kind: 'read-only'; reason: 'scope' | 'push' | 'later' } | { kind: 'unknown' }
+// Whether fj may assign and close issues: the token needs write:issue (on
+// GitLab api) and you push rights on the repo (on GitLab Reporter or
+// higher, `role`). `unknown`: the forge would not list the token's scopes,
+// so the buttons show and the forge has the last word. `later`: fj cannot
+// assign or close on this forge yet.
+export type Actions = { kind: 'ok' } | { kind: 'read-only'; reason: 'scope' | 'push' | 'role' | 'later' } | { kind: 'unknown' }
 
 // One open issue in this repo, as the overview lists it.
 export type IssueRow = {
@@ -90,8 +91,9 @@ export type IssueDetail = {
   milestone: { title: string; due: string | null } | null
   due: string | null
   branch: string | null
-  // Seconds logged on the issue.
+  // Seconds logged on the issue, and estimated for it (GitLab only).
   logged: number | null
+  estimate: number | null
   labels: { name: string; color: string }[]
   // The logins it is assigned to.
   assignees: string[]
