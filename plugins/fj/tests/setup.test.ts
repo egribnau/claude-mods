@@ -109,7 +109,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     const all = await texts(ui)
 
-    expect(opened.at(-1)).toEqual(expect.objectContaining({ id: 'fj', title: 'fj · boats/radar' }))
+    expect(opened.at(-1)).toEqual(expect.objectContaining({ id: 'fj', title: "What's next" }))
     expect(asked.slice(0, 2)).toEqual([
       { url: 'https://git.example.org/api/v1/version', auth: undefined },
       { url: 'https://git.example.org/api/v1/repos/boats/radar', auth: 'token secret' },

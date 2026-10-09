@@ -87,6 +87,42 @@ export type Detail =
   | { kind: 'ok'; issue: IssueDetail }
   | { kind: 'error'; number: number; message: string }
 
+// An open issue an epic depends on, as the Epics pane lists it. `mine`: it
+// is assigned to you; `assignees`: the logins it is assigned to; `blocked`:
+// it has open dependencies of its own.
+export type EpicChild = {
+  number: number
+  title: string
+  state: 'open' | 'closed'
+  assignees: string[]
+  mine: boolean
+  blocked: boolean
+}
+
+// An issue with the Epic label. Its children are the issues it depends on;
+// null when Forgejo would not say, or for a closed epic, which shows none.
+export type Epic = { number: number; title: string; state: 'open' | 'closed'; children: EpicChild[] | null }
+
+// The epics of one milestone, or of none (`title` null), with the
+// milestone's due date and how many of its issues are closed.
+export type EpicGroup = { title: string | null; due: string | null; closed: number; total: number; epics: Epic[] }
+
+// The Epics pane: what the picker offers and which is picked (`m:<title>`,
+// `none` or `all`), the groups that pick shows, and how many open epics the
+// repo has in all, which decides whether the pane opens.
+export type Epics =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | {
+      kind: 'ok'
+      // A milestone's option carries its due date.
+      options: { value: string; label: string; due?: string | null }[]
+      pick: string
+      groups: EpicGroup[]
+      openEpics: number
+    }
+  | { kind: 'error'; message: string }
+
 declare module 'claude-code' {
   interface PluginState {
     fj: {
@@ -95,9 +131,19 @@ declare module 'claude-code' {
       token: TokenSource
       setup: Setup
       overview: Overview
-      // The issue open in the detail view, by number; null shows What's next.
-      picked: number | null
-      detail: Detail
+      // Per pane: the issue open in its detail view, by number (null shows
+      // the pane's list), and what was loaded for it.
+      picked: StateFamily<number | null>
+      detail: StateFamily<Detail>
+      epics: Epics
+      // Whether /fj opened the Epics pane, so it closes once no epic is open.
+      epicsShown: boolean
+      // The picker's choice in the Epics pane; null starts on its first option.
+      epicsPick: string | null
+      // Whether the picker's list is open.
+      pickerOpen: boolean
+      // The epics folded open in the Epics pane, by number.
+      unfolded: number[]
       // Icons chosen in this session, before a reload brings the setting.
       icons: 'icons' | 'text' | null
     }

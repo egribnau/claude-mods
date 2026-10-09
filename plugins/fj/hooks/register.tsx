@@ -1,11 +1,13 @@
-import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderChildren } from 'claude-code'
+import { atom, memberOf, read, update } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren, RenderInput } from 'claude-code'
 
-import type { Detail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
+import type { Detail, Epic, EpicChild, EpicGroup, Epics, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
+import { bar, groupsFor, openChildren, pickerOptions, standing, summary, tally } from './epics'
 import { day, dueText, duration, inkOn, loadIssue, wrap } from './issue'
 import { pickNext, waitingText } from './next'
 
 const PANE = 'fj'
+const EPICS_PANE = 'fj-epics'
 const CONFIGURE = '/plugin configure fj@egribnau-mods'
 const SCOPES = 'read:issue and read:repository'
 
@@ -14,14 +16,22 @@ const version = atom({ plugin: 'fj', key: 'version' } as const, null)
 const token = atom({ plugin: 'fj', key: 'token' } as const, 'none')
 const setup = atom({ plugin: 'fj', key: 'setup' } as const, { kind: 'checking' })
 const overview = atom({ plugin: 'fj', key: 'overview' } as const, { kind: 'idle' })
+// Per pane, keyed by its id: each opens issues in a detail view of its own.
 const picked = atom({ plugin: 'fj', key: 'picked' } as const, null)
 const detail = atom({ plugin: 'fj', key: 'detail' } as const, { kind: 'idle' })
 const iconsChosen = atom({ plugin: 'fj', key: 'icons' } as const, null)
+const epics = atom({ plugin: 'fj', key: 'epics' } as const, { kind: 'idle' })
+const unfolded = atom({ plugin: 'fj', key: 'unfolded' } as const, [])
+const epicsShown = atom({ plugin: 'fj', key: 'epicsShown' } as const, false)
+const epicsPick = atom({ plugin: 'fj', key: 'epicsPick' } as const, null)
+const pickerOpen = atom({ plugin: 'fj', key: 'pickerOpen' } as const, false)
 
 // The Token setting, read in `register`; a reload reads it again.
 let configToken: string | null = null
 // The Icons setting: ask, icons or text.
 let configIcons = 'ask'
+// The Epic label setting: the label that makes an issue an epic.
+let configLabel = 'epic'
 
 // Nerd Font icons for the buttons (Material Design set).
 const ICON = { refresh: '\u{F0450}', work: '\u{F0674}', open: '\u{F03CC}', back: '\u{F004D}' } as const
@@ -174,26 +184,42 @@ const toRow = (i: RawListed): IssueRow => ({
 
 const oldestFirst = (a: IssueRow, b: IssueRow) => a.created.localeCompare(b.created)
 
+// Every page of a list, 50 at a time; a page that fails names `what`.
+async function fetchAll<T>($: EngineInterface, url: string, what: string): Promise<T[]> {
+  const tok = await readToken($)
+  const headers = { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' }
+  const found: T[] = []
+  for (let page = 1; ; page++) {
+    const res = await $.http.fetch(`${url}&limit=50&page=${page}`, { method: 'GET', headers })
+    if (!res.ok) throw new Error(`${what}: HTTP ${res.status}`)
+    const batch = JSON.parse(res.text) as T[]
+    found.push(...batch)
+    if (batch.length < 50) break
+  }
+  return found
+}
+
+// One request's JSON, or null when it failed.
+async function fetchJson<T>($: EngineInterface, url: string): Promise<T | null> {
+  const tok = await readToken($)
+  const res = await $.http
+    .fetch(url, { method: 'GET', headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' } })
+    .catch(() => null)
+  if (!res?.ok) return null
+  try {
+    return JSON.parse(res.text) as T
+  } catch {
+    return null
+  }
+}
+
 // What's next in this repo. Two lists: your open issues, from Forgejo's
 // search (it covers every repo the token sees, so it is narrowed to this
 // one), and all open issues in the repo. Yours are In progress; of the rest,
 // the unassigned ones are walked oldest first for Next.
 async function loadOverview($: EngineInterface, r: Repo) {
   await update($, overview, (): Overview => ({ kind: 'loading' }))
-  const tok = await readToken($)
-  const headers = { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' }
-  // Every page of a list, 50 at a time.
-  const all = async <T,>(url: string, what: string): Promise<T[]> => {
-    const found: T[] = []
-    for (let page = 1; ; page++) {
-      const res = await $.http.fetch(`${url}&limit=50&page=${page}`, { method: 'GET', headers })
-      if (!res.ok) throw new Error(`${what}: HTTP ${res.status}`)
-      const batch = JSON.parse(res.text) as T[]
-      found.push(...batch)
-      if (batch.length < 50) break
-    }
-    return found
-  }
+  const all = <T,>(url: string, what: string) => fetchAll<T>($, url, what)
   try {
     const found = await all<RawFound>(`${base(r)}/repos/issues/search?assigned=true&state=open&type=issues`, 'your issues')
     const inProgress = found.filter(i => i.repository.full_name === slug(r)).map(toRow).sort(oldestFirst)
@@ -204,29 +230,97 @@ async function loadOverview($: EngineInterface, r: Repo) {
       .map(toRow)
       .sort(oldestFirst)
     const { next, queue, blocked } = await pickNext(free, async n => {
-      const res = await $.http
-        .fetch(`${base(r)}/repos/${slug(r)}/issues/${n}/dependencies`, { method: 'GET', headers })
-        .catch(() => null)
-      if (!res?.ok) return null
-      try {
-        const deps = JSON.parse(res.text) as { number: number; state: string }[]
-        return deps.filter(d => d.state === 'open').map(d => d.number)
-      } catch {
-        return null
-      }
+      const deps = await fetchJson<{ number: number; state: string }[]>($, `${base(r)}/repos/${slug(r)}/issues/${n}/dependencies`)
+      return deps ? deps.filter(d => d.state === 'open').map(d => d.number) : null
     })
     await update($, overview, (): Overview => ({ kind: 'ok', inProgress, next, queue, blocked }))
     // An issue that is closed, or now someone else's, closes: What's next shows.
     const shown = new Set([...inProgress, ...free].map(i => i.number))
-    await update($, picked, n => (n !== null && shown.has(n) ? n : null))
+    await update($, memberOf(picked, { requestId: PANE }), n => (n !== null && shown.has(n) ? n : null))
   } catch (err) {
     await update($, overview, (): Overview => ({ kind: 'error', message: message(err) }))
   }
 }
 
-// Reads issue `n` for the detail view.
-async function loadDetail($: EngineInterface, r: Repo, n: number) {
-  await update($, detail, (): Detail => ({ kind: 'loading', number: n }))
+type RawDep = { number: number; title: string; state: string; assignees?: { login: string }[] | null }
+type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string }[] | null }
+type RawMilestone = { title: string; due_on: string | null; open_issues: number; closed_issues: number }
+
+// The epics: issues with the Epic label. The pane shows what the picker
+// picked: one open milestone's epics (at first the one due first that has
+// any), those with no milestone, or all of them. For each open epic shown,
+// its children: the issues it depends on, with whether each is yours and,
+// for the others, whether it is blocked. What was shown stays up while this
+// loads, so the picker does not vanish under the person's hand.
+async function loadEpics($: EngineInterface, r: Repo) {
+  if ((await read($, epics)).kind !== 'ok') await update($, epics, (): Epics => ({ kind: 'loading' }))
+  const api = `${base(r)}/repos/${slug(r)}`
+  try {
+    const label = configLabel
+    const found = (
+      await fetchAll<RawEpic>($, `${api}/issues?state=all&type=issues&labels=${encodeURIComponent(label)}`, 'epics')
+    )
+      .filter(i => (i.labels ?? []).some(l => l.name === label))
+      .map(i => ({ ...i, milestone: i.milestone?.title ?? null }))
+    const openEpics = found.filter(i => i.state === 'open').length
+    if (openEpics === 0) {
+      await update($, epics, (): Epics => ({ kind: 'ok', options: [], pick: 'all', groups: [], openEpics }))
+      return
+    }
+    const me = (await fetchJson<{ login: string }>($, `${base(r)}/user`))?.login ?? null
+    const milestones = (await fetchAll<RawMilestone>($, `${api}/milestones?state=open`, 'milestones')).map(m => ({
+      title: m.title,
+      due: m.due_on,
+      closed: m.closed_issues,
+      total: m.open_issues + m.closed_issues,
+    }))
+    const options = pickerOptions(milestones, found)
+    const wanted = await read($, epicsPick)
+    const pick = options.some(o => o.value === wanted) ? (wanted as string) : (options[0]?.value ?? 'all')
+    const deps = (n: number) => fetchJson<RawDep[]>($, `${api}/issues/${n}/dependencies`)
+    const load = async (i: (typeof found)[number]): Promise<Epic> => {
+      const state = i.state === 'closed' ? 'closed' : 'open'
+      if (state === 'closed') return { number: i.number, title: i.title, state, children: null }
+      const raw = await deps(i.number)
+      const children = raw
+        ? await Promise.all(
+            raw.map(async (c): Promise<EpicChild> => {
+              const assignees = (c.assignees ?? []).map(a => a.login)
+              const open = c.state !== 'closed'
+              const mine = me !== null && assignees.includes(me)
+              // Only an open child that is not yours is checked for what blocks it.
+              const blocked = open && !mine ? ((await deps(c.number)) ?? []).some(d => d.state !== 'closed') : false
+              return { number: c.number, title: c.title, state: open ? 'open' : 'closed', assignees, mine, blocked }
+            }),
+          )
+        : null
+      return { number: i.number, title: i.title, state, children }
+    }
+    const groups: EpicGroup[] = await Promise.all(
+      groupsFor(pick, milestones, found).map(async g => {
+        const shown = await Promise.all(g.epics.map(load))
+        shown.sort((a, b) => (a.state === 'closed' ? 1 : 0) - (b.state === 'closed' ? 1 : 0) || a.number - b.number)
+        const m = g.milestone
+        return { title: m?.title ?? null, due: m?.due ?? null, closed: m?.closed ?? 0, total: m?.total ?? 0, epics: shown }
+      }),
+    )
+    await update($, epics, (): Epics => ({ kind: 'ok', options, pick, groups, openEpics }))
+  } catch (err) {
+    await update($, epics, (): Epics => ({ kind: 'error', message: message(err) }))
+  }
+}
+
+// Shows what the picker picked in the Epics pane, and closes its list.
+async function pickEpics($: EngineInterface, value: string) {
+  await update($, pickerOpen, () => false)
+  await update($, epicsPick, () => value)
+  const r = await read($, repo)
+  if (r) await loadEpics($, r)
+}
+
+// Reads issue `n` for the detail view of pane `pane`.
+async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) {
+  await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'loading', number: n }))
   const tok = await readToken($)
   const get = async (path: string) => {
     const res = await $.http
@@ -247,36 +341,40 @@ async function loadDetail($: EngineInterface, r: Repo, n: number) {
   try {
     const issue = await loadIssue(get, n)
     // Another issue opened while this one loaded wins.
-    if ((await read($, picked)) !== n) return
-    await update($, detail, (): Detail => ({ kind: 'ok', issue }))
+    if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue }))
   } catch (err) {
-    if ((await read($, picked)) !== n) return
-    await update($, detail, (): Detail => ({ kind: 'error', number: n, message: message(err) }))
+    if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'error', number: n, message: message(err) }))
   }
 }
 
-// Shows issue `n` in the detail view, or the list again for null.
-async function openIssue($: EngineInterface, n: number | null) {
-  await update($, picked, () => n)
+// Shows issue `n` in the detail view of pane `pane`, or its list again for null.
+async function openIssue($: EngineInterface, pane: string, n: number | null) {
+  await update($, memberOf(picked, { requestId: pane }), () => n)
   const r = await read($, repo)
   if (n === null || !r) {
-    await update($, detail, (): Detail => ({ kind: 'idle' }))
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
     return
   }
-  await loadDetail($, r, n)
+  await loadDetail($, r, pane, n)
 }
 
-// Checks setup and, once it passes, loads What's next and, when an issue is
-// open, that issue again.
+// Checks setup and, once it passes, loads What's next and the epics and,
+// where an issue is open, that issue again.
 async function refresh($: EngineInterface): Promise<Repo | null> {
   const r = await check($)
   if (r && (await read($, setup)).kind === 'ready') {
     await loadOverview($, r)
-    const n = await read($, picked)
-    if (n !== null) await loadDetail($, r, n)
-    else await update($, detail, (): Detail => ({ kind: 'idle' }))
+    await loadEpics($, r)
+    for (const pane of [PANE, EPICS_PANE]) {
+      const n = await read($, memberOf(picked, { requestId: pane }))
+      if (n !== null) await loadDetail($, r, pane, n)
+      else await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
+    }
   } else {
     await update($, overview, (): Overview => ({ kind: 'idle' }))
+    await update($, epics, (): Epics => ({ kind: 'idle' }))
   }
   return r
 }
@@ -428,9 +526,641 @@ function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
   }
 }
 
+// Both panes draw here: they share setup, the detail view and the repo line.
+async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const inEpics = e.requestId === EPICS_PANE
+  const r = await read($, repo)
+  const v = await read($, version)
+  const from = await read($, token)
+  const s = await read($, setup)
+  const m = await read($, overview)
+  // The pane's full height, so the last rows sit at its bottom.
+  const height = e.props.scroll.bodyRows
+  const icons = (await read($, iconsChosen)) ?? configIcons
+  // A button's label: its icon when icons are on, else its words.
+  const say = (icon: string, words: string) => (icons === 'icons' ? icon : words)
+  const columns = e.props.bodyColumns
+
+  const line = (key: string, text: string, props: Record<string, unknown> = {}) => (
+    <Text key={key} wrap="truncate-end" {...props}>
+      {text}
+    </Text>
+  )
+  // A dim line that keeps its row when the list or detail under it is too
+  // long for the pane: that is cut at its bottom, never by squeezing this out.
+  const fixedLine = (key: string, text: string) => (
+    <Box key={key} flexShrink={0}>
+      {line(`${key}-text`, text, { dimColor: true })}
+    </Box>
+  )
+  const rule = (key: string, name: string) => fixedLine(key, `── ${name} `.padEnd(columns, '─'))
+  // A wrapped paragraph in which `a command` shows as a command and an
+  // https:// address as a link; the backticks themselves are not drawn.
+  const para = (key: string, text: string, props: Record<string, unknown> = {}) => {
+    const parts: RenderChildren[] = []
+    text.split(/`([^`]+)`/).forEach((piece, i) => {
+      if (i % 2 === 1) {
+        parts.push(<Text key={`${key}-c${i}`} color="warning">{piece}</Text>)
+        return
+      }
+      piece.split(/(https:\/\/\S+?)(?=[.,;:)]?(?:\s|$))/).forEach((bit, j) => {
+        if (bit === '') return
+        parts.push(
+          j % 2 === 1 ? (
+            <Text key={`${key}-u${i}-${j}`} color="suggestion" underline>
+              {bit}
+            </Text>
+          ) : (
+            bit
+          ),
+        )
+      })
+    })
+    return (
+      <Text key={key} wrap="wrap" {...props}>
+        {parts}
+      </Text>
+    )
+  }
+
+  const tokenText =
+    from === 'setting' ? 'from the Token setting' : 'none found'
+  const doneText: Record<Step, string> = {
+    repo: r ? slug(r) : '',
+    forgejo: v && r ? `${v} at ${r.host}` : '',
+    token: tokenText,
+    access: s.kind === 'ready' ? `${s.openIssues} open issues` : '',
+  }
+  const failText: Record<Step, string> = {
+    repo: 'no Forgejo repo here',
+    forgejo:
+      s.kind === 'not-forgejo' && s.reason === 'no-answer'
+        ? `no answer from ${r?.host ?? 'this host'}`
+        : s.kind === 'not-forgejo' && s.reason === 'too-old'
+          ? `${s.detail}, too old`
+          : `not found at ${r?.host ?? 'this host'}`,
+    token: 'none found',
+    access:
+      s.kind === 'token-refused'
+        ? 'token refused'
+        : s.kind === 'no-scope'
+          ? 'no permission'
+          : s.kind === 'not-found'
+            ? 'not found'
+            : 'no answer',
+  }
+  const at = STOPPED_AT[s.kind]
+  // Without a repo the token is still checked: it needs none. The steps
+  // that do say so.
+  const noRepo = s.kind === 'no-repo'
+  const noForge = s.kind === 'not-forgejo'
+  const steps = STEPS.map((step, i) => {
+    const mark =
+      s.kind === 'checking'
+        ? '…'
+        : (noRepo || noForge) && step === 'token'
+          ? from === 'none' ? '✗' : '✓'
+          : i < at ? '✓' : i === at ? '✗' : '·'
+    const color = mark === '✓' ? 'success' : mark === '✗' ? 'error' : 'inactive'
+    const text =
+      mark === '✓'
+        ? doneText[step]
+        : mark === '✗'
+          ? failText[step]
+          : noRepo
+            ? 'needs a repo'
+            : noForge
+              ? 'needs Forgejo'
+              : ''
+    return line(`step-${step}`, `${mark} ${LABEL[step].padEnd(8)}${text}`, { color })
+  })
+
+  const body: RenderChildren[] = []
+  if (s.kind !== 'ready' && s.kind !== 'checking') {
+    const about = intro(s, r, tokenText)
+    if (about) body.push(para('intro', about), <Box key="gap-intro" height={1} />)
+    const actions = todo(s, r, tokenText)
+    if (actions.length > 0) body.push(line('todo', 'What to do', { bold: true }))
+    actions.forEach((t, i) => body.push(para(`todo-${i}`, `${i + 1}. ${t}`)))
+    // Checking again is the guide's last step, so its button ends it.
+    body.push(
+      <Box key="again" height={1} marginTop={1} paddingLeft={3}>
+        <Button key="refresh" label="Check again" hotkey="r" onPress={() => refresh($)} />
+      </Box>,
+    )
+  }
+
+  // A heading with, on its right, the pane's own action when it has one.
+  const heading = (text: string, action?: { label: string }) => (
+    <Box key="title" height={1} flexShrink={0}>
+      <Text bold wrap="truncate-end">
+        {text}
+      </Text>
+      <Box flexGrow={1} />
+      {action && <Button key="refresh" label={say(ICON.refresh, action.label)} hotkey="r" onPress={() => refresh($)} />}
+    </Box>
+  )
+
+  // Setup passed and Icons is still ask: the one-time choice, before the list.
+  if (s.kind === 'ready' && r && icons === 'ask') {
+    const glyphs = [
+      { icon: ICON.refresh, name: 'refresh' },
+      { icon: ICON.work, name: 'work on' },
+      { icon: ICON.open, name: 'browser' },
+      { icon: ICON.back, name: 'back' },
+    ]
+    return (
+      <Box flexDirection="column" height={height}>
+        <Box key="choice" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          {heading('Forgejo for Claude is ready!')}
+          {steps}
+          <Box key="gap" height={1} />
+          {line('ask', 'One choice: icons on buttons', { bold: true })}
+          {para(
+            'why',
+            'fj can show its buttons as Nerd Font icons, which keeps them narrow. Look at the four below: do they show as icons, or as boxes or question marks?',
+          )}
+          <Box key="gap-glyphs" height={1} />
+          <Box key="glyphs" height={1}>
+            {glyphs.map(g => (
+              <Box key={`g-${g.name}`} width={Math.max(10, Math.floor(columns / 4))}>
+                <Text>{`  ${g.icon}`}</Text>
+              </Box>
+            ))}
+          </Box>
+          <Box key="names" height={1}>
+            {glyphs.map(g => (
+              <Box key={`n-${g.name}`} width={Math.max(10, Math.floor(columns / 4))}>
+                <Text dimColor>{g.name}</Text>
+              </Box>
+            ))}
+          </Box>
+          <Box key="gap-look" height={1} />
+          {line('look', 'Buttons would look like this:', { dimColor: true })}
+          <Text key="sample">{glyphs.map(g => `[ ${g.icon} ]`).join('  ')}</Text>
+          <Box key="choose" height={1} marginTop={1}>
+            <Button key="use-icons" label="Use icons" onPress={() => chooseIcons($, 'icons')} />
+            <Text>{'  '}</Text>
+            <Button key="keep-text" label="Keep text" onPress={() => chooseIcons($, 'text')} />
+          </Box>
+          <Box key="gap-later" height={1} />
+          {para('later', 'Asked once. Change it later in /config, under fj: Icons.', { dimColor: true })}
+        </Box>
+      </Box>
+    )
+  }
+
+  // An issue open: its detail in place of the list.
+  const open = await read($, memberOf(picked, e))
+  if (s.kind === 'ready' && r && open !== null) {
+    const d = await read($, memberOf(detail, e))
+    const now = await $.clock.now()
+    const top = (
+      <Box key="title" height={1} flexShrink={0}>
+        <Button
+          key="back"
+          label={say(ICON.back, inEpics ? '← Epics' : "← What's next")}
+          hotkey="b"
+          onPress={() => openIssue($, e.requestId, null)}
+        />
+        <Box flexGrow={1} />
+        <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => refresh($)} />
+      </Box>
+    )
+    const body: RenderChildren[] = []
+    if (d.kind === 'loading' || d.kind === 'idle') body.push(line('loading', `Loading #${open}…`, { dimColor: true }))
+    if (d.kind === 'error') body.push(para('error', `Could not load #${d.number}: ${d.message}.`, { color: 'error' }))
+    if (d.kind === 'ok') {
+      const i = d.issue
+      const KEY = 15
+      const keyed = (key: string, label: string, content: RenderChildren) => (
+        <Box key={key} height={1} flexShrink={0}>
+          <Text dimColor>{label.padEnd(KEY)}</Text>
+          {content}
+        </Box>
+      )
+      // One issue or pull request on a line: number, title, state.
+      const refLine = (key: string, label: string, x: { number: number; title: string; state: string }, numColor: string) => {
+        const state = x.state
+        const done = state === 'closed'
+        return keyed(
+          key,
+          label,
+          <>
+            <Text color={done ? 'inactive' : numColor}>{`#${x.number} `}</Text>
+            <Text wrap="truncate-end" color={done ? 'inactive' : undefined} strikethrough={done && label !== 'Pull requests'}>
+              {fit(x.title, columns - KEY - `#${x.number} `.length - state.length - 1)}
+            </Text>
+            <Box flexGrow={1} />
+            <Text color={state === 'open' ? (numColor === 'error' ? 'error' : 'success') : state === 'merged' ? 'merged' : 'inactive'}>
+              {` ${state}`}
+            </Text>
+          </>,
+        )
+      }
+      const facts: RenderChildren[] = []
+      if (i.due) {
+        const due = dueText(i.due, now)
+        facts.push(keyed('due', 'Due', <Text color={due.passed ? 'error' : 'warning'}>{due.text}</Text>))
+      }
+      if (i.branch) facts.push(keyed('branch', 'Branch', <Text color="success">{i.branch}</Text>))
+      if (i.logged) facts.push(keyed('time', 'Time', <Text>{`${duration(i.logged)} logged`}</Text>))
+      if (i.labels.length > 0) {
+        facts.push(
+          keyed(
+            'labels',
+            'Labels',
+            <Text wrap="truncate-end">
+              {i.labels.map((l, k) => (
+                <Text key={`label-${k}`}>
+                  {k > 0 ? ' ' : ''}
+                  <Text backgroundColor={`#${l.color}`} color={inkOn(l.color)}>{` ${l.name} `}</Text>
+                </Text>
+              ))}
+            </Text>,
+          ),
+        )
+      }
+      ;(i.blockedBy ?? []).forEach((x, k) => facts.push(refLine(`blocked-${k}`, k === 0 ? 'Blocked by' : '', x, 'error')))
+      ;(i.blocks ?? []).forEach((x, k) => facts.push(refLine(`blocks-${k}`, k === 0 ? 'Blocks' : '', x, 'suggestion')))
+      ;(i.pulls ?? []).forEach((x, k) => facts.push(refLine(`pull-${k}`, k === 0 ? 'Pull requests' : '', x, 'suggestion')))
+      ;(i.commits ?? []).slice(0, 3).forEach((c, k) =>
+        facts.push(
+          keyed(
+            `commit-${k}`,
+            k === 0 ? 'Commits' : '',
+            <>
+              <Text color="warning">{`${c.sha} `}</Text>
+              <Text wrap="truncate-end">{fit(c.message, columns - KEY - c.sha.length - 1 - age(c.when, now).length - 1)}</Text>
+              <Box flexGrow={1} />
+              <Text dimColor>{` ${age(c.when, now)}`}</Text>
+            </>,
+          ),
+        ),
+      )
+
+      const titleLines = wrap(`#${i.number} ${i.title}`, columns).slice(0, 2)
+      const milestone = i.milestone
+        ? `${i.milestone.title}${i.milestone.due ? ` (due ${day(i.milestone.due, now)})` : ''}`
+        : 'no milestone'
+      const comments = `${i.comments} ${i.comments === 1 ? 'comment' : 'comments'}`
+
+      // What is left for the description and the last comment.
+      const fixed = 1 + titleLines.length + 2 + 1 + (facts.length > 0 ? facts.length + 1 : 0) + 1 + 1 + 1 + 1
+      const last = i.lastComment
+      const lastLines = last ? wrap(last.body.trim(), columns) : []
+      const lastShown = Math.min(3, lastLines.length)
+      const lastRows = last ? 1 + 1 + lastShown + 1 : 0
+      const descLines = wrap(i.body.trim(), columns)
+      const descRoom = Math.max(2, height - fixed - lastRows - 2)
+      const descShown = descLines.length > descRoom ? descRoom - 1 : descLines.length
+
+      body.push(
+        <Box key="head" flexDirection="column" flexShrink={0}>
+          {titleLines.map((t, k) => (
+            <Text key={`t-${k}`} bold wrap="truncate-end">
+              {k === 0 ? <Text color="suggestion">{`#${i.number}`}</Text> : null}
+              {k === 0 ? t.slice(`#${i.number}`.length) : t}
+            </Text>
+          ))}
+          <Text dimColor wrap="truncate-end">{`${i.state} · ${milestone} · ${comments}`}</Text>
+          <Text dimColor wrap="truncate-end">{`opened ${age(i.created, now)} ago by ${i.author} · updated ${age(i.updated, now)} ago`}</Text>
+        </Box>,
+      )
+      if (facts.length > 0) {
+        body.push(
+          <Box key="facts" flexDirection="column" flexShrink={0} marginTop={1}>
+            {facts}
+          </Box>,
+        )
+      }
+      body.push(
+        <Box key="actions" height={1} flexShrink={0} marginTop={1}>
+          <Button key="work" label={say(ICON.work, 'Work on this')} hotkey="w" onPress={() => workOn($, i)} />
+          <Text>{'  '}</Text>
+          <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, i.url)} />
+        </Box>,
+      )
+      body.push(<Box key="gap-desc" height={1} flexShrink={0} />, rule('desc', 'Description'))
+      if (descLines.length === 0) body.push(line('no-desc', 'No description.', { dimColor: true }))
+      descLines.slice(0, descShown).forEach((t, k) => body.push(line(`d-${k}`, t || ' ')))
+      if (descShown < descLines.length) {
+        body.push(line('d-more', `… ${descLines.length - descShown} more lines`, { dimColor: true }))
+      }
+      if (last) {
+        body.push(
+          <Box key="gap-last" height={1} flexShrink={0} />,
+          rule('last', `Last comment ── ${last.author} · ${age(last.when, now)} ago`),
+        )
+        lastLines.slice(0, lastShown).forEach((t, k) => body.push(line(`c-${k}`, t || ' ')))
+        if (lastShown < lastLines.length) {
+          body.push(line('c-more', `… ${lastLines.length - lastShown} more lines`, { dimColor: true }))
+        }
+        if (i.comments > 1) {
+          const earlier = i.comments - 1
+          body.push(line('earlier', `${earlier} earlier ${earlier === 1 ? 'comment' : 'comments'}`, { dimColor: true }))
+        }
+      }
+    }
+    return (
+      <Box flexDirection="column" height={height}>
+        {top}
+        <Box key="gap" height={1} flexShrink={0} />
+        <Box key="detail" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          {body}
+        </Box>
+        {fixedLine('where', `${r.host}/${slug(r)}`)}
+      </Box>
+    )
+  }
+
+  // The Epics pane, once setup passes.
+  const ep = await read($, epics)
+  if (inEpics && s.kind === 'ready' && r) {
+    const now = await $.clock.now()
+    const folds = new Set(await read($, unfolded))
+    const groups = ep.kind === 'ok' ? ep.groups : []
+    const rows: RenderChildren[] = []
+    if (ep.kind === 'loading' || ep.kind === 'idle') rows.push(line('loading', 'Loading the epics…', { dimColor: true }))
+    if (ep.kind === 'error') rows.push(para('error', `Could not load the epics: ${ep.message}.`, { color: 'error' }))
+    if (ep.kind === 'ok' && groups.length === 0) rows.push(para('none', `No open epics in ${slug(r)}.`, { dimColor: true }))
+    const open = (x: Epic) => x.state === 'open' && folds.has(x.number)
+    // One number column for every group, so all titles line up.
+    const numbers = groups.flatMap(g =>
+      g.epics.flatMap(x => [x.number, ...(open(x) ? openChildren(x.children ?? []).map(c => c.number) : [])]),
+    )
+    const numWidth = Math.max(0, ...numbers.map(n => `#${n}`.length)) + 1
+    const num = (n: number) => `${`#${n}`.padStart(numWidth - 1)} `
+    // Bar and count at the right of an epic's row: 15 columns.
+    const titleWidth = Math.max(0, columns - 2 - numWidth - 15)
+    const indent = ' '.repeat(2 + numWidth)
+    groups.forEach((g, gi) => {
+      // The group's rule: the milestone's name bright, the rest dim.
+      const name = g.title ?? 'No milestone'
+      const rest = g.title ? `${g.due ? ` · due ${day(g.due, now)}` : ''} · ${g.closed}/${g.total} closed ` : ' '
+      rows.push(
+        // After the first, an extra empty line sets the group apart from the last epic above.
+        <Box key={`group-${gi}`} height={1} flexShrink={0} marginTop={gi > 0 ? 1 : 0}>
+          <Text dimColor>{'── '}</Text>
+          <Text bold>{name}</Text>
+          <Text dimColor>{rest}</Text>
+          <Text dimColor wrap="truncate-end">{'─'.repeat(Math.max(0, columns - 3 - name.length - rest.length))}</Text>
+        </Box>,
+      )
+      for (const x of g.epics) {
+        // A closed epic has nothing to fold; its row opens its detail.
+        if (x.state === 'closed') {
+          rows.push(
+            <Box key={`epic-${x.number}`} flexShrink={0}>
+              <Button key={`epic-${x.number}`} plain onPress={() => openIssue($, EPICS_PANE, x.number)}>
+                <Text wrap="truncate-end" dimColor>
+                  {`  ${num(x.number)}${fit(x.title, titleWidth).padEnd(titleWidth)} ${'✓ closed'.padStart(14)}`}
+                </Text>
+              </Button>
+            </Box>,
+          )
+          continue
+        }
+        const t = tally(x.children ?? [])
+        const b = bar(t.closed, t.total)
+        rows.push(
+          <Box key={`epic-${x.number}`} flexDirection="column" flexShrink={0} marginBottom={open(x) ? 0 : 1}>
+            {/* Two targets: the mark folds, the rest of the row opens the epic. */}
+            <Box height={1}>
+              <Button
+                key={`fold-${x.number}`}
+                plain
+                onPress={() =>
+                  update($, unfolded, ns => (ns.includes(x.number) ? ns.filter(n => n !== x.number) : [...ns, x.number]))
+                }
+              >
+                <Text>{open(x) ? '− ' : '+ '}</Text>
+              </Button>
+              <Button key={`epic-${x.number}`} plain onPress={() => openIssue($, EPICS_PANE, x.number)}>
+                <Text wrap="truncate-end">
+                  <Text color="suggestion">{num(x.number)}</Text>
+                  <Text bold>{`${fit(x.title, titleWidth).padEnd(titleWidth)} `}</Text>
+                  {b.filled && <Text color="success">{b.filled}</Text>}
+                  {b.empty && <Text dimColor>{b.empty}</Text>}
+                  <Text dimColor>{`${t.closed}/${t.total}`.padStart(6)}</Text>
+                </Text>
+              </Button>
+            </Box>
+            {!open(x) && (
+              <Box>
+                <Text>{indent}</Text>
+                {summary(x).flatMap((part, k) => [
+                  ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
+                  <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
+                    {part.text}
+                  </Text>,
+                ])}
+              </Box>
+            )}
+          </Box>,
+        )
+        if (!open(x)) continue
+        // Folded open: its open children, then how many are closed.
+        const kids: RenderChildren[] = []
+        for (const c of openChildren(x.children ?? [])) {
+          const st = standing(c)
+          const mark = st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : '  '
+          const who = st === 'taken' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : ''
+          const room = columns - 4 - numWidth
+          kids.push(
+            <Button key={`child-${c.number}`} plain onPress={() => openIssue($, EPICS_PANE, c.number)}>
+              <Text wrap="truncate-end" dimColor={st === 'blocked'}>
+                {'  '}
+                <Text color={st === 'mine' ? 'success' : undefined}>{mark}</Text>
+                <Text color={st === 'blocked' ? 'inactive' : 'suggestion'}>{num(c.number)}</Text>
+                {who ? `${fit(c.title, room - who.length - 1).padEnd(room - who.length - 1)} ` : fit(c.title, room)}
+                {who && <Text dimColor>{who}</Text>}
+              </Text>
+            </Button>,
+          )
+        }
+        if (t.closed > 0) kids.push(line(`closed-${x.number}`, `  ✓ ${t.closed} closed`, { color: 'inactive' }))
+        if (x.children === null) kids.push(line(`unknown-${x.number}`, `${indent}children unknown`, { dimColor: true }))
+        else if (t.total === 0) kids.push(line(`none-${x.number}`, `${indent}no children`, { dimColor: true }))
+        rows.push(
+          <Box key={`kids-${x.number}`} flexDirection="column" flexShrink={0} marginBottom={1}>
+            {kids}
+          </Box>,
+        )
+      }
+    })
+    const shown = groups.flatMap(g => g.epics)
+    const yours = shown.reduce((n, x) => n + tally(x.children ?? []).mine, 0)
+    const openShown = shown.filter(x => x.state === 'open').length
+    const g = groups.length > 0
+    const picked = ep.kind === 'ok' ? ep.options.find(o => o.value === ep.pick) : undefined
+    const listOpen = picked !== undefined && (await read($, pickerOpen))
+    return (
+      <Box flexDirection="column" height={height}>
+        <Box key="title" height={1} flexShrink={0}>
+          <Text bold wrap="truncate-end">
+            Epics
+          </Text>
+          <Box flexGrow={1} />
+          {picked && (
+            <Button key="milestone" label={`${picked.label} ▾`} hotkey="m" onPress={() => update($, pickerOpen, o => !o)} />
+          )}
+          <Box width={2} />
+          <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => refresh($)} />
+        </Box>
+        {listOpen && ep.kind === 'ok' && (
+          // The picker's list, under the title at its right: each choice, a
+          // milestone with its due date, the one picked in bold.
+          <Box key="choices" flexDirection="column" flexShrink={0} paddingLeft={Math.max(0, columns - 20)}>
+            {ep.options.map(o => (
+              <Button key={`pick-${o.value}`} plain onPress={() => pickEpics($, o.value)}>
+                <Text bold={o.value === ep.pick}>
+                  {`${o.label.padEnd(14)}${o.due ? day(o.due, now) : ''}`.padEnd(20)}
+                </Text>
+              </Button>
+            ))}
+          </Box>
+        )}
+        <Box key="gap" height={1} flexShrink={0} />
+        <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          {rows}
+        </Box>
+        {fixedLine('where-rule', '─'.repeat(columns))}
+        <Box key="where" height={1} flexShrink={0}>
+          <Text dimColor>{`${r.host}/`}</Text>
+          <Text bold wrap="truncate-end">{slug(r)}</Text>
+          <Box flexGrow={1} />
+          {g && <Text dimColor>{`${openShown} ${openShown === 1 ? 'epic' : 'epics'} · `}</Text>}
+          {g && <Text color="success">{`${yours} yours`}</Text>}
+        </Box>
+      </Box>
+    )
+  }
+
+  // Once setup passes and What's next has loaded or is loading, What's next.
+  if (s.kind === 'ready' && r && m.kind !== 'idle' && m.kind !== 'error') {
+    const now = await $.clock.now()
+    const rows: RenderChildren[] = []
+    if (m.kind === 'loading') rows.push(line('loading', 'Loading the issues…', { dimColor: true }))
+    if (m.kind === 'ok') {
+      const later = [...m.queue, ...m.blocked.map(b => b.issue)]
+      const listed = [...m.inProgress, ...(m.next ? [m.next] : []), ...later]
+      // The number column: the longest number and a space, so titles and
+      // the lines under them line up whatever the numbers. Numbers sit at
+      // its right, their last digits in line.
+      const numWidth = Math.max(...listed.map(i => `#${i.number}`.length), 0) + 1
+      // Each row starts with its section's mark, so it says where it
+      // belongs with its heading scrolled away; the Queue's is blank.
+      const MARK = { progress: ['● ', 'success'], next: ['▸ ', 'warning'], queue: ['  ', undefined], blocked: ['⊘ ', 'inactive'] } as const
+      const indent = ' '.repeat(2 + numWidth)
+      // One issue: its mark, number and title, a button that opens its
+      // detail, and under it what is known about it. Next is bold and has
+      // the focus first, so Enter opens it at once.
+      const row = (i: IssueRow, section: keyof typeof MARK, blockedBy?: number[]) => {
+        const facts = blockedBy
+          ? [`blocked by ${blockedBy.map(n => `#${n}`).join(', ')}`, `opened ${age(i.created, now)} ago`].join(' · ')
+          : [i.milestone, i.labels.join(', '), `opened ${age(i.created, now)} ago`].filter(Boolean).join(' · ')
+        const dim = section === 'blocked'
+        const next = section === 'next'
+        const [mark, markColor] = MARK[section]
+        return (
+          <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={1} flexShrink={0}>
+            <Button key={`pick-${i.number}`} plain autoFocus={next || undefined} onPress={() => openIssue($, PANE, i.number)}>
+              <Text wrap="truncate-end" bold={next} dimColor={dim}>
+                <Text color={markColor}>{mark}</Text>
+                <Text color={dim ? 'inactive' : 'suggestion'}>{`${`#${i.number}`.padStart(numWidth - 1)} `}</Text>
+                {fit(i.title, columns - 2 - numWidth)}
+              </Text>
+            </Button>
+            <Box>
+              <Text>{indent}</Text>
+              <Text wrap="truncate-end" dimColor>
+                {facts}
+              </Text>
+            </Box>
+          </Box>
+        )
+      }
+      if (listed.length === 0) {
+        rows.push(para('none', `No open issues in ${slug(r)}.`, { dimColor: true }))
+      } else {
+        rows.push(rule('in-progress', `In progress (${m.inProgress.length})`))
+        if (m.inProgress.length === 0) {
+          rows.push(
+            <Box key="no-progress" flexDirection="column" marginBottom={1} flexShrink={0}>
+              {para('no-progress-text', 'Nothing in progress. Assign yourself an issue to start.', { dimColor: true })}
+            </Box>,
+          )
+        }
+        for (const i of m.inProgress) rows.push(row(i, 'progress'))
+        rows.push(rule('next', 'Next'))
+        if (m.next) rows.push(row(m.next, 'next'))
+        else if (m.blocked.length > 0) {
+          rows.push(
+            <Box key="nothing-ready" flexDirection="column" marginBottom={1} flexShrink={0}>
+              {line('nothing-ready-title', 'Nothing ready', { bold: true })}
+              {para('nothing-ready-why', waitingText(m.blocked), { dimColor: true })}
+            </Box>,
+          )
+        } else {
+          rows.push(
+            <Box key="nothing-else" flexDirection="column" marginBottom={1} flexShrink={0}>
+              {para('nothing-else-text', 'No other open issues.', { dimColor: true })}
+            </Box>,
+          )
+        }
+        if (later.length > 0) {
+          rows.push(rule('queue', `Queue (${later.length})`))
+          for (const i of m.queue) rows.push(row(i, 'queue'))
+          for (const b of m.blocked) rows.push(row(b.issue, 'blocked', b.by))
+        }
+      }
+    }
+    // The repo, and once loaded how many open issues fj counted and how
+    // many are yours, in In progress green.
+    const open = m.kind === 'ok' ? m.inProgress.length + (m.next ? 1 : 0) + m.queue.length + m.blocked.length : null
+    const repoLine = (
+      <Box key="where" height={1} flexShrink={0}>
+        <Text dimColor>{`${r.host}/`}</Text>
+        <Text bold wrap="truncate-end">{slug(r)}</Text>
+        <Box flexGrow={1} />
+        {m.kind === 'ok' && <Text dimColor>{`${open} open · `}</Text>}
+        {m.kind === 'ok' && <Text color="success">{`${m.inProgress.length} yours`}</Text>}
+      </Box>
+    )
+    return (
+      <Box flexDirection="column" height={height}>
+        {heading("What's next", { label: 'Refresh' })}
+        <Box key="gap" height={1} flexShrink={0} />
+        <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          {rows}
+        </Box>
+        {fixedLine('where-rule', '─'.repeat(columns))}
+        {repoLine}
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column" height={height}>
+      <Box key="setup" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+        {m.kind === 'error' && para('overview-error', `Could not load the issues: ${m.message}.`, { color: 'error' })}
+        {s.kind === 'ready'
+          ? heading('Forgejo for Claude is ready!', { label: 'Refresh' })
+          : heading('Set up Forgejo for Claude')}
+        {steps}
+        <Box key="gap" height={1} />
+        {body}
+      </Box>
+    </Box>
+  )
+}
+
 export const register: Register = (on, options) => {
   configToken = String(options.token ?? '').trim() || null
   configIcons = String(options.icons ?? 'ask')
+  configLabel = String(options.label ?? 'epic').trim() || 'epic'
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'fj', description: 'Open the Forgejo pane for this repo' })
@@ -440,7 +1170,16 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'fj' }, async ($, e) => {
     await $.ui.open({ id: PANE, title: 'fj' })
     const r = await refresh($)
-    if (r) await $.ui.open({ id: PANE, title: `fj · ${slug(r)}` })
+    if (r) await $.ui.open({ id: PANE, title: "What's next" })
+    // The Epics pane, a tab next to What's next, only while there are open epics.
+    const ep = await read($, epics)
+    if (ep.kind === 'ok' && ep.openEpics > 0) {
+      await $.ui.open({ id: EPICS_PANE, title: 'Epics' })
+      await update($, epicsShown, () => true)
+    } else if (ep.kind === 'ok' && (await read($, epicsShown))) {
+      await $.ui.close({ id: EPICS_PANE })
+      await update($, epicsShown, () => false)
+    }
     const s = await read($, setup)
     const o = await read($, overview)
     if (s.kind !== 'ready' || !r) return { text: 'fj needs setting up: see its pane.' }
@@ -452,464 +1191,6 @@ export const register: Register = (on, options) => {
     return { text: `fj is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}.` }
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const r = await read($, repo)
-    const v = await read($, version)
-    const from = await read($, token)
-    const s = await read($, setup)
-    const m = await read($, overview)
-    // The pane's full height, so the last rows sit at its bottom.
-    const height = e.props.scroll.bodyRows
-    const icons = (await read($, iconsChosen)) ?? configIcons
-    // A button's label: its icon when icons are on, else its words.
-    const say = (icon: string, words: string) => (icons === 'icons' ? icon : words)
-    const columns = e.props.bodyColumns
-
-    const line = (key: string, text: string, props: Record<string, unknown> = {}) => (
-      <Text key={key} wrap="truncate-end" {...props}>
-        {text}
-      </Text>
-    )
-    // A dim line that keeps its row when the list or detail under it is too
-    // long for the pane: that is cut at its bottom, never by squeezing this out.
-    const fixedLine = (key: string, text: string) => (
-      <Box key={key} flexShrink={0}>
-        {line(`${key}-text`, text, { dimColor: true })}
-      </Box>
-    )
-    const rule = (key: string, name: string) => fixedLine(key, `── ${name} `.padEnd(columns, '─'))
-    // A wrapped paragraph in which `a command` shows as a command and an
-    // https:// address as a link; the backticks themselves are not drawn.
-    const para = (key: string, text: string, props: Record<string, unknown> = {}) => {
-      const parts: RenderChildren[] = []
-      text.split(/`([^`]+)`/).forEach((piece, i) => {
-        if (i % 2 === 1) {
-          parts.push(<Text key={`${key}-c${i}`} color="warning">{piece}</Text>)
-          return
-        }
-        piece.split(/(https:\/\/\S+?)(?=[.,;:)]?(?:\s|$))/).forEach((bit, j) => {
-          if (bit === '') return
-          parts.push(
-            j % 2 === 1 ? (
-              <Text key={`${key}-u${i}-${j}`} color="suggestion" underline>
-                {bit}
-              </Text>
-            ) : (
-              bit
-            ),
-          )
-        })
-      })
-      return (
-        <Text key={key} wrap="wrap" {...props}>
-          {parts}
-        </Text>
-      )
-    }
-
-    const tokenText =
-      from === 'setting' ? 'from the Token setting' : 'none found'
-    const doneText: Record<Step, string> = {
-      repo: r ? slug(r) : '',
-      forgejo: v && r ? `${v} at ${r.host}` : '',
-      token: tokenText,
-      access: s.kind === 'ready' ? `${s.openIssues} open issues` : '',
-    }
-    const failText: Record<Step, string> = {
-      repo: 'no Forgejo repo here',
-      forgejo:
-        s.kind === 'not-forgejo' && s.reason === 'no-answer'
-          ? `no answer from ${r?.host ?? 'this host'}`
-          : s.kind === 'not-forgejo' && s.reason === 'too-old'
-            ? `${s.detail}, too old`
-            : `not found at ${r?.host ?? 'this host'}`,
-      token: 'none found',
-      access:
-        s.kind === 'token-refused'
-          ? 'token refused'
-          : s.kind === 'no-scope'
-            ? 'no permission'
-            : s.kind === 'not-found'
-              ? 'not found'
-              : 'no answer',
-    }
-    const at = STOPPED_AT[s.kind]
-    // Without a repo the token is still checked: it needs none. The steps
-    // that do say so.
-    const noRepo = s.kind === 'no-repo'
-    const noForge = s.kind === 'not-forgejo'
-    const steps = STEPS.map((step, i) => {
-      const mark =
-        s.kind === 'checking'
-          ? '…'
-          : (noRepo || noForge) && step === 'token'
-            ? from === 'none' ? '✗' : '✓'
-            : i < at ? '✓' : i === at ? '✗' : '·'
-      const color = mark === '✓' ? 'success' : mark === '✗' ? 'error' : 'inactive'
-      const text =
-        mark === '✓'
-          ? doneText[step]
-          : mark === '✗'
-            ? failText[step]
-            : noRepo
-              ? 'needs a repo'
-              : noForge
-                ? 'needs Forgejo'
-                : ''
-      return line(`step-${step}`, `${mark} ${LABEL[step].padEnd(8)}${text}`, { color })
-    })
-
-    const body: RenderChildren[] = []
-    if (s.kind !== 'ready' && s.kind !== 'checking') {
-      const about = intro(s, r, tokenText)
-      if (about) body.push(para('intro', about), <Box key="gap-intro" height={1} />)
-      const actions = todo(s, r, tokenText)
-      if (actions.length > 0) body.push(line('todo', 'What to do', { bold: true }))
-      actions.forEach((t, i) => body.push(para(`todo-${i}`, `${i + 1}. ${t}`)))
-      // Checking again is the guide's last step, so its button ends it.
-      body.push(
-        <Box key="again" height={1} marginTop={1} paddingLeft={3}>
-          <Button key="refresh" label="Check again" hotkey="r" onPress={() => refresh($)} />
-        </Box>,
-      )
-    }
-
-    // A heading with, on its right, the pane's own action when it has one.
-    const heading = (text: string, action?: { label: string }) => (
-      <Box key="title" height={1} flexShrink={0}>
-        <Text bold wrap="truncate-end">
-          {text}
-        </Text>
-        <Box flexGrow={1} />
-        {action && <Button key="refresh" label={say(ICON.refresh, action.label)} hotkey="r" onPress={() => refresh($)} />}
-      </Box>
-    )
-
-    // Setup passed and Icons is still ask: the one-time choice, before the list.
-    if (s.kind === 'ready' && r && icons === 'ask') {
-      const glyphs = [
-        { icon: ICON.refresh, name: 'refresh' },
-        { icon: ICON.work, name: 'work on' },
-        { icon: ICON.open, name: 'browser' },
-        { icon: ICON.back, name: 'back' },
-      ]
-      return (
-        <Box flexDirection="column" height={height}>
-          <Box key="choice" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-            {heading('Forgejo for Claude is ready!')}
-            {steps}
-            <Box key="gap" height={1} />
-            {line('ask', 'One choice: icons on buttons', { bold: true })}
-            {para(
-              'why',
-              'fj can show its buttons as Nerd Font icons, which keeps them narrow. Look at the four below: do they show as icons, or as boxes or question marks?',
-            )}
-            <Box key="gap-glyphs" height={1} />
-            <Box key="glyphs" height={1}>
-              {glyphs.map(g => (
-                <Box key={`g-${g.name}`} width={Math.max(10, Math.floor(columns / 4))}>
-                  <Text>{`  ${g.icon}`}</Text>
-                </Box>
-              ))}
-            </Box>
-            <Box key="names" height={1}>
-              {glyphs.map(g => (
-                <Box key={`n-${g.name}`} width={Math.max(10, Math.floor(columns / 4))}>
-                  <Text dimColor>{g.name}</Text>
-                </Box>
-              ))}
-            </Box>
-            <Box key="gap-look" height={1} />
-            {line('look', 'Buttons would look like this:', { dimColor: true })}
-            <Text key="sample">{glyphs.map(g => `[ ${g.icon} ]`).join('  ')}</Text>
-            <Box key="choose" height={1} marginTop={1}>
-              <Button key="use-icons" label="Use icons" onPress={() => chooseIcons($, 'icons')} />
-              <Text>{'  '}</Text>
-              <Button key="keep-text" label="Keep text" onPress={() => chooseIcons($, 'text')} />
-            </Box>
-            <Box key="gap-later" height={1} />
-            {para('later', 'Asked once. Change it later in /config, under fj: Icons.', { dimColor: true })}
-          </Box>
-        </Box>
-      )
-    }
-
-    // An issue open: its detail in place of the list.
-    const open = await read($, picked)
-    if (s.kind === 'ready' && r && open !== null) {
-      const d = await read($, detail)
-      const now = await $.clock.now()
-      const top = (
-        <Box key="title" height={1} flexShrink={0}>
-          <Button key="back" label={say(ICON.back, "← What's next")} hotkey="b" onPress={() => openIssue($, null)} />
-          <Box flexGrow={1} />
-          <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => refresh($)} />
-        </Box>
-      )
-      const body: RenderChildren[] = []
-      if (d.kind === 'loading' || d.kind === 'idle') body.push(line('loading', `Loading #${open}…`, { dimColor: true }))
-      if (d.kind === 'error') body.push(para('error', `Could not load #${d.number}: ${d.message}.`, { color: 'error' }))
-      if (d.kind === 'ok') {
-        const i = d.issue
-        const KEY = 15
-        const keyed = (key: string, label: string, content: RenderChildren) => (
-          <Box key={key} height={1} flexShrink={0}>
-            <Text dimColor>{label.padEnd(KEY)}</Text>
-            {content}
-          </Box>
-        )
-        // One issue or pull request on a line: number, title, state.
-        const refLine = (key: string, label: string, x: { number: number; title: string; state: string }, numColor: string) => {
-          const state = x.state
-          const done = state === 'closed'
-          return keyed(
-            key,
-            label,
-            <>
-              <Text color={done ? 'inactive' : numColor}>{`#${x.number} `}</Text>
-              <Text wrap="truncate-end" color={done ? 'inactive' : undefined} strikethrough={done && label !== 'Pull requests'}>
-                {fit(x.title, columns - KEY - `#${x.number} `.length - state.length - 1)}
-              </Text>
-              <Box flexGrow={1} />
-              <Text color={state === 'open' ? (numColor === 'error' ? 'error' : 'success') : state === 'merged' ? 'merged' : 'inactive'}>
-                {` ${state}`}
-              </Text>
-            </>,
-          )
-        }
-        const facts: RenderChildren[] = []
-        if (i.due) {
-          const due = dueText(i.due, now)
-          facts.push(keyed('due', 'Due', <Text color={due.passed ? 'error' : 'warning'}>{due.text}</Text>))
-        }
-        if (i.branch) facts.push(keyed('branch', 'Branch', <Text color="success">{i.branch}</Text>))
-        if (i.logged) facts.push(keyed('time', 'Time', <Text>{`${duration(i.logged)} logged`}</Text>))
-        if (i.labels.length > 0) {
-          facts.push(
-            keyed(
-              'labels',
-              'Labels',
-              <Text wrap="truncate-end">
-                {i.labels.map((l, k) => (
-                  <Text key={`label-${k}`}>
-                    {k > 0 ? ' ' : ''}
-                    <Text backgroundColor={`#${l.color}`} color={inkOn(l.color)}>{` ${l.name} `}</Text>
-                  </Text>
-                ))}
-              </Text>,
-            ),
-          )
-        }
-        ;(i.blockedBy ?? []).forEach((x, k) => facts.push(refLine(`blocked-${k}`, k === 0 ? 'Blocked by' : '', x, 'error')))
-        ;(i.blocks ?? []).forEach((x, k) => facts.push(refLine(`blocks-${k}`, k === 0 ? 'Blocks' : '', x, 'suggestion')))
-        ;(i.pulls ?? []).forEach((x, k) => facts.push(refLine(`pull-${k}`, k === 0 ? 'Pull requests' : '', x, 'suggestion')))
-        ;(i.commits ?? []).slice(0, 3).forEach((c, k) =>
-          facts.push(
-            keyed(
-              `commit-${k}`,
-              k === 0 ? 'Commits' : '',
-              <>
-                <Text color="warning">{`${c.sha} `}</Text>
-                <Text wrap="truncate-end">{fit(c.message, columns - KEY - c.sha.length - 1 - age(c.when, now).length - 1)}</Text>
-                <Box flexGrow={1} />
-                <Text dimColor>{` ${age(c.when, now)}`}</Text>
-              </>,
-            ),
-          ),
-        )
-
-        const titleLines = wrap(`#${i.number} ${i.title}`, columns).slice(0, 2)
-        const milestone = i.milestone
-          ? `${i.milestone.title}${i.milestone.due ? ` (due ${day(i.milestone.due, now)})` : ''}`
-          : 'no milestone'
-        const comments = `${i.comments} ${i.comments === 1 ? 'comment' : 'comments'}`
-
-        // What is left for the description and the last comment.
-        const fixed = 1 + titleLines.length + 2 + 1 + (facts.length > 0 ? facts.length + 1 : 0) + 1 + 1 + 1 + 1
-        const last = i.lastComment
-        const lastLines = last ? wrap(last.body.trim(), columns) : []
-        const lastShown = Math.min(3, lastLines.length)
-        const lastRows = last ? 1 + 1 + lastShown + 1 : 0
-        const descLines = wrap(i.body.trim(), columns)
-        const descRoom = Math.max(2, height - fixed - lastRows - 2)
-        const descShown = descLines.length > descRoom ? descRoom - 1 : descLines.length
-
-        body.push(
-          <Box key="head" flexDirection="column" flexShrink={0}>
-            {titleLines.map((t, k) => (
-              <Text key={`t-${k}`} bold wrap="truncate-end">
-                {k === 0 ? <Text color="suggestion">{`#${i.number}`}</Text> : null}
-                {k === 0 ? t.slice(`#${i.number}`.length) : t}
-              </Text>
-            ))}
-            <Text dimColor wrap="truncate-end">{`${i.state} · ${milestone} · ${comments}`}</Text>
-            <Text dimColor wrap="truncate-end">{`opened ${age(i.created, now)} ago by ${i.author} · updated ${age(i.updated, now)} ago`}</Text>
-          </Box>,
-        )
-        if (facts.length > 0) {
-          body.push(
-            <Box key="facts" flexDirection="column" flexShrink={0} marginTop={1}>
-              {facts}
-            </Box>,
-          )
-        }
-        body.push(
-          <Box key="actions" height={1} flexShrink={0} marginTop={1}>
-            <Button key="work" label={say(ICON.work, 'Work on this')} hotkey="w" onPress={() => workOn($, i)} />
-            <Text>{'  '}</Text>
-            <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, i.url)} />
-          </Box>,
-        )
-        body.push(<Box key="gap-desc" height={1} flexShrink={0} />, rule('desc', 'Description'))
-        if (descLines.length === 0) body.push(line('no-desc', 'No description.', { dimColor: true }))
-        descLines.slice(0, descShown).forEach((t, k) => body.push(line(`d-${k}`, t || ' ')))
-        if (descShown < descLines.length) {
-          body.push(line('d-more', `… ${descLines.length - descShown} more lines`, { dimColor: true }))
-        }
-        if (last) {
-          body.push(
-            <Box key="gap-last" height={1} flexShrink={0} />,
-            rule('last', `Last comment ── ${last.author} · ${age(last.when, now)} ago`),
-          )
-          lastLines.slice(0, lastShown).forEach((t, k) => body.push(line(`c-${k}`, t || ' ')))
-          if (lastShown < lastLines.length) {
-            body.push(line('c-more', `… ${lastLines.length - lastShown} more lines`, { dimColor: true }))
-          }
-          if (i.comments > 1) {
-            const earlier = i.comments - 1
-            body.push(line('earlier', `${earlier} earlier ${earlier === 1 ? 'comment' : 'comments'}`, { dimColor: true }))
-          }
-        }
-      }
-      return (
-        <Box flexDirection="column" height={height}>
-          {top}
-          <Box key="gap" height={1} flexShrink={0} />
-          <Box key="detail" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-            {body}
-          </Box>
-          {fixedLine('where', `${r.host}/${slug(r)}`)}
-        </Box>
-      )
-    }
-
-    // Once setup passes and What's next has loaded or is loading, What's next.
-    if (s.kind === 'ready' && r && m.kind !== 'idle' && m.kind !== 'error') {
-      const now = await $.clock.now()
-      const rows: RenderChildren[] = []
-      if (m.kind === 'loading') rows.push(line('loading', 'Loading the issues…', { dimColor: true }))
-      if (m.kind === 'ok') {
-        const later = [...m.queue, ...m.blocked.map(b => b.issue)]
-        const listed = [...m.inProgress, ...(m.next ? [m.next] : []), ...later]
-        // The number column: the longest number and a space, so titles and
-        // the lines under them line up whatever the numbers. Numbers sit at
-        // its right, their last digits in line.
-        const numWidth = Math.max(...listed.map(i => `#${i.number}`.length), 0) + 1
-        // Each row starts with its section's mark, so it says where it
-        // belongs with its heading scrolled away; the Queue's is blank.
-        const MARK = { progress: ['● ', 'success'], next: ['▸ ', 'warning'], queue: ['  ', undefined], blocked: ['⊘ ', 'inactive'] } as const
-        const indent = ' '.repeat(2 + numWidth)
-        // One issue: its mark, number and title, a button that opens its
-        // detail, and under it what is known about it. Next is bold and has
-        // the focus first, so Enter opens it at once.
-        const row = (i: IssueRow, section: keyof typeof MARK, blockedBy?: number[]) => {
-          const facts = blockedBy
-            ? [`blocked by ${blockedBy.map(n => `#${n}`).join(', ')}`, `opened ${age(i.created, now)} ago`].join(' · ')
-            : [i.milestone, i.labels.join(', '), `opened ${age(i.created, now)} ago`].filter(Boolean).join(' · ')
-          const dim = section === 'blocked'
-          const next = section === 'next'
-          const [mark, markColor] = MARK[section]
-          return (
-            <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={1} flexShrink={0}>
-              <Button key={`pick-${i.number}`} plain autoFocus={next || undefined} onPress={() => openIssue($, i.number)}>
-                <Text wrap="truncate-end" bold={next} dimColor={dim}>
-                  <Text color={markColor}>{mark}</Text>
-                  <Text color={dim ? 'inactive' : 'suggestion'}>{`${`#${i.number}`.padStart(numWidth - 1)} `}</Text>
-                  {fit(i.title, columns - 2 - numWidth)}
-                </Text>
-              </Button>
-              <Box>
-                <Text>{indent}</Text>
-                <Text wrap="truncate-end" dimColor>
-                  {facts}
-                </Text>
-              </Box>
-            </Box>
-          )
-        }
-        if (listed.length === 0) {
-          rows.push(para('none', `No open issues in ${slug(r)}.`, { dimColor: true }))
-        } else {
-          rows.push(rule('in-progress', `In progress (${m.inProgress.length})`))
-          if (m.inProgress.length === 0) {
-            rows.push(
-              <Box key="no-progress" flexDirection="column" marginBottom={1} flexShrink={0}>
-                {para('no-progress-text', 'Nothing in progress. Assign yourself an issue to start.', { dimColor: true })}
-              </Box>,
-            )
-          }
-          for (const i of m.inProgress) rows.push(row(i, 'progress'))
-          rows.push(rule('next', 'Next'))
-          if (m.next) rows.push(row(m.next, 'next'))
-          else if (m.blocked.length > 0) {
-            rows.push(
-              <Box key="nothing-ready" flexDirection="column" marginBottom={1} flexShrink={0}>
-                {line('nothing-ready-title', 'Nothing ready', { bold: true })}
-                {para('nothing-ready-why', waitingText(m.blocked), { dimColor: true })}
-              </Box>,
-            )
-          } else {
-            rows.push(
-              <Box key="nothing-else" flexDirection="column" marginBottom={1} flexShrink={0}>
-                {para('nothing-else-text', 'No other open issues.', { dimColor: true })}
-              </Box>,
-            )
-          }
-          if (later.length > 0) {
-            rows.push(rule('queue', `Queue (${later.length})`))
-            for (const i of m.queue) rows.push(row(i, 'queue'))
-            for (const b of m.blocked) rows.push(row(b.issue, 'blocked', b.by))
-          }
-        }
-      }
-      // The repo, and once loaded how many open issues fj counted and how
-      // many are yours, in In progress green.
-      const open = m.kind === 'ok' ? m.inProgress.length + (m.next ? 1 : 0) + m.queue.length + m.blocked.length : null
-      const repoLine = (
-        <Box key="where" height={1} flexShrink={0}>
-          <Text dimColor>{`${r.host}/`}</Text>
-          <Text bold wrap="truncate-end">{slug(r)}</Text>
-          <Box flexGrow={1} />
-          {m.kind === 'ok' && <Text dimColor>{`${open} open · `}</Text>}
-          {m.kind === 'ok' && <Text color="success">{`${m.inProgress.length} yours`}</Text>}
-        </Box>
-      )
-      return (
-        <Box flexDirection="column" height={height}>
-          {heading("What's next", { label: 'Refresh' })}
-          <Box key="gap" height={1} flexShrink={0} />
-          <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-            {rows}
-          </Box>
-          {fixedLine('where-rule', '─'.repeat(columns))}
-          {repoLine}
-        </Box>
-      )
-    }
-
-    return (
-      <Box flexDirection="column" height={height}>
-        <Box key="setup" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-          {m.kind === 'error' && para('overview-error', `Could not load the issues: ${m.message}.`, { color: 'error' })}
-          {s.kind === 'ready'
-            ? heading('Forgejo for Claude is ready!', { label: 'Refresh' })
-            : heading('Set up Forgejo for Claude')}
-          {steps}
-          <Box key="gap" height={1} />
-          {body}
-        </Box>
-      </Box>
-    )
-  })
+  on('ui.render', { component: 'Pane', requestId: PANE }, renderPane)
+  on('ui.render', { component: 'Pane', requestId: EPICS_PANE }, renderPane)
 }

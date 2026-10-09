@@ -272,7 +272,11 @@ test('reads every page of both lists', TOKEN, async ($, on) => {
 
   const out = await $.command.run(RUN)
 
-  const pages = (path: string) => asked.filter(u => new URL(u).pathname.endsWith(path)).map(u => new URL(u).searchParams.get('page'))
+  // The epics are asked for on the same path, by label; they are not counted here.
+  const pages = (path: string) =>
+    asked
+      .filter(u => new URL(u).pathname.endsWith(path) && !new URL(u).searchParams.has('labels'))
+      .map(u => new URL(u).searchParams.get('page'))
   expect(pages('/repos/issues/search')).toEqual(['1', '2'])
   expect(pages('/repos/boats/radar/issues')).toEqual(['1', '2'])
   expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 1 in progress, next is #7.' }))
