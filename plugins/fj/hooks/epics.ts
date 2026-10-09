@@ -60,9 +60,9 @@ const dueFirst = (milestones: readonly MilestoneRow[]) =>
     (a, b) => (a.due === null ? 1 : 0) - (b.due === null ? 1 : 0) || (a.due ?? '').localeCompare(b.due ?? '') || a.title.localeCompare(b.title),
   )
 
-// What the picker offers: each open milestone that has an epic, due first,
-// then No milestone when some epic has none, then All. The first is where
-// the pane starts.
+// What the picker offers: each open milestone that has an open issue or an
+// epic, due first, then No milestone when some has none, then All. The panes
+// start on the first milestone, or on All when there is none.
 export function pickerOptions(
   milestones: readonly MilestoneRow[],
   epics: readonly { milestone: string | null }[],

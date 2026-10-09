@@ -38,6 +38,10 @@ type World = {
   repo?: number
   // What /user answers: who the token belongs to, with read:user.
   user?: number
+  // Push rights on the repo, and the token's scopes as the tokens list
+  // gives them (null: the list is refused).
+  push?: boolean
+  scopes?: string[] | null
   opened?: { id: string; title?: string }[]
   asked?: { url: string; auth: string | undefined }[]
   envRead?: string[]
@@ -93,12 +97,16 @@ function world(on: On, w: World) {
       return reply(status, status === 200 ? (page === '1' ? (w.issues ?? []) : []) : {})
     }
     if (new URL(e.url).pathname.endsWith('/repos/boats/radar/issues')) return reply(200, [])
+    if (new URL(e.url).pathname.endsWith('/api/v1/users/alice/tokens')) {
+      if (w.scopes === null) return reply(401, { message: 'basic auth required' })
+      return reply(200, [{ name: 'fj', token_last_eight: 'secret', scopes: w.scopes ?? ['read:issue'] }])
+    }
     if (new URL(e.url).pathname.endsWith('/api/v1/user')) {
       const status = w.user ?? 200
       return reply(status, status === 200 ? { login: 'alice' } : { message: 'token does not have at least one of required scope(s): [read:user]' })
     }
     const status = w.repo ?? 200
-    return reply(status, status === 200 ? { full_name: 'boats/radar', open_issues_count: 7 } : {})
+    return reply(status, status === 200 ? { full_name: 'boats/radar', open_issues_count: 7, permissions: { push: w.push ?? false } } : {})
   })
 }
 
@@ -153,6 +161,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '· Forgejo needs a repo',
       '✓ Token   from the Token setting',
       '· Access  needs a repo',
+      '· Actions needs a repo',
       'fj shows the issues of the repo this session runs in. ~/Documents/notes is not a git repo, so there is nothing to show here.',
       'What to do',
       '1. If this folder belongs on Forgejo: git init and git remote add origin https://your-forgejo/owner/repo.git, then press r.',
@@ -217,6 +226,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '✗ Forgejo not found at github.com',
       '✓ Token   from the Token setting',
       '· Access  needs Forgejo',
+      '· Actions needs Forgejo',
       'github.com does not answer as Forgejo or Gitea (HTTP 404 for /api/v1/version). fj works with Forgejo and Gitea only, so it has nothing to show for this repo.',
     ])
     await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
@@ -292,6 +302,23 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   expect(all.some(t => t.includes('FORGEJO_TOKEN'))).toBe(false)
   expect(asked.map(a => a.url)).toEqual(['https://git.example.org/api/v1/version'])
 })
+
+for (const [name, w, want] of [
+  ['write:issue and push', { push: true, scopes: ['write:issue', 'read:repository', 'read:user'] }, '✓ Actions assign and close'],
+  ['all scopes and push', { push: true, scopes: ['all'] }, '✓ Actions assign and close'],
+  ['no write:issue', { push: true, scopes: ['read:issue'] }, '· Actions read only, token lacks write:issue'],
+  ['no push', { push: false, scopes: ['write:issue'] }, '· Actions read only, alice may not push here'],
+  ['scopes not listed', { push: true, scopes: null }, '· Actions unknown, scopes not listed'],
+] as const) {
+  test(`the Actions step with ${name}, and setup passes`, TOKEN, async ($, on) => {
+    // The list failing keeps the steps on screen.
+    world(on, { ...w, scopes: w.scopes === null ? null : [...w.scopes], search: 500 })
+    const out = await $.command.run(RUN)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await texts(ui)).toContain(want)
+    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar, but could not load its issues.' }))
+  })
+}
 
 test('a token without read:user: says it needs that scope too', TOKEN, async ($, on) => {
   world(on, { user: 403 })

@@ -1,9 +1,9 @@
 import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
-import type { Detail, Epic, EpicChild, EpicGroup, Epics, IssueDetail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
+import type { Actions, Detail, Epic, EpicChild, EpicGroup, Epics, IssueDetail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
 import { bar, groupsFor, openChildren, pickerOptions, standing, summary, tally } from './epics'
-import { day, dueText, duration, inkOn, loadIssue, wrap } from './issue'
+import { day, dueText, duration, loadIssue, readable, wrap } from './issue'
 import { pickNext, waitingText } from './next'
 
 const PANE = 'fj'
@@ -23,7 +23,8 @@ const iconsChosen = atom({ plugin: 'fj', key: 'icons' } as const, null)
 const epics = atom({ plugin: 'fj', key: 'epics' } as const, { kind: 'idle' })
 const unfolded = atom({ plugin: 'fj', key: 'unfolded' } as const, [])
 const panesOpen = atom({ plugin: 'fj', key: 'panesOpen' } as const, [])
-const epicsPick = atom({ plugin: 'fj', key: 'epicsPick' } as const, null)
+const milestonePick = atom({ plugin: 'fj', key: 'milestonePick' } as const, null)
+const picker = atom({ plugin: 'fj', key: 'picker' } as const, null)
 const pickerOpen = atom({ plugin: 'fj', key: 'pickerOpen' } as const, false)
 const requests = atom({ plugin: 'fj', key: 'requests' } as const, null)
 
@@ -53,7 +54,16 @@ let configLabel = 'epic'
 let configDebug = false
 
 // Nerd Font icons for the buttons (Material Design set).
-const ICON = { refresh: '\u{F0450}', work: '\u{F0674}', open: '\u{F03CC}', back: '\u{F004D}' } as const
+const ICON = {
+  refresh: '\u{F0450}',
+  work: '\u{F0674}',
+  open: '\u{F03CC}',
+  back: '\u{F004D}',
+  assign: '\u{F0014}',
+  unassign: '\u{F0015}',
+  close: '\u{F012C}',
+  reopen: '\u{F099B}',
+} as const
 
 // Saves the Icons choice: in /config where the session offers it, and in the
 // session's state so it shows at once.
@@ -157,11 +167,13 @@ async function check($: EngineInterface): Promise<Repo | null> {
     const headers = { Authorization: `token ${tok.value}`, Accept: 'application/json' }
     // Who the token belongs to, once the repo answers: what makes an issue yours.
     const user = res.ok ? await forgejo($, `${base(r)}/user`, { method: 'GET', headers }) : null
-    const next: Setup = user?.ok
+    const login = user?.ok ? (JSON.parse(user.text) as { login: string }).login : null
+    const next: Setup = user?.ok && login !== null
       ? {
           kind: 'ready',
           openIssues: (JSON.parse(res.text) as { open_issues_count: number }).open_issues_count,
-          login: (JSON.parse(user.text) as { login: string }).login,
+          login,
+          actions: await mayAct($, r, tok.value, login, (JSON.parse(res.text) as RawRepo).permissions?.push === true),
         }
       : user && (user.status === 401 || user.status === 403)
         ? { kind: 'no-scope', missing: 'read:user' }
@@ -181,6 +193,28 @@ async function check($: EngineInterface): Promise<Repo | null> {
   return r
 }
 
+type RawRepo = { open_issues_count: number; permissions?: { push?: boolean } }
+
+// Whether fj may assign and close: the token's scopes, from the list of the
+// account's tokens (the one ending in the same eight characters), and push
+// rights on the repo. A list Forgejo refuses leaves it unknown.
+async function mayAct($: EngineInterface, r: Repo, token: string, login: string, push: boolean): Promise<Actions> {
+  const res = await forgejo($, `${base(r)}/users/${encodeURIComponent(login)}/tokens?limit=50`, {
+    method: 'GET',
+    headers: { Authorization: `token ${token}`, Accept: 'application/json' },
+  }).catch(() => null)
+  let scopes: string[] | null = null
+  try {
+    const list = res?.ok ? (JSON.parse(res.text) as { token_last_eight?: string; scopes?: string[] | null }[]) : null
+    scopes = list?.find(t => t.token_last_eight === token.slice(-8))?.scopes ?? null
+  } catch {
+    scopes = null
+  }
+  if (scopes === null) return push ? { kind: 'unknown' } : { kind: 'read-only', reason: 'push' }
+  if (!scopes.some(sc => sc === 'all' || sc === 'write:issue' || sc === 'write:all')) return { kind: 'read-only', reason: 'scope' }
+  return push ? { kind: 'ok' } : { kind: 'read-only', reason: 'push' }
+}
+
 // Whether a Forgejo or Gitea version is 1.19 or newer, the first with
 // scoped tokens. Forgejo numbers from 7.0 on are all newer.
 function supported(version: string): boolean {
@@ -196,7 +230,7 @@ type RawListed = {
   html_url: string
   body: string | null
   milestone: { title: string } | null
-  labels: { name: string }[] | null
+  labels: { name: string; color?: string }[] | null
 }
 type RawFound = RawListed & { repository: { full_name: string } }
 type RawOpen = RawListed & { assignee?: { login: string } | null; assignees?: { login: string }[] | null }
@@ -205,7 +239,7 @@ const toRow = (i: RawListed): IssueRow => ({
   number: i.number,
   title: i.title,
   milestone: i.milestone?.title ?? null,
-  labels: (i.labels ?? []).map(l => l.name),
+  labels: (i.labels ?? []).map(l => ({ name: l.name, color: l.color ?? '' })),
   created: i.created_at,
   url: i.html_url,
   body: i.body ?? '',
@@ -244,137 +278,171 @@ async function fetchJson<T>($: EngineInterface, url: string): Promise<T | null> 
   }
 }
 
-// What's next in this repo. Two lists: your open issues, from Forgejo's
-// search (it covers every repo the token sees, so it is narrowed to this
-// one), and all open issues in the repo. Yours are In progress; of the rest,
-// the unassigned ones are walked oldest first for Next.
-async function loadOverview($: EngineInterface, r: Repo) {
-  await update($, overview, (): Overview => ({ kind: 'loading' }))
-  const all = <T,>(url: string, what: string) => fetchAll<T>($, url, what)
-  try {
-    const found = await all<RawFound>(`${base(r)}/repos/issues/search?assigned=true&state=open&type=issues`, 'your issues')
-    const inProgress = found.filter(i => i.repository.full_name === slug(r)).map(toRow).sort(oldestFirst)
-    const open = await all<RawOpen>(`${base(r)}/repos/${slug(r)}/issues?state=open&type=issues`, 'open issues')
-    const yours = new Set(inProgress.map(i => i.number))
-    const free = open
-      .filter(i => !yours.has(i.number) && !i.assignee && (i.assignees ?? []).length === 0)
-      .map(toRow)
-      .sort(oldestFirst)
-    const { next, queue, blocked } = await pickNext(free, async n => {
-      const deps = await fetchJson<{ number: number; state: string }[]>($, `${base(r)}/repos/${slug(r)}/issues/${n}/dependencies`)
-      return deps ? deps.filter(d => d.state === 'open').map(d => d.number) : null
-    })
-    await update($, overview, (): Overview => ({ kind: 'ok', inProgress, next, queue, blocked }))
-    // An issue that is closed, or now someone else's, closes: What's next shows.
-    const shown = new Set([...inProgress, ...free].map(i => i.number))
-    await update($, memberOf(picked, { requestId: PANE }), n => (n !== null && shown.has(n) ? n : null))
-  } catch (err) {
-    await update($, overview, (): Overview => ({ kind: 'error', message: message(err) }))
-  }
-}
-
 type RawDep = { number: number; title: string; state: string; assignees?: { login: string }[] | null }
 type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string }[] | null }
 type RawMilestone = { title: string; due_on: string | null; open_issues: number; closed_issues: number }
+type MilestoneRow = { title: string; due: string | null; closed: number; total: number }
 
-// What fj remembers of the epics until the next Refresh or /fj, so the
-// picker can switch without asking Forgejo again: the epics and open
-// milestones of a repo, and the children of each epic loaded so far.
-type EpicsMemory = {
+// What fj remembers of a repo until the next Refresh or /fj, so the picker
+// can switch without asking Forgejo again: its open milestones, your open
+// issues and the free ones, the dependencies checked so far, the epics, and
+// the children of each epic loaded so far.
+type Memory = {
   repo: string
-  found: (Omit<RawEpic, 'milestone'> & { milestone: string | null })[]
-  milestones: { title: string; due: string | null; closed: number; total: number }[]
+  milestones: MilestoneRow[]
+  mine: IssueRow[]
+  free: IssueRow[]
+  blockers: Map<number, number[] | null>
+  epics: (Omit<RawEpic, 'milestone'> & { milestone: string | null })[]
   children: Map<number, EpicChild[] | null>
 }
-let epicsMemory: EpicsMemory | null = null
+let memory: Memory | null = null
 
-// The epics: issues with the Epic label. The pane shows what the picker
-// picked: one open milestone's epics (at first the one due first that has
-// any), those with no milestone, or all of them. For each open epic shown,
-// its children: the issues it depends on, with whether each is yours and,
-// for the others, whether it is blocked. What was shown stays up while this
-// loads, so the picker does not vanish under the person's hand.
-// `fresh`: forget what was remembered and ask Forgejo for all of it.
-async function loadEpics($: EngineInterface, r: Repo, fresh = true) {
-  if ((await read($, epics)).kind !== 'ok') await update($, epics, (): Epics => ({ kind: 'loading' }))
+// Whether an issue's milestone is in what the picker picked.
+const inPick = (pick: string, milestone: string | null) =>
+  pick === 'all' || (pick === 'none' ? milestone === null : pick === `m:${milestone}`)
+
+// Asks Forgejo for what the panes show: the open milestones (none when the
+// list is refused), your open issues from Forgejo's search (it covers every
+// repo the token sees, so it is narrowed to this one), the repo's open
+// issues, and the epics. Then the picker, What's next and the epics follow.
+async function load($: EngineInterface, r: Repo) {
   const api = `${base(r)}/repos/${slug(r)}`
+  memory = null
+  if ((await read($, overview)).kind !== 'ok') await update($, overview, (): Overview => ({ kind: 'loading' }))
+  if ((await read($, epics)).kind !== 'ok') await update($, epics, (): Epics => ({ kind: 'loading' }))
+  const milestones = (await fetchAll<RawMilestone>($, `${api}/milestones?state=open`, 'milestones').catch(() => [])).map(m => ({
+    title: m.title,
+    due: m.due_on,
+    closed: m.closed_issues,
+    total: m.open_issues + m.closed_issues,
+  }))
+  let mine: IssueRow[] = []
+  let free: IssueRow[] = []
+  try {
+    const found = await fetchAll<RawFound>($, `${base(r)}/repos/issues/search?assigned=true&state=open&type=issues`, 'your issues')
+    mine = found.filter(i => i.repository.full_name === slug(r)).map(toRow).sort(oldestFirst)
+    const open = await fetchAll<RawOpen>($, `${api}/issues?state=open&type=issues`, 'open issues')
+    const yours = new Set(mine.map(i => i.number))
+    free = open.filter(i => !yours.has(i.number) && !i.assignee && (i.assignees ?? []).length === 0).map(toRow).sort(oldestFirst)
+  } catch (err) {
+    await update($, overview, (): Overview => ({ kind: 'error', message: message(err) }))
+  }
+  let found: Memory['epics'] = []
   try {
     const label = configLabel
-    let memory: EpicsMemory | null = !fresh && epicsMemory?.repo === `${r.host}/${slug(r)}` ? epicsMemory : null
-    if (!memory) {
-      epicsMemory = null
-      const found = (
-        await fetchAll<RawEpic>($, `${api}/issues?state=all&type=issues&labels=${encodeURIComponent(label)}`, 'epics')
-      )
-        .filter(i => (i.labels ?? []).some(l => l.name === label))
-        .map(i => ({ ...i, milestone: i.milestone?.title ?? null }))
-      const milestones = found.some(i => i.state === 'open')
-        ? (await fetchAll<RawMilestone>($, `${api}/milestones?state=open`, 'milestones')).map(m => ({
-            title: m.title,
-            due: m.due_on,
-            closed: m.closed_issues,
-            total: m.open_issues + m.closed_issues,
-          }))
-        : []
-      memory = { repo: `${r.host}/${slug(r)}`, found, milestones, children: new Map() }
-      epicsMemory = memory
-    }
-    const { found, milestones } = memory
-    const openEpics = found.filter(i => i.state === 'open').length
-    if (openEpics === 0) {
-      await update($, epics, (): Epics => ({ kind: 'ok', options: [], pick: 'all', groups: [], openEpics }))
-      return
-    }
-    // Who you are, from the setup check: the children assigned to you are yours.
-    const s = await read($, setup)
-    const me = s.kind === 'ready' ? s.login : null
-    const known = memory.children
-    const options = pickerOptions(milestones, found)
-    const wanted = await read($, epicsPick)
-    const pick = options.some(o => o.value === wanted) ? (wanted as string) : (options[0]?.value ?? 'all')
-    const deps = (n: number) => fetchJson<RawDep[]>($, `${api}/issues/${n}/dependencies`)
-    const load = async (i: (typeof found)[number]): Promise<Epic> => {
-      const state = i.state === 'closed' ? 'closed' : 'open'
-      if (state === 'closed') return { number: i.number, title: i.title, state, children: null }
-      if (known.has(i.number)) return { number: i.number, title: i.title, state, children: known.get(i.number) ?? null }
-      const raw = await deps(i.number)
-      const children = raw
-        ? await Promise.all(
-            raw.map(async (c): Promise<EpicChild> => {
-              const assignees = (c.assignees ?? []).map(a => a.login)
-              const open = c.state !== 'closed'
-              const mine = me !== null && assignees.includes(me)
-              // Only an open child that is not yours is checked for what blocks it.
-              const blocked = open && !mine ? ((await deps(c.number)) ?? []).some(d => d.state !== 'closed') : false
-              return { number: c.number, title: c.title, state: open ? 'open' : 'closed', assignees, mine, blocked }
-            }),
-          )
-        : null
-      known.set(i.number, children)
-      return { number: i.number, title: i.title, state, children }
-    }
+    found = (await fetchAll<RawEpic>($, `${api}/issues?state=all&type=issues&labels=${encodeURIComponent(label)}`, 'epics'))
+      .filter(i => (i.labels ?? []).some(l => l.name === label))
+      .map(i => ({ ...i, milestone: i.milestone?.title ?? null }))
+  } catch (err) {
+    await update($, epics, (): Epics => ({ kind: 'error', message: message(err) }))
+  }
+  memory = { repo: `${r.host}/${slug(r)}`, milestones, mine, free, blockers: new Map(), epics: found, children: new Map() }
+  const failed = (await read($, overview)).kind === 'error'
+  await showPicker($)
+  if (!failed) await showNext($, r)
+  if ((await read($, epics)).kind !== 'error') await showEpics($, r)
+}
+
+// The picker's options from what is open, and the pick: the person's when it
+// is still offered, else the first milestone, else All.
+async function showPicker($: EngineInterface) {
+  if (!memory) return
+  const items = [...memory.mine, ...memory.free, ...memory.epics.filter(e => e.state === 'open')]
+  const options = pickerOptions(memory.milestones, items)
+  const wanted = await read($, milestonePick)
+  const pick = options.some(o => o.value === wanted)
+    ? (wanted as string)
+    : (options.find(o => o.value.startsWith('m:'))?.value ?? 'all')
+  await update($, picker, () => ({ options, pick }))
+}
+
+// What's next within the pick: yours in it are In progress; of the free ones
+// in it, walked oldest first, the first with no open dependencies is Next.
+async function showNext($: EngineInterface, r: Repo) {
+  if (!memory) return
+  const known = memory
+  const pick = (await read($, picker))?.pick ?? 'all'
+  const inProgress = known.mine.filter(i => inPick(pick, i.milestone))
+  const free = known.free.filter(i => inPick(pick, i.milestone))
+  const { next, queue, blocked } = await pickNext(free, async n => {
+    if (known.blockers.has(n)) return known.blockers.get(n) ?? null
+    const deps = await fetchJson<{ number: number; state: string }[]>($, `${base(r)}/repos/${slug(r)}/issues/${n}/dependencies`)
+    const open = deps ? deps.filter(d => d.state === 'open').map(d => d.number) : null
+    known.blockers.set(n, open)
+    return open
+  })
+  await update($, overview, (): Overview => ({ kind: 'ok', inProgress, next, queue, blocked }))
+  // An issue that is closed, or now someone else's, closes: What's next shows.
+  const shown = new Set([...known.mine, ...known.free].map(i => i.number))
+  await update($, memberOf(picked, { requestId: PANE }), n => (n !== null && shown.has(n) ? n : null))
+}
+
+// The epics within the pick, by milestone. For each open epic shown, its
+// children: the issues it depends on, with whether each is yours and, for
+// the others, whether it is blocked. What was shown stays up while this
+// loads, so the picker does not vanish under the person's hand.
+async function showEpics($: EngineInterface, r: Repo) {
+  if (!memory) return
+  const known = memory
+  const api = `${base(r)}/repos/${slug(r)}`
+  const openEpics = known.epics.filter(i => i.state === 'open').length
+  if (openEpics === 0) {
+    await update($, epics, (): Epics => ({ kind: 'ok', groups: [], openEpics }))
+    return
+  }
+  // Who you are, from the setup check: the children assigned to you are yours.
+  const s = await read($, setup)
+  const me = s.kind === 'ready' ? s.login : null
+  const pick = (await read($, picker))?.pick ?? 'all'
+  const deps = (n: number) => fetchJson<RawDep[]>($, `${api}/issues/${n}/dependencies`)
+  const loadOne = async (i: Memory['epics'][number]): Promise<Epic> => {
+    const state = i.state === 'closed' ? 'closed' : 'open'
+    if (state === 'closed') return { number: i.number, title: i.title, state, children: null }
+    if (known.children.has(i.number)) return { number: i.number, title: i.title, state, children: known.children.get(i.number) ?? null }
+    const raw = await deps(i.number)
+    const children = raw
+      ? await Promise.all(
+          raw.map(async (c): Promise<EpicChild> => {
+            const assignees = (c.assignees ?? []).map(a => a.login)
+            const open = c.state !== 'closed'
+            const mine = me !== null && assignees.includes(me)
+            // Only an open child that is not yours is checked for what blocks it.
+            const blocked = open && !mine ? ((await deps(c.number)) ?? []).some(d => d.state !== 'closed') : false
+            return { number: c.number, title: c.title, state: open ? 'open' : 'closed', assignees, mine, blocked }
+          }),
+        )
+      : null
+    known.children.set(i.number, children)
+    return { number: i.number, title: i.title, state, children }
+  }
+  try {
     const groups: EpicGroup[] = await Promise.all(
-      groupsFor(pick, milestones, found).map(async g => {
-        const shown = await Promise.all(g.epics.map(load))
+      groupsFor(pick, known.milestones, known.epics).map(async g => {
+        const shown = await Promise.all(g.epics.map(loadOne))
         shown.sort((a, b) => (a.state === 'closed' ? 1 : 0) - (b.state === 'closed' ? 1 : 0) || a.number - b.number)
         const m = g.milestone
         return { title: m?.title ?? null, due: m?.due ?? null, closed: m?.closed ?? 0, total: m?.total ?? 0, epics: shown }
       }),
     )
-    await update($, epics, (): Epics => ({ kind: 'ok', options, pick, groups, openEpics }))
+    await update($, epics, (): Epics => ({ kind: 'ok', groups, openEpics }))
   } catch (err) {
     await update($, epics, (): Epics => ({ kind: 'error', message: message(err) }))
   }
 }
 
-// Shows what the picker picked in the Epics pane, and closes its list.
-async function pickEpics($: EngineInterface, value: string) {
+// Picks a milestone for both panes and closes the picker's list.
+async function pickMilestone($: EngineInterface, value: string) {
   await update($, pickerOpen, () => false)
-  await update($, epicsPick, () => value)
+  await update($, milestonePick, () => value)
   const r = await read($, repo)
-  const ep = await read($, epics)
-  const label = (ep.kind === 'ok' && ep.options.find(o => o.value === value)?.label) || value
-  if (r) await counted($, label, () => loadEpics($, r, false))
+  const label = (await read($, picker))?.options.find(o => o.value === value)?.label ?? value
+  if (!r) return
+  await counted($, label, async () => {
+    await showPicker($)
+    if ((await read($, overview)).kind === 'ok') await showNext($, r)
+    await showEpics($, r)
+  })
 }
 
 // The issues read for a detail view, by repo and number, kept until the next
@@ -435,8 +503,7 @@ async function refresh($: EngineInterface): Promise<Repo | null> {
   issuesRead.clear()
   const r = await check($)
   if (r && (await read($, setup)).kind === 'ready') {
-    await loadOverview($, r)
-    await loadEpics($, r)
+    await load($, r)
     for (const pane of [PANE, EPICS_PANE]) {
       const n = await read($, memberOf(picked, { requestId: pane }))
       if (n !== null) await loadDetail($, r, pane, n)
@@ -466,6 +533,47 @@ function fit(text: string, width: number): string {
   return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`
 }
 
+// Changes issue `n` in Forgejo (`what` names the change for a refusal), then
+// reads it again with What's next and the epics, so the change shows
+// everywhere. A refusal is shown under the actions of pane `pane`.
+async function writeIssue($: EngineInterface, pane: string, n: number, body: object, what: string): Promise<boolean> {
+  const r = await read($, repo)
+  if (!r) return false
+  const tok = await readToken($)
+  const res = await forgejo($, `${base(r)}/repos/${slug(r)}/issues/${n}`, {
+    method: 'PATCH',
+    headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).catch((err: unknown) => message(err))
+  if (typeof res === 'string' || !res.ok) {
+    let why = typeof res === 'string' ? res : `HTTP ${res.status}`
+    if (typeof res !== 'string') {
+      try {
+        why = (JSON.parse(res.text) as { message?: string }).message || why
+      } catch {
+        // The status says enough.
+      }
+    }
+    const error = `Could not ${what} #${n}: ${why.replace(/\.$/, '')}.`
+    await update($, memberOf(detail, { requestId: pane }), (d): Detail => (d.kind === 'ok' ? { ...d, error } : d))
+    return false
+  }
+  issuesRead.delete(`${r.host}/${slug(r)}#${n}`)
+  for (const p of [PANE, EPICS_PANE]) {
+    if ((await read($, memberOf(picked, { requestId: p }))) === n) await loadDetail($, r, p, n)
+  }
+  await load($, r)
+  return true
+}
+
+// You on issue `i`, or off it; other assignees stay.
+async function assignMe($: EngineInterface, pane: string, i: IssueDetail, on: boolean): Promise<boolean> {
+  const s = await read($, setup)
+  if (s.kind !== 'ready') return false
+  const others = i.assignees.filter(a => a !== s.login)
+  return writeIssue($, pane, i.number, { assignees: on ? [...others, s.login] : others }, on ? 'assign' : 'unassign')
+}
+
 // What a draft is made from: the issue, and its last comment when known.
 type DraftSource = Pick<IssueRow, 'number' | 'title' | 'url' | 'body'> & {
   lastComment?: { author: string; body: string } | null
@@ -484,7 +592,16 @@ function draftFor(i: DraftSource): string {
 
 // Puts the draft for `i` in the prompt box, never sending it: over an empty
 // box, under what is typed there otherwise.
-async function workOn($: EngineInterface, i: DraftSource) {
+// With the actions allowed and the issue not yet yours, it is assigned to
+// you first.
+async function workOn($: EngineInterface, i: DraftSource, take?: { pane: string; issue: IssueDetail }) {
+  let taken = false
+  if (take) {
+    const s = await read($, setup)
+    if (s.kind === 'ready' && s.actions.kind !== 'read-only' && !take.issue.assignees.includes(s.login)) {
+      taken = await counted($, `assign #${i.number}`, () => assignMe($, take.pane, take.issue, true))
+    }
+  }
   try {
     const draft = draftFor(i)
     const box = await $.prompt.read()
@@ -492,7 +609,7 @@ async function workOn($: EngineInterface, i: DraftSource) {
     const done = await $.prompt.fill(typed ? { text: `\n\n${draft}`, mode: 'append' } : { text: draft, mode: 'replace' })
     $.ui.toast(
       done.isFilled
-        ? `#${i.number} is in the prompt: Esc to edit it there`
+        ? `#${i.number} is ${taken ? 'yours and ' : ''}in the prompt: Esc to edit it there`
         : `Could not put #${i.number} in the prompt${done.refusal ? ` (${done.refusal})` : ''}`,
     )
   } catch (err) {
@@ -512,9 +629,9 @@ function age(iso: string, now: number): string {
   return `${Math.floor(d / 365)}y`
 }
 
-type Step = 'repo' | 'forgejo' | 'token' | 'access'
-const STEPS: readonly Step[] = ['repo', 'forgejo', 'token', 'access']
-const LABEL: Record<Step, string> = { repo: 'Repo', forgejo: 'Forgejo', token: 'Token', access: 'Access' }
+type Step = 'repo' | 'forgejo' | 'token' | 'access' | 'actions'
+const STEPS: readonly Step[] = ['repo', 'forgejo', 'token', 'access', 'actions']
+const LABEL: Record<Step, string> = { repo: 'Repo', forgejo: 'Forgejo', token: 'Token', access: 'Access', actions: 'Actions' }
 
 // The step each outcome stopped at; `ready` is past them all.
 const STOPPED_AT: Record<Setup['kind'], number> = {
@@ -526,7 +643,7 @@ const STOPPED_AT: Record<Setup['kind'], number> = {
   'no-scope': 3,
   'not-found': 3,
   error: 3,
-  ready: 4,
+  ready: 5,
 }
 
 // What the pane says about the step that failed, before what to do.
@@ -670,6 +787,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     forgejo: v && r ? `${v} at ${r.host}` : '',
     token: tokenText,
     access: s.kind === 'ready' ? `${s.openIssues} open issues, as ${s.login}` : '',
+    actions: 'assign and close',
   }
   const failText: Record<Step, string> = {
     repo: 'no Forgejo repo here',
@@ -680,6 +798,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ? `${s.detail}, too old`
           : `not found at ${r?.host ?? 'this host'}`,
     token: 'none found',
+    actions: '',
     access:
       s.kind === 'token-refused'
         ? 'token refused'
@@ -712,6 +831,16 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             : noForge
               ? 'needs Forgejo'
               : ''
+    // Actions that cannot be done are no failure: setup passes, read only.
+    if (step === 'actions' && s.kind === 'ready' && s.actions.kind !== 'ok') {
+      const why =
+        s.actions.kind === 'unknown'
+          ? 'unknown, scopes not listed'
+          : s.actions.reason === 'scope'
+            ? 'read only, token lacks write:issue'
+            : `read only, ${s.login} may not push here`
+      return line(`step-${step}`, `· ${LABEL[step].padEnd(8)}${why}`, { color: 'inactive' })
+    }
     return line(`step-${step}`, `${mark} ${LABEL[step].padEnd(8)}${text}`, { color })
   })
 
@@ -730,6 +859,18 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
   }
 
+  // Labels as text, each in its Forgejo colour (made lighter when too dark),
+  // dim when it has none; commas between them dim.
+  const labelTexts = (labels: readonly { name: string; color: string }[]) =>
+    labels.flatMap((l, k) => {
+      const color = readable(l.color)
+      return [
+        ...(k > 0 ? [<Text key={`lsep-${k}`} dimColor>{', '}</Text>] : []),
+        <Text key={`label-${k}`} color={color} dimColor={!color}>
+          {l.name}
+        </Text>,
+      ]
+    })
   // With Debug on, under the repo line: what the last action and the session
   // asked Forgejo.
   const req = configDebug ? await read($, requests) : null
@@ -743,6 +884,47 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       <Text dimColor>{' this session'}</Text>
     </Box>
   )
+  // The milestone picker both panes share, and what it shows picked.
+  const pk = await read($, picker)
+  const pickedOption = pk?.options.find(o => o.value === pk.pick)
+  // A section's name within the pick: "in v1.2", "without a milestone", or
+  // nothing for All.
+  const within = !pk || pk.pick === 'all' ? '' : pk.pick === 'none' ? ' without a milestone' : ` in ${pickedOption?.label ?? ''}`
+  // The title row both lists share: the pane's name when no tab names it,
+  // the picker, Refresh; with the picker open, its list under it at the
+  // right, each milestone with its due date and the one picked in bold.
+  const titleRow = async (name: string) => {
+    const listOpen = pk !== null && pickedOption !== undefined && (await read($, pickerOpen))
+    const today = await $.clock.now()
+    // One block that keeps its rows however long the list under it: a long
+    // list once squeezed the title row out of the pane.
+    return (
+      <Box key="top" flexDirection="column" flexShrink={0}>
+        <Box key="title" height={1} flexShrink={0}>
+          {!tabbed && (
+            <Text bold wrap="truncate-end">
+              {name}
+            </Text>
+          )}
+          <Box flexGrow={1} />
+          {pickedOption && (
+            <Button key="milestone" label={`${pickedOption.label} ▾`} hotkey="m" onPress={() => update($, pickerOpen, o => !o)} />
+          )}
+          <Box width={2} />
+          <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
+        </Box>
+        {listOpen && pk && (
+          <Box key="choices" flexDirection="column" flexShrink={0} paddingLeft={Math.max(0, columns - 20)}>
+            {pk.options.map(o => (
+              <Button key={`milestone-${o.value}`} plain onPress={() => pickMilestone($, o.value)}>
+                <Text bold={o.value === pk.pick}>{`${o.label.padEnd(14)}${o.due ? day(o.due, today) : ''}`.padEnd(20)}</Text>
+              </Button>
+            ))}
+          </Box>
+        )}
+      </Box>
+    )
+  }
   // With another fj pane open the engine draws tabs that name both, so a
   // title row leaves its pane's name out.
   const tabbed = (await read($, panesOpen)).some(id => id !== e.requestId)
@@ -868,14 +1050,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           keyed(
             'labels',
             'Labels',
-            <Text wrap="truncate-end">
-              {i.labels.map((l, k) => (
-                <Text key={`label-${k}`}>
-                  {k > 0 ? ' ' : ''}
-                  <Text backgroundColor={`#${l.color}`} color={inkOn(l.color)}>{` ${l.name} `}</Text>
-                </Text>
-              ))}
-            </Text>,
+            <Text wrap="truncate-end">{labelTexts(i.labels)}</Text>,
           ),
         )
       }
@@ -904,7 +1079,14 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const comments = `${i.comments} ${i.comments === 1 ? 'comment' : 'comments'}`
 
       // What is left for the description and the last comment.
-      const fixed = 1 + titleLines.length + 2 + 1 + (facts.length > 0 ? facts.length + 1 : 0) + 1 + 1 + 1 + 1
+      // Assign and close, when fj may: setup's Actions step says so.
+      const acts = s.kind === 'ready' ? s.actions : ({ kind: 'read-only', reason: 'scope' } as const)
+      const canAct = acts.kind !== 'read-only'
+      const mine = s.kind === 'ready' && i.assignees.includes(s.login)
+      const closed = i.state === 'closed'
+      const error = d.kind === 'ok' ? d.error : undefined
+      const actionRows = 2 + (canAct ? 0 : 2) + (error ? 2 : 0)
+      const fixed = 1 + titleLines.length + 2 + actionRows + (facts.length > 0 ? facts.length + 1 : 0) + 1 + 1 + 1 + 1
       const last = i.lastComment
       const lastLines = last ? wrap(last.body.trim(), columns) : []
       const lastShown = Math.min(3, lastLines.length)
@@ -925,6 +1107,47 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Text dimColor wrap="truncate-end">{`opened ${age(i.created, now)} ago by ${i.author} · updated ${age(i.updated, now)} ago`}</Text>
         </Box>,
       )
+      // Right under the title, so they never scroll away with a long issue.
+      body.push(
+        <Box key="actions" flexDirection="column" flexShrink={0} marginTop={1}>
+          <Box height={1}>
+            <Button
+              key="work"
+              label={say(ICON.work, 'Work on this')}
+              hotkey="w"
+              onPress={() => workOn($, i, { pane: e.requestId, issue: i })}
+            />
+            {canAct && <Text>{'  '}</Text>}
+            {canAct && (
+              <Button
+                key="assign"
+                label={say(mine ? ICON.unassign : ICON.assign, mine ? 'Unassign me' : 'Assign me')}
+                hotkey="a"
+                onPress={() => counted($, `${mine ? 'unassign' : 'assign'} #${i.number}`, () => assignMe($, e.requestId, i, !mine))}
+              />
+            )}
+            {canAct && <Text>{'  '}</Text>}
+            {canAct && (
+              <Button
+                key="close"
+                label={say(closed ? ICON.reopen : ICON.close, closed ? 'Reopen' : 'Close')}
+                hotkey="c"
+                onPress={() =>
+                  counted($, `${closed ? 'reopen' : 'close'} #${i.number}`, () =>
+                    writeIssue($, e.requestId, i.number, { state: closed ? 'open' : 'closed' }, closed ? 'reopen' : 'close'),
+                  )
+                }
+              />
+            )}
+          </Box>
+          <Box height={1}>
+            <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, i.url)} />
+          </Box>
+          {!canAct &&
+            para('read-only', "Assign and close need a token with write:issue: the setup guide's steps make one.", { dimColor: true })}
+          {error && para('action-error', error, { color: 'error' })}
+        </Box>,
+      )
       if (facts.length > 0) {
         body.push(
           <Box key="facts" flexDirection="column" flexShrink={0} marginTop={1}>
@@ -932,13 +1155,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>,
         )
       }
-      body.push(
-        <Box key="actions" height={1} flexShrink={0} marginTop={1}>
-          <Button key="work" label={say(ICON.work, 'Work on this')} hotkey="w" onPress={() => workOn($, i)} />
-          <Text>{'  '}</Text>
-          <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, i.url)} />
-        </Box>,
-      )
       body.push(<Box key="gap-desc" height={1} flexShrink={0} />, rule('desc', 'Description'))
       if (descLines.length === 0) body.push(line('no-desc', 'No description.', { dimColor: true }))
       descLines.slice(0, descShown).forEach((t, k) => body.push(line(`d-${k}`, t || ' ')))
@@ -1092,36 +1308,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const yours = shown.reduce((n, x) => n + tally(x.children ?? []).mine, 0)
     const openShown = shown.filter(x => x.state === 'open').length
     const g = groups.length > 0
-    const picked = ep.kind === 'ok' ? ep.options.find(o => o.value === ep.pick) : undefined
-    const listOpen = picked !== undefined && (await read($, pickerOpen))
     return (
       <Box flexDirection="column" height={height}>
-        <Box key="title" height={1} flexShrink={0}>
-          {!tabbed && (
-            <Text bold wrap="truncate-end">
-              Epics
-            </Text>
-          )}
-          <Box flexGrow={1} />
-          {picked && (
-            <Button key="milestone" label={`${picked.label} ▾`} hotkey="m" onPress={() => update($, pickerOpen, o => !o)} />
-          )}
-          <Box width={2} />
-          <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
-        </Box>
-        {listOpen && ep.kind === 'ok' && (
-          // The picker's list, under the title at its right: each choice, a
-          // milestone with its due date, the one picked in bold.
-          <Box key="choices" flexDirection="column" flexShrink={0} paddingLeft={Math.max(0, columns - 20)}>
-            {ep.options.map(o => (
-              <Button key={`pick-${o.value}`} plain onPress={() => pickEpics($, o.value)}>
-                <Text bold={o.value === ep.pick}>
-                  {`${o.label.padEnd(14)}${o.due ? day(o.due, now) : ''}`.padEnd(20)}
-                </Text>
-              </Button>
-            ))}
-          </Box>
-        )}
+        {await titleRow('Epics')}
         <Box key="gap" height={1} flexShrink={0} />
         <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
           {rows}
@@ -1159,9 +1348,27 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // detail, and under it what is known about it. Next is bold and has
       // the focus first, so Enter opens it at once.
       const row = (i: IssueRow, section: keyof typeof MARK, blockedBy?: number[]) => {
-        const facts = blockedBy
-          ? [`blocked by ${blockedBy.map(n => `#${n}`).join(', ')}`, `opened ${age(i.created, now)} ago`].join(' · ')
-          : [i.milestone, i.labels.join(', '), `opened ${age(i.created, now)} ago`].filter(Boolean).join(' · ')
+        // Dim, but for the labels, each in its own colour.
+        const parts: RenderChildren[] = blockedBy
+          ? [`blocked by ${blockedBy.map(n => `#${n}`).join(', ')}`, `opened ${age(i.created, now)} ago`]
+          : [
+              // The milestone picked is in the rules already; another shows.
+              pk?.pick === `m:${i.milestone}` ? null : i.milestone,
+              i.labels.length > 0 ? labelTexts(i.labels) : null,
+              `opened ${age(i.created, now)} ago`,
+            ].filter(
+              p => p !== null && p !== '',
+            )
+        const facts = parts.flatMap((p, k) => [
+          ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
+          ...(typeof p === 'string'
+            ? [
+                <Text key={`part-${k}`} dimColor>
+                  {p}
+                </Text>,
+              ]
+            : (p as RenderChildren[])),
+        ])
         const dim = section === 'blocked'
         const next = section === 'next'
         const [mark, markColor] = MARK[section]
@@ -1176,17 +1383,17 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             </Button>
             <Box>
               <Text>{indent}</Text>
-              <Text wrap="truncate-end" dimColor>
-                {facts}
-              </Text>
+              <Text wrap="truncate-end">{facts}</Text>
             </Box>
           </Box>
         )
       }
       if (listed.length === 0) {
-        rows.push(para('none', `No open issues in ${slug(r)}.`, { dimColor: true }))
+        rows.push(
+          para('none', within ? `No open issues${within}.` : `No open issues in ${slug(r)}.`, { dimColor: true }),
+        )
       } else {
-        rows.push(rule('in-progress', `In progress (${m.inProgress.length})`))
+        rows.push(rule('in-progress', `In progress${within} (${m.inProgress.length})`))
         if (m.inProgress.length === 0) {
           rows.push(
             <Box key="no-progress" flexDirection="column" marginBottom={1} flexShrink={0}>
@@ -1195,7 +1402,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )
         }
         for (const i of m.inProgress) rows.push(row(i, 'progress'))
-        rows.push(rule('next', 'Next'))
+        rows.push(rule('next', `Next${within}`))
         if (m.next) rows.push(row(m.next, 'next'))
         else if (m.blocked.length > 0) {
           rows.push(
@@ -1212,7 +1419,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )
         }
         if (later.length > 0) {
-          rows.push(rule('queue', `Queue (${later.length})`))
+          rows.push(rule('queue', `Queue${within} (${later.length})`))
           for (const i of m.queue) rows.push(row(i, 'queue'))
           for (const b of m.blocked) rows.push(row(b.issue, 'blocked', b.by))
         }
@@ -1232,7 +1439,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
     return (
       <Box flexDirection="column" height={height}>
-        {heading(tabbed ? '' : "What's next", { label: 'Refresh' })}
+        {await titleRow("What's next")}
         <Box key="gap" height={1} flexShrink={0} />
         <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
           {rows}
@@ -1292,8 +1499,9 @@ async function runFj($: EngineInterface, word: string) {
   if (want === 'next' && r) await openNext("What's next", true)
   const o = await read($, overview)
   if (s.kind !== 'ready' || !r) return { text: 'fj needs setting up: see its pane.' }
+  const pk = await read($, picker)
+  const showing = pk?.options.find(x => x.value === pk.pick)?.label ?? 'All'
   if (want === 'epics' && ep.kind === 'ok') {
-    const showing = ep.options.find(x => x.value === ep.pick)?.label ?? 'All'
     return { text: `fj epics for ${slug(r)}: ${ep.openEpics} open, showing ${showing}.` }
   }
   if (o.kind !== 'ok') return { text: `fj is ready for ${slug(r)}, but could not load its issues.` }
@@ -1301,7 +1509,8 @@ async function runFj($: EngineInterface, word: string) {
     return { text: `fj is ready for ${slug(r)}: no open issues.` }
   }
   const then = o.next ? `next is #${o.next.number}` : o.blocked.length > 0 ? 'nothing ready' : 'nothing else open'
-  return { text: `fj is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}.` }
+  const filter = pk && pk.pick !== 'all' ? ` (${showing})` : ''
+  return { text: `fj is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}${filter}.` }
 }
 
 export const register: Register = (on, options) => {
@@ -1316,6 +1525,10 @@ export const register: Register = (on, options) => {
       description: 'Open the Forgejo pane for this repo',
       argumentHint: '[next|epics]',
     })
+    // A reload brings new code but keeps the session's state, which the old
+    // code wrote. With fj's panes open, load once, so they show what this
+    // code would.
+    if ((await read($, panesOpen)).length > 0) await counted($, 'reload', () => refresh($))
     return next(e)
   })
 

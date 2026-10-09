@@ -69,6 +69,8 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
     opened.push({ id: e.id, title: e.title, ...(e.focus ? { focus: true as const } : {}) })
     return { value: { isPlaced: true } }
   })
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('ui.close', (_$, e) => {
     closed.push(e.id)
     return { value: undefined }
@@ -225,6 +227,22 @@ test('/fj with an unknown word opens nothing and says what it knows', TOKEN, asy
   )
 })
 
+test('after a reload, with its panes open, fj loads by itself', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, REPO, asked)
+  await $.command.run(RUN)
+  const before = asked.length
+  await $.session.start({ cwd: '/Users/jdoe/dev/radar', surface: 'terminal', isInteractive: true })
+  expect(asked.length).toBeGreaterThan(before)
+})
+
+test('a session that starts with no fj pane open loads nothing', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, REPO, asked)
+  await $.session.start({ cwd: '/Users/jdoe/dev/radar', surface: 'terminal', isInteractive: true })
+  expect(asked).toEqual([])
+})
+
 test('with no open epic there is no Epics pane', TOKEN, async ($, on) => {
   const opened: { id: string; title?: string }[] = []
   world(on, { epics: [epic(3, 'Project setup', { state: 'closed' })] }, [], opened)
@@ -379,7 +397,7 @@ test("an issue opened in Epics leaves What's next as it was", TOKEN, async ($, o
   await epics.press({ key: 'child-51' })
 
   const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
-  expect(await texts(next)).toContain('No open issues in boats/radar.')
+  expect(await texts(next)).toContain('No open issues in v1.2.')
   await expect(next.find({ key: 'back' })).resolves.toBeUndefined()
 })
 
@@ -398,7 +416,7 @@ test('the rule and the repo line keep their row when the epics are too many', TO
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, props: { ...EPICS_PANE.props, scroll: { offset: 0, bodyRows: 12 } }, surface: 'terminal' })
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
-  for (const key of ['group-0', 'where-rule', 'where']) expect(boxes.find(b => b.key === key)?.props.flexShrink).toBe(0)
+  for (const key of ['top', 'group-0', 'where-rule', 'where']) expect(boxes.find(b => b.key === key)?.props.flexShrink).toBe(0)
 })
 
 test('Refresh in the Epics pane loads the epics again', TOKEN, async ($, on) => {
@@ -415,7 +433,7 @@ type Btn = { key: string; props: Record<string, unknown> }
 const label = async (ui: { find: (q: { key: string }) => Promise<unknown> }) =>
   ((await ui.find({ key: 'milestone' })) as Btn | undefined)?.props.label
 const choices = async (ui: { findAll: (q: { type: string }) => Promise<unknown[]> }) =>
-  ((await ui.findAll({ type: 'Button' })) as Btn[]).map(b => b.key).filter(k => k.startsWith('pick-'))
+  ((await ui.findAll({ type: 'Button' })) as Btn[]).map(b => b.key).filter(k => k.startsWith('milestone-'))
 
 test('the picker shows what is picked, and opens on the open milestones with epics, No milestone and All', TOKEN, async ($, on) => {
   const clock = world(on, REPO)
@@ -426,7 +444,7 @@ test('the picker shows what is picked, and opens on the open milestones with epi
   expect(await choices(ui)).toEqual([])
 
   await ui.press({ key: 'milestone' })
-  expect(await choices(ui)).toEqual(['pick-m:v1.2', 'pick-m:v1.3', 'pick-none', 'pick-all'])
+  expect(await choices(ui)).toEqual(['milestone-m:v1.2', 'milestone-m:v1.3', 'milestone-none', 'milestone-all'])
   const all = await texts(ui)
   expect(all).toContain(`${'v1.2'.padEnd(14)}31 Oct`)
   expect(all).toContain('All'.padEnd(20))
@@ -441,7 +459,7 @@ test('picking another milestone shows its epics', TOKEN, async ($, on) => {
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   await ui.press({ key: 'milestone' })
-  await ui.press({ key: 'pick-m:v1.3' })
+  await ui.press({ key: 'milestone-m:v1.3' })
   expect(await choices(ui)).toEqual([])
   expect(await label(ui)).toBe('v1.3 ▾')
   const all = await texts(ui)
@@ -455,7 +473,7 @@ test('All shows a group per milestone, No milestone last, and counts them all', 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   await ui.press({ key: 'milestone' })
-  await ui.press({ key: 'pick-all' })
+  await ui.press({ key: 'milestone-all' })
   const all = await texts(ui)
   const names = all.filter((t, k) => all[k - 1] === '── ')
   expect(names).toEqual(['v1.2', 'v1.3', 'No milestone'])
@@ -467,12 +485,23 @@ test('All shows a group per milestone, No milestone last, and counts them all', 
   expect(['group-0', 'group-1', 'group-2'].map(k => boxes.find(b => b.key === k)?.props.marginTop ?? 0)).toEqual([0, 1, 1])
 })
 
+test("a pick in Epics is What's next's pick too", TOKEN, async ($, on) => {
+  world(on, REPO)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'milestone' })
+  await ui.press({ key: 'milestone-m:v1.3' })
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  expect(await label(next)).toBe('v1.3 ▾')
+  expect(await texts(next)).toContain('No open issues in v1.3.')
+})
+
 test('the pick holds over a Refresh', TOKEN, async ($, on) => {
   world(on, REPO)
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   await ui.press({ key: 'milestone' })
-  await ui.press({ key: 'pick-m:v1.3' })
+  await ui.press({ key: 'milestone-m:v1.3' })
   await ui.press({ key: 'refresh' })
   expect(await label(ui)).toBe('v1.3 ▾')
   expect((await texts(ui))[1]).toBe('v1.3')
@@ -488,7 +517,7 @@ test('switching milestones and back asks Forgejo only for epics not seen yet', T
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   for (const pick of ['m:v1.3', 'm:v1.2', 'all']) {
     await ui.press({ key: 'milestone' })
-    await ui.press({ key: `pick-${pick}` })
+    await ui.press({ key: `milestone-${pick}` })
   }
   expect(count(asked, u => u.searchParams.get('labels') === 'epic')).toBe(1)
   expect(count(asked, u => u.pathname.endsWith('/milestones'))).toBe(1)
@@ -516,11 +545,11 @@ test('who you are comes from the setup check, so a picker switch asks Forgejo no
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   for (const pick of ['m:v1.3', 'm:v1.2', 'm:v1.3']) {
     await ui.press({ key: 'milestone' })
-    await ui.press({ key: `pick-${pick}` })
+    await ui.press({ key: `milestone-${pick}` })
   }
   const before = asked.length
   await ui.press({ key: 'milestone' })
-  await ui.press({ key: 'pick-m:v1.2' })
+  await ui.press({ key: 'milestone-m:v1.2' })
   expect(asked.length).toBe(before)
 })
 
@@ -548,7 +577,7 @@ test('with Debug on, a line under the repo line counts the requests of each acti
   await ui.press({ key: 'back' })
   const before = asked.length
   await ui.press({ key: 'milestone' })
-  await ui.press({ key: 'pick-m:v1.3' })
+  await ui.press({ key: 'milestone-m:v1.3' })
   expect(await counter(ui)).toEqual(['↯ v1.3: ', String(asked.length - before), ' requests', String(asked.length), ' this session'])
 
   await ui.press({ key: 'refresh' })

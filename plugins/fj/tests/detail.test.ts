@@ -94,7 +94,18 @@ const FULL: Answers = {
   '/issues/29/times': [{ time: 3600 }, { time: 1200 }],
 }
 
-function world(on: On, answers: Answers, asked: string[] = [], opened: string[] = [], opener = 'open') {
+// What the token and the repo allow, for the actions. Left out: a repo
+// without push and a token whose scopes Forgejo lists as read only.
+type Rights = {
+  push?: boolean
+  // The token's scopes as /users/alice/tokens lists them; null: that list is refused.
+  scopes?: readonly string[] | null
+  // The writes fj sends, and what Forgejo answers them.
+  sent?: { method: string; path: string; body: unknown }[]
+  refuse?: { status: number; message: string }
+}
+
+function world(on: On, answers: Answers, asked: string[] = [], opened: string[] = [], opener = 'open', rights: Rights = {}) {
   const clock = mock.clock(on)
   on('process.run', (_$, e) => {
     const cmd = e.argv.join(' ')
@@ -111,15 +122,32 @@ function world(on: On, answers: Answers, asked: string[] = [], opened: string[] 
     asked.push(e.url)
     const url = new URL(e.url)
     const reply = (status: number, body: unknown) => ({
-      value: { status, ok: status === 200, headers: {}, text: JSON.stringify(body) },
+      value: { status, ok: status >= 200 && status < 300, headers: {}, text: JSON.stringify(body) },
     })
     if (url.pathname.endsWith('/version')) return reply(200, { version: '16.0.5' })
     if (url.pathname.endsWith('/api/v1/user')) return reply(200, { login: 'alice' })
+    if (url.pathname.endsWith('/api/v1/users/alice/tokens')) {
+      if (rights.scopes === null) return reply(401, { message: 'basic auth required' })
+      return reply(200, [
+        { name: 'other', token_last_eight: 'abcdefgh', scopes: ['all'] },
+        { name: 'fj', token_last_eight: 'secret', scopes: rights.scopes ?? ['read:issue', 'read:repository', 'read:user'] },
+      ])
+    }
+    if (e.init?.method === 'PATCH') {
+      const body = JSON.parse(String(e.init.body ?? '{}')) as Record<string, unknown>
+      rights.sent?.push({ method: 'PATCH', path: url.pathname, body })
+      if (rights.refuse) return reply(rights.refuse.status, { message: rights.refuse.message })
+      // The issue as Forgejo now holds it, for the next read.
+      const now = { ...(answers['/issues/29'] as object), ...body } as Record<string, unknown>
+      if (body.assignees) now.assignees = (body.assignees as string[]).map(login => ({ login }))
+      answers = { ...answers, '/issues/29': now }
+      return reply(201, now)
+    }
     if (url.pathname.endsWith('/issues/search')) return reply(200, url.searchParams.get('page') === '1' ? [LISTED] : [])
     // The repo's open issues: only #29, which is yours.
     if (url.pathname.endsWith('/repos/boats/radar/issues')) return reply(200, [])
     const path = e.url.startsWith(API) ? e.url.slice(API.length) : ''
-    if (path === '') return reply(200, { full_name: 'boats/radar', open_issues_count: 9 })
+    if (path === '') return reply(200, { full_name: 'boats/radar', open_issues_count: 9, permissions: { push: rights.push ?? false } })
     return path in answers ? reply(200, answers[path]) : reply(404, { message: 'not found' })
   })
   return clock
@@ -150,8 +178,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '14 Oct, in 5 days',
       '29-config-docs',
       '1h 20m logged',
-      ' docs ',
-      ' needs-triage ',
+      'docs',
+      'needs-triage',
       'Blocked by     ',
       'Settings screen rework',
       'Drop FORGEJO_TOKEN',
@@ -175,6 +203,17 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await expect(ui.find({ key: 'open' })).resolves.toBeDefined()
   })
 }
+
+test('labels are text in their Forgejo colour; one too dark to read is made lighter', TOKEN, async ($, on) => {
+  world(on, FULL)
+  const ui = await opened($)
+  const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
+  expect(found.find(t => t.text === 'docs')?.props.color).toBe('#e8875c')
+  const deep = found.find(t => t.text === 'needs-triage')?.props.color as string
+  expect(deep).toMatch(/^#[0-9a-f]{6}$/)
+  expect(deep).not.toBe('#1d4ed8')
+  expect(found.some(t => t.props.backgroundColor)).toBe(false)
+})
 
 test('an open blocker is red, a closed one struck through', TOKEN, async ($, on) => {
   world(on, FULL)
@@ -269,6 +308,93 @@ test('an issue opened again is shown from memory until Refresh', TOKEN, async ($
 })
 
 type Filled = { text: string; mode?: string }[]
+
+const WRITE: Rights = { push: true, scopes: ['write:issue', 'read:repository', 'read:user'] }
+const keys = async (ui: { findAll: (q: { type: string }) => Promise<unknown[]> }) =>
+  ((await ui.findAll({ type: 'Button' })) as { key: string }[]).map(b => b.key)
+const labelOf = async (ui: { find: (q: { key: string }) => Promise<unknown> }, key: string) =>
+  ((await ui.find({ key })) as { props: Record<string, unknown> } | undefined)?.props.label
+
+test('with write:issue and push, Assign me and Close sit under the title, before the facts', TOKEN, async ($, on) => {
+  const clock = world(on, FULL, [], [], 'open', { ...WRITE })
+  await clock.set(NOW)
+  const ui = await opened($)
+  expect(await keys(ui)).toEqual(['back', 'refresh', 'work', 'assign', 'close', 'open'])
+  expect(await labelOf(ui, 'assign')).toBe('Assign me')
+  expect(await labelOf(ui, 'close')).toBe('Close')
+  const all = await texts(ui)
+  expect(all.indexOf('opened 3w ago by alice · updated 2d ago')).toBeLessThan(all.indexOf('14 Oct, in 5 days'))
+})
+
+test('Assign me adds you, keeps the others, and the list follows', TOKEN, async ($, on) => {
+  const sent: Rights['sent'] = []
+  const asked: string[] = []
+  world(on, { ...FULL, '/issues/29': { ...ISSUE, assignees: [{ login: 'jdoe' }] } }, asked, [], 'open', { ...WRITE, sent })
+  const ui = await opened($)
+  const searches = asked.filter(u => u.includes('/issues/search')).length
+  await ui.press({ key: 'assign' })
+  expect(sent).toEqual([{ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { assignees: ['jdoe', 'alice'] } }])
+  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
+  expect(asked.filter(u => u.includes('/issues/search')).length).toBeGreaterThan(searches)
+
+  await ui.press({ key: 'assign' })
+  expect(sent.at(-1)).toEqual({ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { assignees: ['jdoe'] } })
+  expect(await labelOf(ui, 'assign')).toBe('Assign me')
+})
+
+test('Close closes at once, and Reopen undoes it', TOKEN, async ($, on) => {
+  const sent: Rights['sent'] = []
+  world(on, FULL, [], [], 'open', { ...WRITE, sent })
+  const ui = await opened($)
+  await ui.press({ key: 'close' })
+  expect(sent).toEqual([{ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { state: 'closed' } }])
+  expect(await labelOf(ui, 'close')).toBe('Reopen')
+  await ui.press({ key: 'close' })
+  expect(sent.at(-1)?.body).toEqual({ state: 'open' })
+})
+
+test('a refusal says why, in red under the buttons', TOKEN, async ($, on) => {
+  world(on, FULL, [], [], 'open', { ...WRITE, sent: [], refuse: { status: 422, message: 'it depends on open issues' } })
+  const ui = await opened($)
+  await ui.press({ key: 'close' })
+  const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
+  const line = found.find(t => t.text === 'Could not close #29: it depends on open issues.')
+  expect(line?.props.color).toBe('error')
+  expect(await labelOf(ui, 'close')).toBe('Close')
+})
+
+for (const [why, rights] of [
+  ['the token lacks write:issue', { push: true }],
+  ['alice may not push here', { push: false, scopes: ['write:issue'] }],
+] as const) {
+  test(`read only (${why}): no Assign or Close, one line on how`, TOKEN, async ($, on) => {
+    world(on, FULL, [], [], 'open', { ...rights })
+    const ui = await opened($)
+    expect(await keys(ui)).toEqual(['back', 'refresh', 'work', 'open'])
+    expect(await texts(ui)).toContain("Assign and close need a token with write:issue: the setup guide's steps make one.")
+  })
+}
+
+test('scopes not listed: the buttons show, and Forgejo has the last word', TOKEN, async ($, on) => {
+  world(on, FULL, [], [], 'open', { push: true, scopes: null })
+  const ui = await opened($)
+  expect(await keys(ui)).toContain('assign')
+})
+
+test('Work on this assigns you first when you are not yet assigned', TOKEN, async ($, on) => {
+  const sent: Rights['sent'] = []
+  const toasts: string[] = []
+  world(on, FULL, [], [], 'open', { ...WRITE, sent })
+  promptBox(on, '', [], true, toasts)
+  const ui = await opened($)
+  await ui.press({ key: 'work' })
+  expect(sent).toEqual([{ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { assignees: ['alice'] } }])
+  expect(toasts.at(-1)).toBe('#29 is yours and in the prompt: Esc to edit it there')
+
+  await ui.press({ key: 'work' })
+  expect(sent).toHaveLength(1)
+  expect(toasts.at(-1)).toBe('#29 is in the prompt: Esc to edit it there')
+})
 
 function promptBox(on: On, typed: string, filled: Filled, take = true, toasts: string[] = []) {
   on('ui.toast', (_$, e) => {

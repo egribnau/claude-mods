@@ -22,6 +22,7 @@ type RawIssue = RawRef & {
   due_date: string | null
   ref: string | null
   labels: { name: string; color: string }[] | null
+  assignees?: { login: string }[] | null
 }
 type RawComment = { user: RawUser; created_at: string; body: string | null }
 type RawTimeline = {
@@ -104,6 +105,7 @@ export async function loadIssue(get: Get, n: number): Promise<IssueDetail> {
     branch: i.ref ? i.ref.replace(/^refs\/(heads|tags)\//, '') : null,
     logged: logged ? logged.reduce((sum, t) => sum + t.time, 0) : null,
     labels: (i.labels ?? []).map(l => ({ name: l.name, color: l.color })),
+    assignees: (i.assignees ?? []).map(a => a.login),
     blockedBy: list<RawRef>(deps)?.map(ref) ?? null,
     blocks: list<RawRef>(blocks)?.map(ref) ?? null,
     pulls,
@@ -136,11 +138,15 @@ export function duration(seconds: number): string {
   return h > 0 ? `${h}h ${m % 60}m` : `${m}m`
 }
 
-// Black or white, whichever reads better on a label's `rrggbb` color.
-export function inkOn(color: string): string {
+// A label's `rrggbb` colour as text on a dark terminal: as Forgejo has it,
+// made lighter when it is too dark to read; undefined for no colour.
+export function readable(color: string): string | undefined {
   const hex = color.replace(/^#/, '')
-  const [r, g, b] = [0, 2, 4].map(k => Number.parseInt(hex.slice(k, k + 2), 16) || 0)
-  return 0.299 * (r ?? 0) + 0.587 * (g ?? 0) + 0.114 * (b ?? 0) > 150 ? '#000000' : '#ffffff'
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return undefined
+  let [r, g, b] = [0, 2, 4].map(k => Number.parseInt(hex.slice(k, k + 2), 16)) as [number, number, number]
+  // Toward white a fifth at a time, so the hue stays.
+  while (0.299 * r + 0.587 * g + 0.114 * b < 110) [r, g, b] = [r, g, b].map(v => v + (255 - v) * 0.2) as [number, number, number]
+  return `#${[r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('')}`
 }
 
 // `text` broken into lines of at most `width` characters, at spaces where

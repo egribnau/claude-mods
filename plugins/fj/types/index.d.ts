@@ -21,15 +21,22 @@ export type Setup =
   | { kind: 'no-scope'; missing?: 'read:user' }
   | { kind: 'not-found' }
   | { kind: 'error'; message: string }
-  // `login`: who the token belongs to, from /user.
-  | { kind: 'ready'; openIssues: number; login: string }
+  // `login`: who the token belongs to, from /user. `actions`: whether fj may
+  // assign and close.
+  | { kind: 'ready'; openIssues: number; login: string; actions: Actions }
+
+// Whether fj may assign and close issues: the token needs write:issue and
+// you push rights on the repo. `unknown`: Forgejo would not list the token's
+// scopes, so the buttons show and Forgejo has the last word.
+export type Actions = { kind: 'ok' } | { kind: 'read-only'; reason: 'scope' | 'push' } | { kind: 'unknown' }
 
 // One open issue in this repo, as the overview lists it.
 export type IssueRow = {
   number: number
   title: string
   milestone: string | null
-  labels: string[]
+  // Each with its Forgejo colour, `rrggbb`, or '' for none.
+  labels: { name: string; color: string }[]
   created: string
   // The issue's page on Forgejo.
   url: string
@@ -77,6 +84,8 @@ export type IssueDetail = {
   // Seconds logged on the issue.
   logged: number | null
   labels: { name: string; color: string }[]
+  // The logins it is assigned to.
+  assignees: string[]
   blockedBy: Ref[] | null
   blocks: Ref[] | null
   pulls: Ref[] | null
@@ -87,7 +96,8 @@ export type IssueDetail = {
 export type Detail =
   | { kind: 'idle' }
   | { kind: 'loading'; number: number }
-  | { kind: 'ok'; issue: IssueDetail }
+  // `error`: why the last action on it was refused.
+  | { kind: 'ok'; issue: IssueDetail; error?: string }
   | { kind: 'error'; number: number; message: string }
 
 // An open issue an epic depends on, as the Epics pane lists it. `mine`: it
@@ -110,21 +120,17 @@ export type Epic = { number: number; title: string; state: 'open' | 'closed'; ch
 // milestone's due date and how many of its issues are closed.
 export type EpicGroup = { title: string | null; due: string | null; closed: number; total: number; epics: Epic[] }
 
-// The Epics pane: what the picker offers and which is picked (`m:<title>`,
-// `none` or `all`), the groups that pick shows, and how many open epics the
-// repo has in all, which decides whether the pane opens.
+// The Epics pane: the groups the milestone picked shows, and how many open
+// epics the repo has in all, which decides whether the pane opens.
 export type Epics =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | {
-      kind: 'ok'
-      // A milestone's option carries its due date.
-      options: { value: string; label: string; due?: string | null }[]
-      pick: string
-      groups: EpicGroup[]
-      openEpics: number
-    }
+  | { kind: 'ok'; groups: EpicGroup[]; openEpics: number }
   | { kind: 'error'; message: string }
+
+// The milestone picker both panes share: what it offers (a milestone's option
+// carries its due date) and which is picked: `m:<title>`, `none` or `all`.
+export type Picker = { options: { value: string; label: string; due?: string | null }[]; pick: string }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -142,8 +148,10 @@ declare module 'claude-code' {
       // fj's panes that are open, by id: with more than one the engine draws
       // tabs naming them, so the title rows leave the names out.
       panesOpen: string[]
-      // The picker's choice in the Epics pane; null starts on its first option.
-      epicsPick: string | null
+      // The milestone the person picked; null starts on the picker's first.
+      milestonePick: string | null
+      // What the picker offers and shows picked, once loaded.
+      picker: Picker | null
       // Whether the picker's list is open.
       pickerOpen: boolean
       // With Debug on: the last action, the requests it sent Forgejo, and
