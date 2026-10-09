@@ -272,6 +272,8 @@ export const register: Register = (on, options) => {
     const from = await read($, token)
     const s = await read($, setup)
     const m = await read($, mine)
+    // The pane's full height, so the last rows sit at its bottom.
+    const height = e.props.scroll.bodyRows
 
     const line = (key: string, text: string, props: Record<string, unknown> = {}) => (
       <Text key={key} wrap="truncate-end" {...props}>
@@ -387,12 +389,14 @@ export const register: Register = (on, options) => {
       }
       const count = m.kind === 'ok' ? ` (${m.issues.length})` : ''
       return (
-        <Box flexDirection="column">
+        <Box flexDirection="column" height={height}>
           {line('title', `My issues${count}`, { bold: true })}
-          <Box key="gap" height={1} />
-          {rows}
+          <Box key="gap" height={1} flexShrink={0} />
+          <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+            {rows}
+          </Box>
           {line('where', `${slug(r)} · Forgejo ${v ?? ''} at ${r.host}`, { dimColor: true })}
-          <Box key="buttons" height={1}>
+          <Box key="buttons" height={1} flexShrink={0}>
             <Button key="refresh" label="Refresh" hotkey="r" onPress={() => refresh($)} />
           </Box>
         </Box>
@@ -400,15 +404,17 @@ export const register: Register = (on, options) => {
     }
 
     return (
-      <Box flexDirection="column">
-        {m.kind === 'error' && para('mine-error', `Could not load your issues: ${m.message}.`, { color: 'error' })}
-        {s.kind === 'ready'
-          ? line('title', 'Forgejo for Claude is ready!', { bold: true })
-          : line('title', 'Set up Forgejo for Claude', { bold: true })}
-        {steps}
-        <Box key="gap" height={1} />
-        {body}
-        <Box key="buttons" height={1} marginTop={1}>
+      <Box flexDirection="column" height={height}>
+        <Box key="setup" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          {m.kind === 'error' && para('mine-error', `Could not load your issues: ${m.message}.`, { color: 'error' })}
+          {s.kind === 'ready'
+            ? line('title', 'Forgejo for Claude is ready!', { bold: true })
+            : line('title', 'Set up Forgejo for Claude', { bold: true })}
+          {steps}
+          <Box key="gap" height={1} />
+          {body}
+        </Box>
+        <Box key="buttons" height={1} flexShrink={0}>
           <Button key="refresh" label="Check again" hotkey="r" onPress={() => refresh($)} />
         </Box>
       </Box>

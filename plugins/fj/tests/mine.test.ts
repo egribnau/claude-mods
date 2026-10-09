@@ -118,3 +118,17 @@ test('none assigned: says so', TOKEN, async ($, on) => {
   expect(await texts(ui)).toContain('No open issues assigned to you in boats/radar.')
   expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 0 issues assigned to you.' }))
 })
+
+test('the repo line and Refresh sit at the bottom of the pane, however long the list', TOKEN, async ($, on) => {
+  world(on, [Array.from({ length: 30 }, (_, k) => issue(200 + k, 'boats/radar', '2026-09-01T00:00:00Z'))])
+
+  await $.command.run(RUN)
+  // A short pane: 30 issues need far more than 12 rows.
+  const rows = 12
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: rows } }, surface: 'terminal' })
+  const root = (await ui.findAll({ type: 'Box' }))[0] as unknown as { props: { height?: number } }
+  expect(root.props.height).toBe(rows)
+  const list = (await ui.findAll({ type: 'Box' })).find(b => b.key === 'list') as unknown as { props: Record<string, unknown> }
+  expect(list.props).toEqual(expect.objectContaining({ flexGrow: 1, flexShrink: 1, overflow: 'hidden' }))
+  await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
+})
