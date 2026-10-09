@@ -28,12 +28,10 @@ function parseRemote(url: string): Repo | null {
 const slug = (r: Repo) => `${r.owner}/${r.name}`
 const base = (r: Repo) => `https://${r.host}/api/v1`
 
-// The token for a request, and where it came from. The desktop app does not
-// pass a shell's variables on, so the Token setting comes first.
-async function readToken($: EngineInterface): Promise<{ value: string | null; from: TokenSource }> {
-  if (configToken) return { value: configToken, from: 'setting' }
-  const env = await $.env.get('FORGEJO_TOKEN')
-  return env ? { value: env, from: 'FORGEJO_TOKEN' } : { value: null, from: 'none' }
+// The token for a request: the Token setting, kept in secure storage. It is
+// the only source, so the token is the same in the terminal and the app.
+async function readToken(_$: EngineInterface): Promise<{ value: string | null; from: TokenSource }> {
+  return configToken ? { value: configToken, from: 'setting' } : { value: null, from: 'none' }
 }
 
 // An error's message, without the host's `fj: $.http.fetch: ` in front.
@@ -116,10 +114,7 @@ const STOPPED_AT: Record<Setup['kind'], number> = {
 function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
   const page = r ? `https://${r.host}/user/settings/applications` : 'Settings › Applications in Forgejo'
   const create = `Create a token at ${page} with ${SCOPES}.`
-  const set = [
-    `Run ${CONFIGURE} and paste it as Token.`,
-    'Or export FORGEJO_TOKEN before starting claude in a terminal (the desktop app does not read ~/.zshenv).',
-  ]
+  const set = [`Run ${CONFIGURE} and paste it as Token.`]
   switch (s.kind) {
     case 'no-repo':
       return [
@@ -186,7 +181,7 @@ export const register: Register = (on, options) => {
     )
 
     const tokenText =
-      from === 'setting' ? 'from the Token setting' : from === 'FORGEJO_TOKEN' ? 'from FORGEJO_TOKEN' : 'none found'
+      from === 'setting' ? 'from the Token setting' : 'none found'
     const doneText: Record<Step, string> = {
       repo: r ? `${slug(r)} on ${r.host}` : '',
       forgejo: v ? `version ${v}` : '',
@@ -219,7 +214,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
-        {line('title', s.kind === 'ready' ? 'fj' : 'Set up fj', { bold: true })}
+        {line('title', s.kind === 'ready' ? 'fj' : 'Set up Forgejo for Claude', { bold: true })}
         {steps}
         <Box key="gap" height={1} />
         {body}

@@ -1,6 +1,6 @@
 {
   "name": "fj",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
   "author": {
     "name": "Erwin Gribnau"
@@ -10,7 +10,7 @@
     "token": {
       "type": "string",
       "title": "Token",
-      "description": "A Forgejo access token, kept in secure storage. Empty uses FORGEJO_TOKEN from the environment. Needs read:issue and read:repository.",
+      "description": "A Forgejo access token, kept in secure storage. Needs read:issue and read:repository.",
       "default": "",
       "sensitive": true
     }

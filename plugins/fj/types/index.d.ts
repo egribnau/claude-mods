@@ -2,7 +2,7 @@
 export type Repo = { host: string; owner: string; name: string }
 
 // Where a request's token comes from; never the token itself.
-export type TokenSource = 'setting' | 'FORGEJO_TOKEN' | 'none'
+export type TokenSource = 'setting' | 'none'
 
 // How far setting up got: each kind but `ready` names the first step that
 // failed, which the pane explains. Steps: repo, Forgejo, token, access.
