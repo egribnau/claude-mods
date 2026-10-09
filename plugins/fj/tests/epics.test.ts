@@ -684,3 +684,73 @@ test('groupsFor: one milestone, the epics without one, or all of them in picker 
   expect(groupsFor('none', MS, epics).map(g => g.epics.length)).toEqual([1])
   expect(groupsFor('all', MS, epics).map(g => g.milestone?.title ?? null)).toEqual(['soon', 'later', null])
 })
+
+test('Refresh opens the Epics pane once the first open epic exists, without the focus', TOKEN, async ($, on) => {
+  const opened: Opened[] = []
+  const w: World = { milestones: REPO.milestones, epics: [] }
+  world(on, w, [], opened)
+  await $.command.run(RUN)
+  expect(opened.map(o => o.id)).not.toContain('fj-epics')
+
+  w.epics = [epic(40, 'First epic', { milestone: 'v1.2' })]
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  await next.press({ key: 'refresh' })
+  expect(opened.at(-1)).toEqual({ id: 'fj-epics', title: 'Epics' })
+})
+
+test('Refresh closes the Epics pane once the last open epic is closed', TOKEN, async ($, on) => {
+  const closed: string[] = []
+  const w: World = { ...REPO }
+  world(on, w, [], [], closed)
+  await $.command.run(RUN)
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+
+  w.epics = [epic(3, 'Project setup', { milestone: 'v1.2', state: 'closed' })]
+  await next.press({ key: 'refresh' })
+  expect(closed).toContain('fj-epics')
+})
+
+test('an Epics pane waiting undrawn is opened again by Refresh, so it is drawn', TOKEN, async ($, on) => {
+  const opened: Opened[] = []
+  world(on, REPO, [], opened)
+  // The engine's record: Epics open, but not placed (a narrow terminal).
+  on('ui.panes', () => ({
+    value: [
+      { id: 'fj', title: "What's next", isShown: true, isFocused: false, isPlaced: true },
+      { id: 'fj-epics', title: 'Epics', isShown: false, isFocused: false, isPlaced: false },
+    ],
+  }))
+  await $.command.run(RUN)
+  const count = opened.filter(o => o.id === 'fj-epics').length
+
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  await next.press({ key: 'refresh' })
+  expect(opened.filter(o => o.id === 'fj-epics').length).toBe(count + 1)
+})
+
+test('a drawn Epics pane is not opened again by Refresh', TOKEN, async ($, on) => {
+  const opened: Opened[] = []
+  world(on, REPO, [], opened)
+  on('ui.panes', () => ({
+    value: [
+      { id: 'fj', title: "What's next", isShown: true, isFocused: false, isPlaced: true },
+      { id: 'fj-epics', title: 'Epics', isShown: false, isFocused: false, isPlaced: true },
+    ],
+  }))
+  await $.command.run(RUN)
+  const count = opened.filter(o => o.id === 'fj-epics').length
+
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  await next.press({ key: 'refresh' })
+  expect(opened.filter(o => o.id === 'fj-epics').length).toBe(count)
+})
+
+test('once Refresh closes the Epics pane, the title row names What\'s next again', TOKEN, async ($, on) => {
+  const w: World = { ...REPO }
+  world(on, w)
+  await $.command.run(RUN)
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  w.epics = [epic(3, 'Project setup', { state: 'closed' })]
+  await next.press({ key: 'refresh' })
+  expect(await texts(next)).toContain("What's next")
+})

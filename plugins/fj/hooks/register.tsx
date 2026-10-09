@@ -324,7 +324,9 @@ async function refresh($: EngineInterface): Promise<Repo | null> {
   issuesRead.clear()
   const r = await check($)
   if (r && (await read($, setup)).kind === 'ready') {
+    const before = await read($, epics)
     await load($, r)
+    await followEpics($, before)
     for (const pane of [PANE, EPICS_PANE]) {
       const n = await read($, memberOf(picked, { requestId: pane }))
       if (n !== null) await loadDetail($, r, pane, n)
@@ -335,6 +337,29 @@ async function refresh($: EngineInterface): Promise<Repo | null> {
     await update($, epics, (): Epics => ({ kind: 'idle' }))
   }
   return r
+}
+
+// The Epics pane follows a load that found the first open epic, or none
+// left: it opens as a tab next to What's next, without the focus, or
+// closes. An Epics pane the person closed while there were epics stays
+// closed until /fj. One opened without the person asking (a reload) may
+// wait undrawn on a narrow terminal; the next Refresh, which they ask for,
+// opens it again so it is drawn.
+async function followEpics($: EngineInterface, before: Epics) {
+  const after = await read($, epics)
+  if (after.kind !== 'ok') return
+  // The engine's record says whether it is drawn; without it, fj's own
+  // list of open panes, taken as drawn.
+  const panes = await $.ui.panes().catch(async () => (await read($, panesOpen)).map(id => ({ id, isPlaced: true })))
+  const pane = panes.find(p => p.id === EPICS_PANE)
+  const first = !(before.kind === 'ok' && before.openEpics > 0)
+  if (after.openEpics > 0 && (pane ? !pane.isPlaced : first)) {
+    await $.ui.open({ id: EPICS_PANE, title: 'Epics' })
+    await update($, panesOpen, ids => (ids.includes(EPICS_PANE) ? ids : [...ids, EPICS_PANE]))
+  } else if (after.openEpics === 0 && pane) {
+    await $.ui.close({ id: EPICS_PANE })
+    await update($, panesOpen, ids => ids.filter(id => id !== EPICS_PANE))
+  }
 }
 
 // Opens `url` in the browser of the computer the session runs on: `open`
