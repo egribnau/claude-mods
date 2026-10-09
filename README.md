@@ -5,18 +5,8 @@ Personal Claude Code mods, distributed as a plugin marketplace.
 ## Install
 
 ```
-/plugin marketplace add git@forgejo-gribnau:erwin/claude-mods.git
+/plugin marketplace add https://git.example.org/alice/claude-mods.git
 /plugin install fj@egribnau-mods
-```
-
-`/plugin marketplace add` refuses `ssh://` URLs, and the `git@host:path` form it does take has no
-port. Forgejo's SSH runs on port 2222, so add this alias to `~/.ssh/config` first:
-
-```
-Host forgejo-gribnau
-  HostName git.example.org
-  Port 2222
-  User git
 ```
 
 ## Update an existing machine
