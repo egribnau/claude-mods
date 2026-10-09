@@ -104,8 +104,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
     ])
     expect(all).toEqual(
       expect.arrayContaining([
-        '✓ Repo    boats/radar on git.example.org',
-        '✓ Forgejo version 12.0.1',
+        '✓ Repo    boats/radar',
+        '✓ Forgejo 12.0.1 at git.example.org',
         '✓ Token   from the Token setting',
         '✓ Access  7 open issues',
         'Ready.',
@@ -188,7 +188,7 @@ test('a host that is not Forgejo is named', TOKEN, async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✓ Repo    boats/radar on github.com')
+  expect(all).toContain('✓ Repo    boats/radar')
   expect(all).toContain('✗ Forgejo not at github.com')
   expect(all).toContain('1. github.com does not answer as Forgejo or Gitea (HTTP 404 for /api/v1/version).')
 })
@@ -210,7 +210,7 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✓ Forgejo version 12.0.1')
+  expect(all).toContain('✓ Forgejo 12.0.1 at git.example.org')
   expect(all).toContain('✗ Token   none found')
   expect(all).toContain('· Access  ')
   expect(all).toContain(
@@ -225,13 +225,28 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   expect(asked.map(a => a.url)).toEqual(['https://git.example.org/api/v1/version'])
 })
 
-for (const [status, first] of [
-  [401, '1. Forgejo did not accept the token from the Token setting: it may be mistyped, expired or revoked.'],
-  [403, '1. The token from the Token setting is valid but may not read this repo.'],
-  [404, "1. boats/radar was not found, or the token's owner cannot see it."],
-  [500, '1. Forgejo could not be asked: boats/radar: HTTP 500.'],
+for (const [status, label, about, first] of [
+  [
+    401,
+    'token refused',
+    'Forgejo did not accept the token from the Token setting: it may be mistyped, expired or revoked.',
+    '1. Create a token at https://git.example.org/user/settings/applications with read:issue and read:repository.',
+  ],
+  [
+    403,
+    'no permission',
+    'The token from the Token setting is valid but may not read this repo.',
+    '1. Create a token at https://git.example.org/user/settings/applications with read:issue and read:repository.',
+  ],
+  [
+    404,
+    'not found',
+    "boats/radar was not found, or the token's owner cannot see it.",
+    '1. If the repo is private, create the token as a user who can see it.',
+  ],
+  [500, 'no answer', 'Forgejo could not be asked: boats/radar: HTTP 500.', '1. Press r to check again.'],
 ] as const) {
-  test(`access answered ${status}: says why`, TOKEN, async ($, on) => {
+  test(`access answered ${status}: says what happened, then what to do`, TOKEN, async ($, on) => {
     world(on, { repo: status })
 
     await $.command.run(RUN)
@@ -239,8 +254,10 @@ for (const [status, first] of [
     const all = await texts(ui)
 
     expect(all).toContain('✓ Token   from the Token setting')
-    expect(all).toContain('✗ Access  refused')
-    expect(all).toContain(first)
+    expect(all).toContain(`✗ Access  ${label}`)
+    expect(all.indexOf(about)).toBeGreaterThan(0)
+    expect(all.indexOf(about)).toBeLessThan(all.indexOf('What to do'))
+    expect(all[all.indexOf('What to do') + 1]).toBe(first)
   })
 }
 

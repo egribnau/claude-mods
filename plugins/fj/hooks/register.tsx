@@ -121,14 +121,26 @@ const STOPPED_AT: Record<Setup['kind'], number> = {
 }
 
 // What the pane says about the step that failed, before what to do.
-function intro(s: Setup): string | null {
-  if (s.kind !== 'no-repo') return null
+function intro(s: Setup, r: Repo | null, tokenText: string): string | null {
   const what = 'fj shows the issues of the repo this session runs in.'
-  return s.reason === 'not-git'
-    ? `${what} ${s.dir} is not a git repo, so there is nothing to show here.`
-    : s.reason === 'no-origin'
-      ? `${what} This repo has no remote origin.`
-      : `${what} origin is ${s.origin}, which names no host.`
+  switch (s.kind) {
+    case 'no-repo':
+      return s.reason === 'not-git'
+        ? `${what} ${s.dir} is not a git repo, so there is nothing to show here.`
+        : s.reason === 'no-origin'
+          ? `${what} This repo has no remote origin.`
+          : `${what} origin is ${s.origin}, which names no host.`
+    case 'token-refused':
+      return `Forgejo did not accept the token ${tokenText}: it may be mistyped, expired or revoked.`
+    case 'no-scope':
+      return `The token ${tokenText} is valid but may not read this repo.`
+    case 'not-found':
+      return `${r ? slug(r) : 'The repo'} was not found, or the token's owner cannot see it.`
+    case 'error':
+      return `Forgejo could not be asked: ${s.message}.`
+    default:
+      return null
+  }
 }
 
 // What to do about the step that failed, one line per action.
@@ -155,16 +167,12 @@ function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
     case 'no-token':
       return [create, ...set]
     case 'token-refused':
-      return [`Forgejo did not accept the token ${tokenText}: it may be mistyped, expired or revoked.`, create, ...set]
     case 'no-scope':
-      return [`The token ${tokenText} is valid but may not read this repo.`, create, ...set]
+      return [create, ...set]
     case 'not-found':
-      return [
-        `${r ? slug(r) : 'The repo'} was not found, or the token's owner cannot see it.`,
-        'For a private repo, use a token of a user who has access to it.',
-      ]
+      return ['If the repo is private, create the token as a user who can see it.', ...set]
     case 'error':
-      return [`Forgejo could not be asked: ${s.message}.`]
+      return []
     default:
       return []
   }
@@ -230,8 +238,8 @@ export const register: Register = (on, options) => {
     const tokenText =
       from === 'setting' ? 'from the Token setting' : 'none found'
     const doneText: Record<Step, string> = {
-      repo: r ? `${slug(r)} on ${r.host}` : '',
-      forgejo: v ? `version ${v}` : '',
+      repo: r ? slug(r) : '',
+      forgejo: v && r ? `${v} at ${r.host}` : '',
       token: tokenText,
       access: s.kind === 'ready' ? `${s.openIssues} open issues` : '',
     }
@@ -239,7 +247,14 @@ export const register: Register = (on, options) => {
       repo: 'no Forgejo repo here',
       forgejo: `not at ${r?.host ?? 'this host'}`,
       token: 'none found',
-      access: 'refused',
+      access:
+        s.kind === 'token-refused'
+          ? 'token refused'
+          : s.kind === 'no-scope'
+            ? 'no permission'
+            : s.kind === 'not-found'
+              ? 'not found'
+              : 'no answer',
     }
     const at = STOPPED_AT[s.kind]
     // Without a repo the token is still checked: it needs none. The steps
@@ -262,7 +277,7 @@ export const register: Register = (on, options) => {
     if (s.kind === 'ready') {
       body.push(line('ready', 'Ready.', { color: 'success', bold: true }))
     } else if (s.kind !== 'checking') {
-      const about = intro(s)
+      const about = intro(s, r, tokenText)
       if (about) body.push(para('intro', about), <Box key="gap-intro" height={1} />)
       const actions = todo(s, r, tokenText)
       body.push(line('todo', 'What to do', { bold: true }))
