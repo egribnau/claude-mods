@@ -1,6 +1,6 @@
 {
   "name": "fj",
-  "version": "0.37.2",
+  "version": "0.38.1",
   "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
   "author": {
     "name": "Erwin Gribnau"
@@ -25,6 +25,17 @@
       "title": "Debug",
       "description": "Count fj's requests to Forgejo, on a line under the repo line: the last action's and the session's.",
       "default": false
+    },
+    "compact": {
+      "type": "string",
+      "title": "Compact",
+      "description": "Lists without an empty line between rows. ask: fj asks once, after setup.",
+      "default": "ask",
+      "options": [
+        "ask",
+        "on",
+        "off"
+      ]
     },
     "icons": {
       "type": "string",

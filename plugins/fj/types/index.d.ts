@@ -114,6 +114,12 @@ export type EpicChild = {
   assignees: string[]
   mine: boolean
   blocked: boolean
+  // For its second line, as in What's next: labels, milestone, when it was
+  // opened, and the open issues it waits on.
+  labels: { name: string; color: string }[]
+  milestone: string | null
+  created: string
+  blockedBy: number[]
 }
 
 // An issue with the Epic label. Its children are the issues it depends on;
@@ -163,6 +169,8 @@ declare module 'claude-code' {
       requests: { label: string; count: number; total: number } | null
       // The epics folded open in the Epics pane, by number.
       unfolded: number[]
+      // Compact chosen in this session, before a reload brings the setting.
+      compact: 'on' | 'off' | null
       // Icons chosen in this session, before a reload brings the setting.
       icons: 'icons' | 'text' | null
     }

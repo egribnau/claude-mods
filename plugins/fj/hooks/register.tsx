@@ -20,6 +20,7 @@ const overview = atom({ plugin: 'fj', key: 'overview' } as const, { kind: 'idle'
 const picked = atom({ plugin: 'fj', key: 'picked' } as const, null)
 const detail = atom({ plugin: 'fj', key: 'detail' } as const, { kind: 'idle' })
 const iconsChosen = atom({ plugin: 'fj', key: 'icons' } as const, null)
+const compactChosen = atom({ plugin: 'fj', key: 'compact' } as const, null)
 const epics = atom({ plugin: 'fj', key: 'epics' } as const, { kind: 'idle' })
 const unfolded = atom({ plugin: 'fj', key: 'unfolded' } as const, [])
 const panesOpen = atom({ plugin: 'fj', key: 'panesOpen' } as const, [])
@@ -48,6 +49,8 @@ async function counted<T>($: EngineInterface, label: string, action: () => Promi
 let configToken: string | null = null
 // The Icons setting: ask, icons or text.
 let configIcons = 'ask'
+// The Compact setting: ask, on or off.
+let configCompact = 'ask'
 // The Epic label setting: the label that makes an issue an epic.
 let configLabel = 'epic'
 // The Debug setting: count fj's requests on a line under the repo line.
@@ -74,6 +77,16 @@ async function chooseIcons($: EngineInterface, value: 'icons' | 'text') {
   if (!row) return
   const done = await $.config.set({ key: row.key, value })
   if (done.deny !== undefined) $.ui.toast(`Icons not saved: ${done.deny}`)
+}
+
+// Saves the Compact choice the same way.
+async function chooseCompact($: EngineInterface, value: 'on' | 'off') {
+  await update($, compactChosen, () => value)
+  const rows = await $.config.list()
+  const row = rows.find(r => /^fj(@[^.]*)?\.compact$/.test(r.key))
+  if (!row) return
+  const done = await $.config.set({ key: row.key, value })
+  if (done.deny !== undefined) $.ui.toast(`Compact not saved: ${done.deny}`)
 }
 
 // The host, owner and repo a git remote URL names, in any of the forms git
@@ -286,7 +299,15 @@ async function fetchJson<T>($: EngineInterface, url: string): Promise<T | null> 
   }
 }
 
-type RawDep = { number: number; title: string; state: string; assignees?: { login: string }[] | null }
+type RawDep = {
+  number: number
+  title: string
+  state: string
+  assignees?: { login: string }[] | null
+  labels?: { name: string; color?: string }[] | null
+  milestone?: { title: string } | null
+  created_at?: string
+}
 type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string }[] | null }
 type RawMilestone = { title: string; due_on: string | null; open_issues: number; closed_issues: number }
 type MilestoneRow = { title: string; due: string | null; closed: number; total: number }
@@ -416,8 +437,19 @@ async function showEpics($: EngineInterface, r: Repo) {
             const open = c.state !== 'closed'
             const mine = me !== null && assignees.includes(me)
             // Only an open child that is not yours is checked for what blocks it.
-            const blocked = open && !mine ? ((await deps(c.number)) ?? []).some(d => d.state !== 'closed') : false
-            return { number: c.number, title: c.title, state: open ? 'open' : 'closed', assignees, mine, blocked }
+            const blockedBy = open && !mine ? ((await deps(c.number)) ?? []).filter(d => d.state !== 'closed').map(d => d.number) : []
+            return {
+              number: c.number,
+              title: c.title,
+              state: open ? 'open' : 'closed',
+              assignees,
+              mine,
+              blocked: blockedBy.length > 0,
+              labels: (c.labels ?? []).map(l => ({ name: l.name, color: l.color ?? '' })),
+              milestone: c.milestone?.title ?? null,
+              created: c.created_at ?? '',
+              blockedBy,
+            }
           }),
         )
       : null
@@ -731,6 +763,23 @@ const paneClosed: Hook<'ui.close'> = async ($, e, next) => {
   return next(e)
 }
 
+// A change to Icons or Compact in /config, or by fj's own choice buttons:
+// the session follows it, so the setting wins over an earlier choice.
+const settingChanged: Hook<'config.set'> = async ($, e, next) => {
+  const done = await next(e)
+  const field = /^fj(?:@[^.]*)?\.(icons|compact)$/.exec(e.key)?.[1]
+  const value = String(e.value)
+  if (field === 'icons' && (value === 'icons' || value === 'text' || value === 'ask')) {
+    configIcons = value
+    await update($, iconsChosen, () => (value === 'ask' ? null : value))
+  }
+  if (field === 'compact' && (value === 'on' || value === 'off' || value === 'ask')) {
+    configCompact = value
+    await update($, compactChosen, () => (value === 'ask' ? null : value))
+  }
+  return done
+}
+
 // Both panes draw here: they share setup, the detail view and the repo line.
 async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
@@ -880,6 +929,66 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Text>,
       ]
     })
+  // Compact: no empty line between rows, anywhere.
+  const compact = ((await read($, compactChosen)) ?? configCompact) === 'on'
+  const gap = compact ? 0 : 1
+  const today = await $.clock.now()
+  // One issue as both lists show it: its mark, number and title on a button
+  // that opens it, and under it, dim, its milestone (unless it is the one
+  // picked), its labels in colour and its age, or what blocks it. `lead`
+  // indents it under an epic; `who` names someone else's at the right.
+  type RowIssue = Pick<IssueRow, 'number' | 'title' | 'labels' | 'milestone' | 'created'>
+  type RowLook = {
+    key: string
+    buttonKey: string
+    numWidth: number
+    mark: string
+    markColor?: string
+    dim?: boolean
+    bold?: boolean
+    autoFocus?: boolean
+    lead?: number
+    who?: string
+    blockedBy?: number[]
+    onPress: () => unknown
+  }
+  const issueRow = (i: RowIssue, o: RowLook) => {
+    const lead = ' '.repeat(o.lead ?? 0)
+    const opened = i.created ? `opened ${age(i.created, today)} ago` : ''
+    const parts: RenderChildren[] = (
+      o.blockedBy && o.blockedBy.length > 0
+        ? [`blocked by ${o.blockedBy.map(n => `#${n}`).join(', ')}`, opened]
+        : [pk?.pick === `m:${i.milestone}` ? null : i.milestone, i.labels.length > 0 ? labelTexts(i.labels) : null, opened]
+    ).filter(p => p !== null && p !== '')
+    const facts = parts.flatMap((p, k) => [
+      ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
+      ...(typeof p === 'string'
+        ? [
+            <Text key={`part-${k}`} dimColor>
+              {p}
+            </Text>,
+          ]
+        : (p as RenderChildren[])),
+    ])
+    const room = columns - (o.lead ?? 0) - 2 - o.numWidth
+    return (
+      <Box key={o.key} flexDirection="column" marginBottom={gap} flexShrink={0}>
+        <Button key={o.buttonKey} plain autoFocus={o.autoFocus || undefined} onPress={o.onPress}>
+          <Text wrap="truncate-end" bold={o.bold} dimColor={o.dim}>
+            {lead}
+            <Text color={o.markColor}>{o.mark}</Text>
+            <Text color={o.dim ? 'inactive' : 'suggestion'}>{`${`#${i.number}`.padStart(o.numWidth - 1)} `}</Text>
+            {o.who ? `${fit(i.title, room - o.who.length - 1).padEnd(room - o.who.length - 1)} ` : fit(i.title, room)}
+            {o.who && <Text dimColor>{o.who}</Text>}
+          </Text>
+        </Button>
+        <Box>
+          <Text>{`${lead}${' '.repeat(2 + o.numWidth)}`}</Text>
+          <Text wrap="truncate-end">{facts}</Text>
+        </Box>
+      </Box>
+    )
+  }
   // With Debug on, under the repo line: what the last action and the session
   // asked Forgejo.
   const req = configDebug ? await read($, requests) : null
@@ -994,6 +1103,52 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>
           <Box key="gap-later" height={1} />
           {para('later', 'Asked once. Change it later in /config, under fj: Icons.', { dimColor: true })}
+        </Box>
+      </Box>
+    )
+  }
+
+  // Icons chosen, Compact still ask: the second one-time choice, two rows
+  // each way to choose by.
+  if (s.kind === 'ready' && r && icons !== 'ask' && ((await read($, compactChosen)) ?? configCompact) === 'ask') {
+    const sample = (spaced: boolean) => [
+      <Text key={`a-${spaced}`}>
+        <Text color="suggestion">{'  #37 '}</Text>
+        Token refresh on 401
+      </Text>,
+      <Text key={`a2-${spaced}`} dimColor>
+        {'      opened 1w ago'}
+      </Text>,
+      ...(spaced ? [<Box key={`gap-${spaced}`} height={1} />] : []),
+      <Text key={`b-${spaced}`}>
+        <Text color="suggestion">{'  #51 '}</Text>
+        Rate limit settings page
+      </Text>,
+      <Text key={`b2-${spaced}`} dimColor>
+        {'      opened 6d ago'}
+      </Text>,
+    ]
+    return (
+      <Box flexDirection="column" height={height}>
+        <Box key="choice" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          {heading('Forgejo for Claude is ready!')}
+          {steps}
+          <Box key="gap" height={1} />
+          {line('ask', 'One more choice: space between rows', { bold: true })}
+          {para('why', 'Lists can keep an empty line between issues, or sit compact. Two rows each way:')}
+          <Box key="gap-space" height={1} />
+          {line('with', 'With space', { dimColor: true })}
+          {sample(true)}
+          <Box key="gap-compact" height={1} />
+          {line('without', 'Compact', { dimColor: true })}
+          {sample(false)}
+          <Box key="choose" height={1} marginTop={1}>
+            <Button key="keep-space" label="Keep space" onPress={() => chooseCompact($, 'off')} />
+            <Text>{'  '}</Text>
+            <Button key="compact" label="Compact" onPress={() => chooseCompact($, 'on')} />
+          </Box>
+          <Box key="gap-later" height={1} />
+          {para('later', 'Asked once, after Icons. Change it later in /config, under fj: Compact.', { dimColor: true })}
         </Box>
       </Box>
     )
@@ -1248,7 +1403,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         const t = tally(x.children ?? [])
         const b = bar(t.closed, t.total)
         rows.push(
-          <Box key={`epic-${x.number}`} flexDirection="column" flexShrink={0} marginBottom={open(x) ? 0 : 1}>
+          <Box key={`epic-${x.number}`} flexDirection="column" flexShrink={0} marginBottom={open(x) ? 0 : gap}>
             {/* Two targets: the mark folds, the rest of the row opens the epic. */}
             <Box height={1}>
               <Button
@@ -1288,26 +1443,28 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         const kids: RenderChildren[] = []
         for (const c of openChildren(x.children ?? [])) {
           const st = standing(c)
-          const mark = st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : '  '
-          const who = st === 'taken' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : ''
-          const room = columns - 4 - numWidth
           kids.push(
-            <Button key={`child-${c.number}`} plain onPress={() => openIssue($, EPICS_PANE, c.number)}>
-              <Text wrap="truncate-end" dimColor={st === 'blocked'}>
-                {'  '}
-                <Text color={st === 'mine' ? 'success' : undefined}>{mark}</Text>
-                <Text color={st === 'blocked' ? 'inactive' : 'suggestion'}>{num(c.number)}</Text>
-                {who ? `${fit(c.title, room - who.length - 1).padEnd(room - who.length - 1)} ` : fit(c.title, room)}
-                {who && <Text dimColor>{who}</Text>}
-              </Text>
-            </Button>,
+            issueRow(c, {
+              key: `child-row-${c.number}`,
+              buttonKey: `child-${c.number}`,
+              numWidth,
+              lead: 2,
+              mark: st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : '  ',
+              markColor: st === 'mine' ? 'success' : undefined,
+              dim: st === 'blocked',
+              who: st === 'taken' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : '',
+              blockedBy: st === 'blocked' ? c.blockedBy : undefined,
+              onPress: () => openIssue($, EPICS_PANE, c.number),
+            }),
           )
         }
         if (t.closed > 0) kids.push(line(`closed-${x.number}`, `  ✓ ${t.closed} closed`, { color: 'inactive' }))
         if (x.children === null) kids.push(line(`unknown-${x.number}`, `${indent}children unknown`, { dimColor: true }))
         else if (t.total === 0) kids.push(line(`none-${x.number}`, `${indent}no children`, { dimColor: true }))
+        // The last child row brings its own empty line; a closing line needs one.
+        const endsInRow = t.closed === 0 && x.children !== null && t.total > 0
         rows.push(
-          <Box key={`kids-${x.number}`} flexDirection="column" flexShrink={0} marginBottom={1}>
+          <Box key={`kids-${x.number}`} flexDirection="column" flexShrink={0} marginBottom={endsInRow ? 0 : gap}>
             {kids}
           </Box>,
         )
@@ -1352,50 +1509,21 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // Each row starts with its section's mark, so it says where it
       // belongs with its heading scrolled away; the Queue's is blank.
       const MARK = { progress: ['● ', 'success'], next: ['▸ ', 'warning'], queue: ['  ', undefined], blocked: ['⊘ ', 'inactive'] } as const
-      const indent = ' '.repeat(2 + numWidth)
-      // One issue: its mark, number and title, a button that opens its
-      // detail, and under it what is known about it. Next is bold and has
-      // the focus first, so Enter opens it at once.
+      // Next is bold and has the focus first, so Enter opens it at once.
       const row = (i: IssueRow, section: keyof typeof MARK, blockedBy?: number[]) => {
-        // Dim, but for the labels, each in its own colour.
-        const parts: RenderChildren[] = blockedBy
-          ? [`blocked by ${blockedBy.map(n => `#${n}`).join(', ')}`, `opened ${age(i.created, now)} ago`]
-          : [
-              // The milestone picked is in the rules already; another shows.
-              pk?.pick === `m:${i.milestone}` ? null : i.milestone,
-              i.labels.length > 0 ? labelTexts(i.labels) : null,
-              `opened ${age(i.created, now)} ago`,
-            ].filter(
-              p => p !== null && p !== '',
-            )
-        const facts = parts.flatMap((p, k) => [
-          ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
-          ...(typeof p === 'string'
-            ? [
-                <Text key={`part-${k}`} dimColor>
-                  {p}
-                </Text>,
-              ]
-            : (p as RenderChildren[])),
-        ])
-        const dim = section === 'blocked'
-        const next = section === 'next'
         const [mark, markColor] = MARK[section]
-        return (
-          <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={1} flexShrink={0}>
-            <Button key={`pick-${i.number}`} plain autoFocus={next || undefined} onPress={() => openIssue($, PANE, i.number)}>
-              <Text wrap="truncate-end" bold={next} dimColor={dim}>
-                <Text color={markColor}>{mark}</Text>
-                <Text color={dim ? 'inactive' : 'suggestion'}>{`${`#${i.number}`.padStart(numWidth - 1)} `}</Text>
-                {fit(i.title, columns - 2 - numWidth)}
-              </Text>
-            </Button>
-            <Box>
-              <Text>{indent}</Text>
-              <Text wrap="truncate-end">{facts}</Text>
-            </Box>
-          </Box>
-        )
+        return issueRow(i, {
+          key: `issue-${i.number}`,
+          buttonKey: `pick-${i.number}`,
+          numWidth,
+          mark,
+          markColor,
+          dim: section === 'blocked',
+          bold: section === 'next',
+          autoFocus: section === 'next',
+          blockedBy,
+          onPress: () => openIssue($, PANE, i.number),
+        })
       }
       if (listed.length === 0) {
         rows.push(
@@ -1525,6 +1653,7 @@ async function runFj($: EngineInterface, word: string) {
 export const register: Register = (on, options) => {
   configToken = String(options.token ?? '').trim() || null
   configIcons = String(options.icons ?? 'ask')
+  configCompact = String(options.compact ?? 'ask')
   configLabel = String(options.label ?? 'epic').trim() || 'epic'
   configDebug = options.debug === true
 
@@ -1546,6 +1675,7 @@ export const register: Register = (on, options) => {
     return counted($, word ? `/fj ${word}` : '/fj', () => runFj($, word))
   })
 
+  on('config.set', settingChanged)
   on('ui.close', { id: PANE }, paneClosed)
   on('ui.close', { id: EPICS_PANE }, paneClosed)
   on('ui.render', { component: 'Pane', requestId: PANE }, renderPane)

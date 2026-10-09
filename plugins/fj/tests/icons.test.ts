@@ -41,13 +41,13 @@ const ISSUE = {
   repository: { full_name: 'boats/radar' },
 }
 
-function row(value: string): ConfigRow {
+function row(value: string, field = 'icons', options = ['ask', 'icons', 'text']): ConfigRow {
   return {
-    key: 'fj@egribnau-mods.icons',
-    label: 'Icons',
+    key: `fj@egribnau-mods.${field}`,
+    label: field,
     kind: 'choice',
     value,
-    options: ['ask', 'icons', 'text'],
+    options,
     provider: { plugin: 'fj', tier: 'user' },
     isLocked: false,
   } as unknown as ConfigRow
@@ -80,7 +80,7 @@ function world(on: On, set: { key: string; value: unknown }[] = [], offered = tr
               : { full_name: 'boats/radar', open_issues_count: 1 }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
   })
-  on('config.list', () => ({ value: offered ? [row('ask')] : [] }))
+  on('config.list', () => ({ value: offered ? [row('ask'), row('ask', 'compact', ['ask', 'on', 'off'])] : [] }))
   on('config.set', (_$, e) => {
     set.push({ key: e.key, value: e.value })
     return { value: e.value }
@@ -93,7 +93,7 @@ const label = async (ui: { find: (q: { key: string }) => Promise<unknown> }, key
   ((await ui.find({ key })) as { props: { label?: string } } | undefined)?.props.label
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`asks once about icons after setup, showing them, on ${surface}`, { options: { token: 'secret' } }, async ($, on) => {
+  test(`asks once about icons after setup, showing them, on ${surface}`, { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
     world(on)
     await $.command.run(RUN)
     const ui = await $.ui.mount({ ...PANE, surface })
@@ -108,7 +108,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('Use icons saves the setting and the buttons become icons', { options: { token: 'secret' } }, async ($, on) => {
+test('Use icons saves the setting and the buttons become icons', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
   const set: { key: string; value: unknown }[] = []
   world(on, set)
   await $.command.run(RUN)
@@ -125,7 +125,7 @@ test('Use icons saves the setting and the buttons become icons', { options: { to
   expect(await label(ui, 'open')).toBe(ICON.open)
 })
 
-test('Keep text saves the setting and the buttons keep their words', { options: { token: 'secret' } }, async ($, on) => {
+test('Keep text saves the setting and the buttons keep their words', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
   const set: { key: string; value: unknown }[] = []
   world(on, set)
   await $.command.run(RUN)
@@ -136,7 +136,7 @@ test('Keep text saves the setting and the buttons keep their words', { options: 
   expect(await label(ui, 'refresh')).toBe('Refresh')
 })
 
-test('where /config offers no Icons row, the choice holds for the session', { options: { token: 'secret' } }, async ($, on) => {
+test('where /config offers no Icons row, the choice holds for the session', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
   const set: { key: string; value: unknown }[] = []
   world(on, set, false)
   await $.command.run(RUN)
@@ -147,7 +147,7 @@ test('where /config offers no Icons row, the choice holds for the session', { op
   expect(await label(ui, 'refresh')).toBe(ICON.refresh)
 })
 
-test('once chosen in settings, it is not asked again', { options: { token: 'secret', icons: 'icons' } }, async ($, on) => {
+test('once chosen in settings, it is not asked again', { options: { token: 'secret', icons: 'icons', compact: 'off' } }, async ($, on) => {
   world(on)
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -156,10 +156,74 @@ test('once chosen in settings, it is not asked again', { options: { token: 'secr
   expect(await label(ui, 'refresh')).toBe(ICON.refresh)
 })
 
-test('setup screens keep Check again in words', { options: { token: '', icons: 'icons' } }, async ($, on) => {
+test('setup screens keep Check again in words', { options: { token: '', icons: 'icons', compact: 'off' } }, async ($, on) => {
   world(on)
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   expect(await label(ui, 'refresh')).toBe('Check again')
+})
+
+test('after Icons, asks once about space between rows, showing both', { options: { token: 'secret', icons: 'text' } }, async ($, on) => {
+  world(on)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+  expect(all).toContain('One more choice: space between rows')
+  expect(all).toContain('With space')
+  expect(all).toContain('Compact')
+  expect(all).not.toContain("What's next")
+  await expect(ui.find({ key: 'keep-space' })).resolves.toBeDefined()
+  await expect(ui.find({ key: 'compact' })).resolves.toBeDefined()
+})
+
+test('Icons is asked first, then Compact', { options: { token: 'secret' } }, async ($, on) => {
+  world(on)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await texts(ui)).toContain('One choice: icons on buttons')
+  await ui.press({ key: 'keep-text' })
+  expect(await texts(ui)).toContain('One more choice: space between rows')
+})
+
+for (const [button, value, gap] of [
+  ['compact', 'on', 0],
+  ['keep-space', 'off', 1],
+] as const) {
+  test(`${button} saves Compact as ${value}, and the list follows`, { options: { token: 'secret', icons: 'text' } }, async ($, on) => {
+    const set: { key: string; value: unknown }[] = []
+    world(on, set)
+    await $.command.run(RUN)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: button })
+    expect(set).toEqual([{ key: 'fj@egribnau-mods.compact', value }])
+    expect((await texts(ui))[0]).toBe("What's next")
+    const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
+    expect(boxes.find(b => b.key === 'issue-29')?.props.marginBottom).toBe(gap)
+  })
+}
+
+test('a change in /config wins over the choice made in onboarding', { options: { token: 'secret', icons: 'text' } }, async ($, on) => {
+  world(on)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'compact' })
+  const gapOf29 = async () =>
+    ((await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]).find(b => b.key === 'issue-29')
+      ?.props.marginBottom
+  expect(await gapOf29()).toBe(0)
+
+  // The person's own change in the /config menu.
+  const change = (field: string, value: string, previous: string) =>
+    $.config.set({
+      key: `fj@egribnau-mods.${field}`,
+      value,
+      previous,
+      provider: { plugin: 'fj', tier: 'user' },
+      origin: { kind: 'composer' },
+    })
+  await change('compact', 'off', 'on')
+  expect(await gapOf29()).toBe(1)
+  await change('icons', 'icons', 'text')
+  expect(await label(ui, 'refresh')).toBe(ICON.refresh)
 })

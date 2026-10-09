@@ -26,7 +26,7 @@ const RUN = {
   presentation: { isFullscreen: true, columns: 170 },
 } as const
 
-const TOKEN = { options: { token: 'secret', icons: 'text' } }
+const TOKEN = { options: { token: 'secret', icons: 'text', compact: 'off' } }
 const NOW = Date.parse('2026-10-09T12:00:00Z')
 
 type Extra = { milestone?: string; labels?: string[]; assignees?: string[]; repo?: string; colors?: Record<string, string> }

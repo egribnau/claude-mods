@@ -25,7 +25,7 @@ const RUN = {
   presentation: { isFullscreen: true, columns: 170 },
 } as const
 
-const TOKEN = { options: { token: 'secret', icons: 'text' } }
+const TOKEN = { options: { token: 'secret', icons: 'text', compact: 'off' } }
 const NOW = Date.parse('2026-10-09T12:00:00Z')
 
 type Extra = { milestone?: string; labels?: string[]; assignees?: string[]; state?: 'open' | 'closed' }
@@ -352,6 +352,33 @@ test('the fold mark folds an epic open: its children with their marks, the close
   expect((await texts(ui)).some(t => t.includes('#37'))).toBe(false)
 })
 
+test("children read like What's next: a second line with labels and age, or what blocks it", TOKEN, async ($, on) => {
+  const clock = world(on, {
+    ...REPO,
+    deps: { ...REPO.deps, 20: [{ ...issue(51, 'Rate limit settings page'), labels: [{ name: 'bug', color: 'e57373' }] }, issue(33, 'Retry on 502')] },
+  })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'fold-20' })
+  const found = await nodes(ui)
+  expect(found.some(t => t.text === 'bug · opened 5w ago')).toBe(true)
+  expect(found.find(t => t.text === 'bug')?.props.color).toBe('#e57373')
+  expect(found.some(t => t.text === 'blocked by #37 · opened 5w ago')).toBe(true)
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
+  expect(boxes.find(b => b.key === 'child-row-51')?.props.marginBottom).toBe(1)
+})
+
+test('Compact takes the empty lines out of Epics too', { options: { ...TOKEN.options, compact: 'on' } }, async ($, on) => {
+  world(on, REPO)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'fold-20' })
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
+  expect(boxes.find(b => b.key === 'epic-12')?.props.marginBottom).toBe(0)
+  expect(boxes.find(b => b.key === 'child-row-51')?.props.marginBottom).toBe(0)
+})
+
 test('clicking an epic opens its detail, closed ones too, and back returns to Epics', TOKEN, async ($, on) => {
   world(on, REPO)
   await $.command.run(RUN)
@@ -596,6 +623,10 @@ const child = (number: number, extra: Partial<EpicChild> = {}): EpicChild => ({
   title: `Issue ${number}`,
   state: 'open',
   assignees: [],
+  labels: [],
+  milestone: null,
+  created: '2026-09-01T00:00:00Z',
+  blockedBy: [],
   mine: false,
   blocked: false,
   ...extra,

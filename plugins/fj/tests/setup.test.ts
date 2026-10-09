@@ -16,7 +16,7 @@ const PANE = {
 } as const
 
 // The Token setting, as /plugin configure stores it.
-const TOKEN = { options: { token: 'secret', icons: 'text' } }
+const TOKEN = { options: { token: 'secret', icons: 'text', compact: 'off' } }
 
 const RUN = {
   command: 'fj',
