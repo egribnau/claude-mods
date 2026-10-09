@@ -189,11 +189,19 @@ function draftFor(i: MyIssue): string {
 // Puts the draft for `i` in the prompt box, never sending it: over an empty
 // box, under what is typed there otherwise.
 async function workOn($: EngineInterface, i: MyIssue) {
-  const draft = draftFor(i)
-  const box = await $.prompt.read()
-  const typed = box.text.trim() !== ''
-  const done = await $.prompt.fill(typed ? { text: `\n\n${draft}`, mode: 'append' } : { text: draft, mode: 'replace' })
-  if (!done.isFilled) $.ui.toast(`Could not put #${i.number} in the prompt`)
+  try {
+    const draft = draftFor(i)
+    const box = await $.prompt.read()
+    const typed = box.text.trim() !== ''
+    const done = await $.prompt.fill(typed ? { text: `\n\n${draft}`, mode: 'append' } : { text: draft, mode: 'replace' })
+    $.ui.toast(
+      done.isFilled
+        ? `#${i.number} is in the prompt: Esc to edit it there`
+        : `Could not put #${i.number} in the prompt${done.refusal ? ` (${done.refusal})` : ''}`,
+    )
+  } catch (err) {
+    $.ui.toast(`Could not put #${i.number} in the prompt: ${message(err)}`)
+  }
 }
 
 // How long ago `iso` was, as a short age: 5m, 3h, 6d, 3w, 4mo, 2y.

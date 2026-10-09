@@ -267,7 +267,11 @@ test('selecting moves nothing: the actions take the blank line under the issue',
 
 type Filled = { text: string; mode?: string }[]
 
-function promptBox(on: On, typed: string, filled: Filled, take = true) {
+function promptBox(on: On, typed: string, filled: Filled, take = true, toasts: string[] = []) {
+  on('ui.toast', (_$, e) => {
+    toasts.push(String(e.text))
+    return { value: undefined }
+  })
   on('prompt.read', () => ({ value: { text: typed, cursor: typed.length } }))
   on('prompt.fill', (_$, e) => {
     filled.push({ text: e.text, mode: e.mode })
@@ -278,8 +282,9 @@ function promptBox(on: On, typed: string, filled: Filled, take = true) {
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`Work on this drafts a prompt from the issue on ${surface}`, TOKEN, async ($, on) => {
     const filled: Filled = []
+    const toasts: string[] = []
     world(on, [[issue(29, 'boats/radar', '2026-09-18T09:00:00Z')]])
-    promptBox(on, '', filled)
+    promptBox(on, '', filled, true, toasts)
 
     await $.command.run(RUN)
     const ui = await $.ui.mount({ ...PANE, surface })
@@ -294,6 +299,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
         mode: 'replace',
       },
     ])
+    expect(toasts).toEqual(['#29 is in the prompt: Esc to edit it there'])
   })
 }
 
@@ -314,11 +320,7 @@ test('Work on this goes under what is typed already', TOKEN, async ($, on) => {
 test('says so when the prompt cannot take the draft', TOKEN, async ($, on) => {
   const toasts: string[] = []
   world(on, [[issue(29, 'boats/radar', '2026-09-18T09:00:00Z')]])
-  promptBox(on, '', [], false)
-  on('ui.toast', (_$, e) => {
-    toasts.push(String(e.text))
-    return { value: undefined }
-  })
+  promptBox(on, '', [], false, toasts)
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
