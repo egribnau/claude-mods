@@ -32,6 +32,8 @@ type World = {
   pwd?: string
   // What /api/v1/version answers: a status, or 'down' for no answer at all.
   forge?: number | 'down'
+  // The version /api/v1/version names.
+  version?: string
   // What /repos/<o>/<r> answers.
   repo?: number
   opened?: { id: string; title?: string }[]
@@ -81,7 +83,7 @@ function world(on: On, w: World) {
     if (e.url.endsWith('/api/v1/version')) {
       if (w.forge === 'down') return { deny: 'connect ECONNREFUSED' }
       const status = w.forge ?? 200
-      return reply(status, status === 200 ? { version: '12.0.1+gitea-1.22.0' } : { message: 'Not Found' })
+      return reply(status, status === 200 ? { version: w.version ?? '12.0.1+gitea-1.22.0' } : { message: 'Not Found' })
     }
     if (e.url.includes('/repos/issues/search')) {
       const page = new URL(e.url).searchParams.get('page')
@@ -192,26 +194,71 @@ test('an origin that names no host is quoted', TOKEN, async ($, on) => {
   expect(all).toContain('1. If this repo is on Forgejo: git remote set-url origin https://your-forgejo/owner/repo.git, then press r.')
 })
 
-test('a host that is not Forgejo is named', TOKEN, async ($, on) => {
-  world(on, { remote: 'git@github.com:boats/radar.git', forge: 404 })
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`a host that is not Forgejo: says so, with nothing to do, on ${surface}`, TOKEN, async ($, on) => {
+    const asked: World['asked'] = []
+    world(on, { remote: 'git@github.com:boats/radar.git', forge: 404, asked })
+
+    await $.command.run(RUN)
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const all = await texts(ui)
+
+    expect(all).toEqual([
+      'Set up Forgejo for Claude',
+      '✓ Repo    boats/radar',
+      '✗ Forgejo not found at github.com',
+      '✓ Token   from the Token setting',
+      '· Access  needs Forgejo',
+      'github.com does not answer as Forgejo or Gitea (HTTP 404 for /api/v1/version). fj works with Forgejo and Gitea only, so it has nothing to show for this repo.',
+    ])
+    await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
+    // The token goes to no host that is not Forgejo.
+    expect(asked?.every(a => a.auth === undefined)).toBe(true)
+  })
+}
+
+test('a host that does not answer is named, with how to check it', TOKEN, async ($, on) => {
+  world(on, { forge: 'down' })
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✓ Repo    boats/radar')
-  expect(all).toContain('✗ Forgejo not at github.com')
-  expect(all).toContain('1. github.com does not answer as Forgejo or Gitea (HTTP 404 for /api/v1/version).')
+  expect(all).toContain('✗ Forgejo no answer from git.example.org')
+  expect(all).toContain(
+    'git.example.org did not answer (connect ECONNREFUSED). Check that https://git.example.org opens from this computer.',
+  )
 })
 
-test('a host that does not answer is named', TOKEN, async ($, on) => {
-  world(on, { forge: 'down' })
+test('a version older than 1.19 is too old', TOKEN, async ($, on) => {
+  world(on, { version: '1.18.5' })
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
 
-  expect(await texts(ui)).toContain('1. git.example.org does not answer as Forgejo or Gitea (connect ECONNREFUSED).')
+  expect(all).toContain('✗ Forgejo Gitea 1.18.5, too old')
+  expect(all).toContain(
+    'fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository). git.example.org runs Gitea 1.18.5.',
+  )
 })
+
+for (const [version, shown] of [
+  ['1.19.0', 'Gitea 1.19.0'],
+  ['1.22.6', 'Gitea 1.22.6'],
+  ['1.21.11-2+gitea-1.21.11', '1.21.11-2'],
+  ['7.0.0+gitea-1.21.0', '7.0.0'],
+  ['16.0.5+gitea-1.22.0', '16.0.5'],
+] as const) {
+  test(`${version} is new enough, shown as ${shown}`, async ($, on) => {
+    world(on, { version })
+
+    await $.command.run(RUN)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+    expect(await texts(ui)).toContain(`✓ Forgejo ${shown} at git.example.org`)
+  })
+}
 
 test('no token: links the token page and both ways to set it', async ($, on) => {
   const asked: World['asked'] = []
@@ -293,13 +340,13 @@ test('FORGEJO_TOKEN in the environment is not read', async ($, on) => {
   expect(asked.some(a => a.auth !== undefined)).toBe(false)
 })
 
-test('r checks again and the guide goes once it passes', TOKEN, async ($, on) => {
+test('r checks again and the list follows once setup passes', TOKEN, async ($, on) => {
   const w: World = { forge: 'down' }
   world(on, w)
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await texts(ui)).toContain('What to do')
+  expect(await texts(ui)).toContain('✗ Forgejo no answer from git.example.org')
 
   w.forge = 200
   await ui.press({ key: 'refresh' })
@@ -307,5 +354,4 @@ test('r checks again and the guide goes once it passes', TOKEN, async ($, on) =>
   const all = await texts(ui)
   expect(all[0]).toBe('My issues (0)')
   expect(all).toContain('No open issues assigned to you in boats/radar.')
-  expect(all).not.toContain('What to do')
 })

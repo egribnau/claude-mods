@@ -88,13 +88,30 @@ async function check($: EngineInterface): Promise<Repo | null> {
     return null
   }
 
+  // Forgejo or Gitea answers /api/v1/version without a token. Forgejo's
+  // version carries `+gitea-…`, which is how the two are told apart.
+  const res = await $.http
+    .fetch(`${base(r)}/version`, { method: 'GET', headers: { Accept: 'application/json' } })
+    .catch((err: unknown) => message(err))
+  if (typeof res === 'string') {
+    await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: 'no-answer', detail: res }))
+    return r
+  }
+  let raw: unknown
   try {
-    const res = await $.http.fetch(`${base(r)}/version`, { method: 'GET', headers: { Accept: 'application/json' } })
-    const v = res.ok ? (JSON.parse(res.text) as { version?: unknown }).version : undefined
-    if (typeof v !== 'string') throw new Error(`HTTP ${res.status} for /api/v1/version`)
-    await update($, version, () => v.replace(/\+.*$/, ''))
-  } catch (err) {
-    await update($, setup, (): Setup => ({ kind: 'not-forgejo', detail: message(err) }))
+    raw = res.ok ? (JSON.parse(res.text) as { version?: unknown }).version : undefined
+  } catch {
+    raw = undefined
+  }
+  if (typeof raw !== 'string') {
+    const detail = `HTTP ${res.status} for /api/v1/version`
+    await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: 'other', detail }))
+    return r
+  }
+  const shown = `${raw.includes('+gitea-') ? '' : 'Gitea '}${raw.replace(/\+.*$/, '')}`
+  await update($, version, () => shown)
+  if (!supported(raw)) {
+    await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: 'too-old', detail: shown }))
     return r
   }
 
@@ -122,6 +139,14 @@ async function check($: EngineInterface): Promise<Repo | null> {
     await update($, setup, (): Setup => ({ kind: 'error', message: message(err) }))
   }
   return r
+}
+
+// Whether a Forgejo or Gitea version is 1.19 or newer, the first with
+// scoped tokens. Forgejo numbers from 7.0 on are all newer.
+function supported(version: string): boolean {
+  const [major, minor] = version.split(/[.+-]/).map(Number)
+  if (major === undefined || Number.isNaN(major)) return false
+  return major > 1 || (major === 1 && (minor ?? 0) >= 19)
 }
 
 type RawFound = {
@@ -327,6 +352,14 @@ function intro(s: Setup, r: Repo | null, tokenText: string): string | null {
       return `${r ? slug(r) : 'The repo'}, from origin, was not found, or the token's owner cannot see it.`
     case 'error':
       return `Forgejo could not be asked: ${s.message}.`
+    case 'not-forgejo': {
+      const host = r?.host ?? 'This host'
+      return s.reason === 'no-answer'
+        ? `${host} did not answer (${s.detail}). Check that https://${host} opens from this computer.`
+        : s.reason === 'too-old'
+          ? `fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository). ${host} runs ${s.detail}.`
+          : `${host} does not answer as Forgejo or Gitea (${s.detail}). fj works with Forgejo and Gitea only, so it has nothing to show for this repo.`
+    }
     default:
       return null
   }
@@ -349,10 +382,7 @@ function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
       ]
     }
     case 'not-forgejo':
-      return [
-        `${r?.host ?? 'This host'} does not answer as Forgejo or Gitea (${s.detail}).`,
-        'fj works with Forgejo and Gitea only. If this is one, check that it is reachable over https.',
-      ]
+      return []
     case 'no-token':
       return [create, ...set]
     case 'token-refused':
@@ -450,7 +480,12 @@ export const register: Register = (on, options) => {
     }
     const failText: Record<Step, string> = {
       repo: 'no Forgejo repo here',
-      forgejo: `not at ${r?.host ?? 'this host'}`,
+      forgejo:
+        s.kind === 'not-forgejo' && s.reason === 'no-answer'
+          ? `no answer from ${r?.host ?? 'this host'}`
+          : s.kind === 'not-forgejo' && s.reason === 'too-old'
+            ? `${s.detail}, too old`
+            : `not found at ${r?.host ?? 'this host'}`,
       token: 'none found',
       access:
         s.kind === 'token-refused'
@@ -465,16 +500,25 @@ export const register: Register = (on, options) => {
     // Without a repo the token is still checked: it needs none. The steps
     // that do say so.
     const noRepo = s.kind === 'no-repo'
+    const noForge = s.kind === 'not-forgejo'
     const steps = STEPS.map((step, i) => {
       const mark =
         s.kind === 'checking'
           ? '…'
-          : noRepo && step === 'token'
+          : (noRepo || noForge) && step === 'token'
             ? from === 'none' ? '✗' : '✓'
             : i < at ? '✓' : i === at ? '✗' : '·'
       const color = mark === '✓' ? 'success' : mark === '✗' ? 'error' : 'inactive'
       const text =
-        mark === '✓' ? doneText[step] : mark === '✗' ? failText[step] : noRepo ? 'needs a repo' : ''
+        mark === '✓'
+          ? doneText[step]
+          : mark === '✗'
+            ? failText[step]
+            : noRepo
+              ? 'needs a repo'
+              : noForge
+                ? 'needs Forgejo'
+                : ''
       return line(`step-${step}`, `${mark} ${LABEL[step].padEnd(8)}${text}`, { color })
     })
 

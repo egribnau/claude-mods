@@ -11,7 +11,9 @@ export type Setup =
   // `dir`: where the session runs, `~` for the home folder. `origin`: the
   // remote's URL when it names no host fj can read.
   | { kind: 'no-repo'; reason: 'not-git' | 'no-origin' | 'bad-origin'; dir: string; origin?: string }
-  | { kind: 'not-forgejo'; detail: string }
+  // `reason`: the host answered, but not as Forgejo or Gitea; it did not
+  // answer at all; or it runs a version older than fj needs.
+  | { kind: 'not-forgejo'; reason: 'other' | 'no-answer' | 'too-old'; detail: string }
   | { kind: 'no-token' }
   | { kind: 'token-refused' }
   | { kind: 'no-scope' }
