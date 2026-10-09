@@ -32,7 +32,7 @@ function issue(number: number, repo: string, created: string, extra: { milestone
     state: 'open',
     created_at: created,
     html_url: `https://git.example.org/${repo}/issues/${number}`,
-    body: `What #${number} is about.\n\nMore detail.`,
+    body: '',
     milestone: extra.milestone ? { title: extra.milestone } : null,
     labels: (extra.labels ?? []).map(name => ({ name })),
     repository: { full_name: repo },
@@ -40,15 +40,10 @@ function issue(number: number, repo: string, created: string, extra: { milestone
 }
 
 // A repo that passes setup, whose search answers `pages` in turn.
-function world(on: On, pages: unknown[][], asked: string[] = [], ran: string[] = [], opener = 'open') {
+function world(on: On, pages: unknown[][], asked: string[] = []) {
   const clock = mock.clock(on)
   on('process.run', (_$, e) => {
     const cmd = e.argv.join(' ')
-    ran.push(cmd)
-    if (e.argv[0] === 'open' || e.argv[0] === 'xdg-open') {
-      const ok = e.argv[0] === opener
-      return { value: { exitCode: ok ? 0 : 127, stdout: '', stderr: ok ? '' : 'not found', isStdoutTruncated: false, isStderrTruncated: false } }
-    }
     const stdout = cmd === 'git remote get-url origin' ? 'git@git.example.org:boats/radar.git' : 'true'
     return { value: { exitCode: 0, stdout: `${stdout}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -158,82 +153,6 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-type Found = { props: Record<string, unknown> } | undefined
-const isInverse = async (ui: { find: (q: { key: string }) => Promise<unknown> }, n: number) =>
-  ((await ui.find({ key: `pick-${n}` })) as { children?: Found[] } | undefined)?.children?.[0]?.props?.inverse === true
-
-for (const surface of ['terminal', 'desktop'] as const) {
-  test(`selecting an issue shows its actions on it on ${surface}`, TOKEN, async ($, on) => {
-    world(on, [
-      [issue(29, 'boats/radar', '2026-09-18T09:00:00Z'), issue(37, 'boats/radar', '2026-10-02T09:00:00Z')],
-    ])
-
-    await $.command.run(RUN)
-    const ui = await $.ui.mount({ ...PANE, surface })
-    await expect(ui.find({ key: 'open' })).resolves.toBeUndefined()
-
-    await ui.press({ key: 'pick-37' })
-    expect(await isInverse(ui, 37)).toBe(true)
-    expect(await isInverse(ui, 29)).toBe(false)
-    const open = (await ui.find({ key: 'open' })) as unknown as { props: Record<string, unknown> }
-    expect(open.props).toEqual(expect.objectContaining({ label: 'Open in browser', hotkey: 'o' }))
-
-    // Another issue moves the selection; the same one again clears it.
-    await ui.press({ key: 'pick-29' })
-    expect(await isInverse(ui, 29)).toBe(true)
-    expect(await isInverse(ui, 37)).toBe(false)
-    await ui.press({ key: 'pick-29' })
-    expect(await isInverse(ui, 29)).toBe(false)
-    await expect(ui.find({ key: 'open' })).resolves.toBeUndefined()
-  })
-}
-
-test('Open in browser opens the issue page with open, else xdg-open', TOKEN, async ($, on) => {
-  const ran: string[] = []
-  world(on, [[issue(37, 'boats/radar', '2026-10-02T09:00:00Z')]], [], ran, 'xdg-open')
-
-  await $.command.run(RUN)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'pick-37' })
-  await ui.press({ key: 'open' })
-
-  expect(ran.filter(c => /^(xdg-)?open /.test(c))).toEqual([
-    'open https://git.example.org/boats/radar/issues/37',
-    'xdg-open https://git.example.org/boats/radar/issues/37',
-  ])
-})
-
-test('says so when no browser opens', TOKEN, async ($, on) => {
-  const toasts: string[] = []
-  world(on, [[issue(37, 'boats/radar', '2026-10-02T09:00:00Z')]], [], [], 'none')
-  on('ui.toast', (_$, e) => {
-    toasts.push(String(e.text))
-    return { value: undefined }
-  })
-
-  await $.command.run(RUN)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'pick-37' })
-  await ui.press({ key: 'open' })
-
-  expect(toasts).toEqual(['Could not open a browser for https://git.example.org/boats/radar/issues/37'])
-})
-
-test('a refresh keeps the selection while the issue is still yours', TOKEN, async ($, on) => {
-  const pages = [[issue(29, 'boats/radar', '2026-09-18T09:00:00Z'), issue(37, 'boats/radar', '2026-10-02T09:00:00Z')]]
-  world(on, pages)
-
-  await $.command.run(RUN)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'pick-37' })
-  await ui.press({ key: 'refresh' })
-  expect(await isInverse(ui, 37)).toBe(true)
-
-  pages[0] = [issue(29, 'boats/radar', '2026-09-18T09:00:00Z')]
-  await ui.press({ key: 'refresh' })
-  await expect(ui.find({ key: 'open' })).resolves.toBeUndefined()
-})
-
 test('long titles are cut to one line, and numbers of any width line up', TOKEN, async ($, on) => {
   const long = { ...issue(1000, 'boats/radar', '2026-09-02T00:00:00Z'), title: 'A title far too long to fit on one line of a narrow pane' }
   world(on, [[issue(7, 'boats/radar', '2026-09-01T00:00:00Z'), long]])
@@ -246,86 +165,4 @@ test('long titles are cut to one line, and numbers of any width line up', TOKEN,
   expect(all).toContain('#7    Issue 7')
   expect(all).toContain('#1000 A title far too long to…')
   expect(all.find(t => t.startsWith('#1000 '))?.length).toBe(30)
-})
-
-test('selecting moves nothing: the actions take the blank line under the issue', TOKEN, async ($, on) => {
-  world(on, [[issue(29, 'boats/radar', '2026-09-18T09:00:00Z'), issue(37, 'boats/radar', '2026-10-02T09:00:00Z')]])
-
-  await $.command.run(RUN)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  type Box = { key?: string; props: Record<string, unknown> }
-  const row = async (n: number) => (await ui.findAll({ type: 'Box' })).find(b => b.key === `issue-${n}`) as unknown as Box
-
-  expect((await row(29)).props.marginBottom).toBe(1)
-  await ui.press({ key: 'pick-29' })
-  expect((await row(29)).props.marginBottom).toBe(0)
-  const actions = (await ui.findAll({ type: 'Box' })).find(b => b.key === 'actions') as unknown as Box
-  expect(actions.props).toEqual(expect.objectContaining({ height: 1 }))
-  expect(actions.props.marginTop).toBeUndefined()
-  expect((await row(37)).props.marginBottom).toBe(1)
-})
-
-type Filled = { text: string; mode?: string }[]
-
-function promptBox(on: On, typed: string, filled: Filled, take = true, toasts: string[] = []) {
-  on('ui.toast', (_$, e) => {
-    toasts.push(String(e.text))
-    return { value: undefined }
-  })
-  on('prompt.read', () => ({ value: { text: typed, cursor: typed.length } }))
-  on('prompt.fill', (_$, e) => {
-    filled.push({ text: e.text, mode: e.mode })
-    return take ? { isFilled: true } : { isFilled: false, refusal: 'dialog' as const }
-  })
-}
-
-for (const surface of ['terminal', 'desktop'] as const) {
-  test(`Work on this drafts a prompt from the issue on ${surface}`, TOKEN, async ($, on) => {
-    const filled: Filled = []
-    const toasts: string[] = []
-    world(on, [[issue(29, 'boats/radar', '2026-09-18T09:00:00Z')]])
-    promptBox(on, '', filled, true, toasts)
-
-    await $.command.run(RUN)
-    const ui = await $.ui.mount({ ...PANE, surface })
-    await ui.press({ key: 'pick-29' })
-    const work = (await ui.find({ key: 'work' })) as unknown as { props: Record<string, unknown> }
-    expect(work.props).toEqual(expect.objectContaining({ label: 'Work on this', hotkey: 'w' }))
-    await ui.press({ key: 'work' })
-
-    expect(filled).toEqual([
-      {
-        text: 'Work on #29: Issue 29\nhttps://git.example.org/boats/radar/issues/29\n\nWhat #29 is about.\n\nMore detail.',
-        mode: 'replace',
-      },
-    ])
-    expect(toasts).toEqual(['#29 is in the prompt: Esc to edit it there'])
-  })
-}
-
-test('Work on this goes under what is typed already', TOKEN, async ($, on) => {
-  const filled: Filled = []
-  world(on, [[{ ...issue(29, 'boats/radar', '2026-09-18T09:00:00Z'), body: '  ' }]])
-  promptBox(on, 'also check the README', filled)
-
-  await $.command.run(RUN)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'pick-29' })
-  await ui.press({ key: 'work' })
-
-  // An empty body adds nothing after the link.
-  expect(filled).toEqual([{ text: '\n\nWork on #29: Issue 29\nhttps://git.example.org/boats/radar/issues/29', mode: 'append' }])
-})
-
-test('says so when the prompt cannot take the draft', TOKEN, async ($, on) => {
-  const toasts: string[] = []
-  world(on, [[issue(29, 'boats/radar', '2026-09-18T09:00:00Z')]])
-  promptBox(on, '', [], false, toasts)
-
-  await $.command.run(RUN)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'pick-29' })
-  await ui.press({ key: 'work' })
-
-  expect(toasts).toEqual(['Could not put #29 in the prompt'])
 })

@@ -39,6 +39,44 @@ export type Mine =
   | { kind: 'ok'; issues: MyIssue[] }
   | { kind: 'error'; message: string }
 
+// An issue or pull request another one points at, with its state: open,
+// closed, or for a pull request also merged.
+export type Ref = { number: number; title: string; state: string }
+
+export type CommitRef = { sha: string; message: string; when: string }
+
+// One issue as the detail view shows it. A list is null when Forgejo would
+// not say (dependencies or time tracking off, an older Forgejo): the view
+// then leaves its line out, as it does for an empty one.
+export type IssueDetail = {
+  number: number
+  title: string
+  state: string
+  url: string
+  body: string
+  author: string
+  created: string
+  updated: string
+  comments: number
+  milestone: { title: string; due: string | null } | null
+  due: string | null
+  branch: string | null
+  // Seconds logged on the issue.
+  logged: number | null
+  labels: { name: string; color: string }[]
+  blockedBy: Ref[] | null
+  blocks: Ref[] | null
+  pulls: Ref[] | null
+  commits: CommitRef[] | null
+  lastComment: { author: string; when: string; body: string } | null
+}
+
+export type Detail =
+  | { kind: 'idle' }
+  | { kind: 'loading'; number: number }
+  | { kind: 'ok'; issue: IssueDetail }
+  | { kind: 'error'; number: number; message: string }
+
 declare module 'claude-code' {
   interface PluginState {
     fj: {
@@ -47,8 +85,9 @@ declare module 'claude-code' {
       token: TokenSource
       setup: Setup
       mine: Mine
-      // The issue selected in the list, by number.
+      // The issue open in the detail view, by number; null shows the list.
       picked: number | null
+      detail: Detail
     }
   }
 }

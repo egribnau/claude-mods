@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Mine, MyIssue, Repo, Setup, TokenSource } from '../types'
+import type { Detail, Mine, MyIssue, Repo, Setup, TokenSource } from '../types'
+import { day, dueText, duration, inkOn, loadIssue, wrap } from './issue'
 
 const PANE = 'fj'
 const CONFIGURE = '/plugin configure fj@egribnau-mods'
@@ -13,6 +14,7 @@ const token = atom({ plugin: 'fj', key: 'token' } as const, 'none')
 const setup = atom({ plugin: 'fj', key: 'setup' } as const, { kind: 'checking' })
 const mine = atom({ plugin: 'fj', key: 'mine' } as const, { kind: 'idle' })
 const picked = atom({ plugin: 'fj', key: 'picked' } as const, null)
+const detail = atom({ plugin: 'fj', key: 'detail' } as const, { kind: 'idle' })
 
 // The Token setting, read in `register`; a reload reads it again.
 let configToken: string | null = null
@@ -146,18 +148,67 @@ async function loadMine($: EngineInterface, r: Repo) {
         body: i.body ?? '',
       }))
     await update($, mine, (): Mine => ({ kind: 'ok', issues }))
-    // A selected issue that is no longer yours, or closed, is unselected.
+    // An open issue that is no longer yours, or closed, closes: the list shows.
     await update($, picked, n => (n !== null && issues.some(i => i.number === n) ? n : null))
   } catch (err) {
     await update($, mine, (): Mine => ({ kind: 'error', message: message(err) }))
   }
 }
 
-// Checks setup and, once it passes, loads your issues.
+// Reads issue `n` for the detail view.
+async function loadDetail($: EngineInterface, r: Repo, n: number) {
+  await update($, detail, (): Detail => ({ kind: 'loading', number: n }))
+  const tok = await readToken($)
+  const get = async (path: string) => {
+    const res = await $.http
+      .fetch(`${base(r)}/repos/${slug(r)}${path}`, {
+        method: 'GET',
+        headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' },
+      })
+      .catch(() => null)
+    if (!res) return null
+    let json: unknown = null
+    try {
+      json = res.ok ? JSON.parse(res.text) : null
+    } catch {
+      json = null
+    }
+    return { ok: res.ok, status: res.status, json }
+  }
+  try {
+    const issue = await loadIssue(get, n)
+    // Another issue opened while this one loaded wins.
+    if ((await read($, picked)) !== n) return
+    await update($, detail, (): Detail => ({ kind: 'ok', issue }))
+  } catch (err) {
+    if ((await read($, picked)) !== n) return
+    await update($, detail, (): Detail => ({ kind: 'error', number: n, message: message(err) }))
+  }
+}
+
+// Shows issue `n` in the detail view, or the list again for null.
+async function openIssue($: EngineInterface, n: number | null) {
+  await update($, picked, () => n)
+  const r = await read($, repo)
+  if (n === null || !r) {
+    await update($, detail, (): Detail => ({ kind: 'idle' }))
+    return
+  }
+  await loadDetail($, r, n)
+}
+
+// Checks setup and, once it passes, loads your issues and, when one is open,
+// that issue again.
 async function refresh($: EngineInterface): Promise<Repo | null> {
   const r = await check($)
-  if (r && (await read($, setup)).kind === 'ready') await loadMine($, r)
-  else await update($, mine, (): Mine => ({ kind: 'idle' }))
+  if (r && (await read($, setup)).kind === 'ready') {
+    await loadMine($, r)
+    const n = await read($, picked)
+    if (n !== null) await loadDetail($, r, n)
+    else await update($, detail, (): Detail => ({ kind: 'idle' }))
+  } else {
+    await update($, mine, (): Mine => ({ kind: 'idle' }))
+  }
   return r
 }
 
@@ -178,17 +229,25 @@ function fit(text: string, width: number): string {
   return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`
 }
 
-// The prompt fj drafts for an issue: what to do, where the issue is, and
-// what it says.
-function draftFor(i: MyIssue): string {
-  const head = `Work on #${i.number}: ${i.title}\n${i.url}`
+// What a draft is made from: the issue, and its last comment when known.
+type DraftSource = Pick<MyIssue, 'number' | 'title' | 'url' | 'body'> & {
+  lastComment?: { author: string; body: string } | null
+}
+
+// The prompt fj drafts for an issue: what to do, where the issue is, what it
+// says, and the last word on it.
+function draftFor(i: DraftSource): string {
+  const parts = [`Work on #${i.number}: ${i.title}\n${i.url}`]
   const body = i.body.trim()
-  return body ? `${head}\n\n${body}` : head
+  if (body) parts.push(body)
+  const last = i.lastComment?.body.trim()
+  if (last) parts.push(`Last comment, by ${i.lastComment?.author}:\n${last}`)
+  return parts.join('\n\n')
 }
 
 // Puts the draft for `i` in the prompt box, never sending it: over an empty
 // box, under what is typed there otherwise.
-async function workOn($: EngineInterface, i: MyIssue) {
+async function workOn($: EngineInterface, i: DraftSource) {
   try {
     const draft = draftFor(i)
     const box = await $.prompt.read()
@@ -424,6 +483,166 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    // An issue open: its detail in place of the list.
+    const open = await read($, picked)
+    if (s.kind === 'ready' && r && open !== null) {
+      const d = await read($, detail)
+      const now = await $.clock.now()
+      const rule = (key: string, name: string) => line(key, `── ${name} `.padEnd(columns, '─'), { dimColor: true })
+      const top = (
+        <Box key="title" height={1} flexShrink={0}>
+          <Button key="back" label="← My issues" hotkey="b" onPress={() => openIssue($, null)} />
+          <Box flexGrow={1} />
+          <Button key="refresh" label="Refresh" hotkey="r" onPress={() => refresh($)} />
+        </Box>
+      )
+      const body: RenderChildren[] = []
+      if (d.kind === 'loading' || d.kind === 'idle') body.push(line('loading', `Loading #${open}…`, { dimColor: true }))
+      if (d.kind === 'error') body.push(para('error', `Could not load #${d.number}: ${d.message}.`, { color: 'error' }))
+      if (d.kind === 'ok') {
+        const i = d.issue
+        const KEY = 15
+        const keyed = (key: string, label: string, content: RenderChildren) => (
+          <Box key={key} height={1} flexShrink={0}>
+            <Text dimColor>{label.padEnd(KEY)}</Text>
+            {content}
+          </Box>
+        )
+        // One issue or pull request on a line: number, title, state.
+        const refLine = (key: string, label: string, x: { number: number; title: string; state: string }, numColor: string) => {
+          const state = x.state
+          const done = state === 'closed'
+          return keyed(
+            key,
+            label,
+            <>
+              <Text color={done ? 'inactive' : numColor}>{`#${x.number} `}</Text>
+              <Text wrap="truncate-end" color={done ? 'inactive' : undefined} strikethrough={done && label !== 'Pull requests'}>
+                {fit(x.title, columns - KEY - `#${x.number} `.length - state.length - 1)}
+              </Text>
+              <Box flexGrow={1} />
+              <Text color={state === 'open' ? (numColor === 'error' ? 'error' : 'success') : state === 'merged' ? 'merged' : 'inactive'}>
+                {` ${state}`}
+              </Text>
+            </>,
+          )
+        }
+        const facts: RenderChildren[] = []
+        if (i.due) {
+          const due = dueText(i.due, now)
+          facts.push(keyed('due', 'Due', <Text color={due.passed ? 'error' : 'warning'}>{due.text}</Text>))
+        }
+        if (i.branch) facts.push(keyed('branch', 'Branch', <Text color="success">{i.branch}</Text>))
+        if (i.logged) facts.push(keyed('time', 'Time', <Text>{`${duration(i.logged)} logged`}</Text>))
+        if (i.labels.length > 0) {
+          facts.push(
+            keyed(
+              'labels',
+              'Labels',
+              <Text wrap="truncate-end">
+                {i.labels.map((l, k) => (
+                  <Text key={`label-${k}`}>
+                    {k > 0 ? ' ' : ''}
+                    <Text backgroundColor={`#${l.color}`} color={inkOn(l.color)}>{` ${l.name} `}</Text>
+                  </Text>
+                ))}
+              </Text>,
+            ),
+          )
+        }
+        ;(i.blockedBy ?? []).forEach((x, k) => facts.push(refLine(`blocked-${k}`, k === 0 ? 'Blocked by' : '', x, 'error')))
+        ;(i.blocks ?? []).forEach((x, k) => facts.push(refLine(`blocks-${k}`, k === 0 ? 'Blocks' : '', x, 'suggestion')))
+        ;(i.pulls ?? []).forEach((x, k) => facts.push(refLine(`pull-${k}`, k === 0 ? 'Pull requests' : '', x, 'suggestion')))
+        ;(i.commits ?? []).slice(0, 3).forEach((c, k) =>
+          facts.push(
+            keyed(
+              `commit-${k}`,
+              k === 0 ? 'Commits' : '',
+              <>
+                <Text color="warning">{`${c.sha} `}</Text>
+                <Text wrap="truncate-end">{fit(c.message, columns - KEY - c.sha.length - 1 - age(c.when, now).length - 1)}</Text>
+                <Box flexGrow={1} />
+                <Text dimColor>{` ${age(c.when, now)}`}</Text>
+              </>,
+            ),
+          ),
+        )
+
+        const titleLines = wrap(`#${i.number} ${i.title}`, columns).slice(0, 2)
+        const milestone = i.milestone
+          ? `${i.milestone.title}${i.milestone.due ? ` (due ${day(i.milestone.due, now)})` : ''}`
+          : 'no milestone'
+        const comments = `${i.comments} ${i.comments === 1 ? 'comment' : 'comments'}`
+
+        // What is left for the description and the last comment.
+        const fixed = 1 + titleLines.length + 2 + 1 + (facts.length > 0 ? facts.length + 1 : 0) + 1 + 1 + 1 + 1
+        const last = i.lastComment
+        const lastLines = last ? wrap(last.body.trim(), columns) : []
+        const lastShown = Math.min(3, lastLines.length)
+        const lastRows = last ? 1 + 1 + lastShown + 1 : 0
+        const descLines = wrap(i.body.trim(), columns)
+        const descRoom = Math.max(2, height - fixed - lastRows - 2)
+        const descShown = descLines.length > descRoom ? descRoom - 1 : descLines.length
+
+        body.push(
+          <Box key="head" flexDirection="column" flexShrink={0}>
+            {titleLines.map((t, k) => (
+              <Text key={`t-${k}`} bold wrap="truncate-end">
+                {k === 0 ? <Text color="suggestion">{`#${i.number}`}</Text> : null}
+                {k === 0 ? t.slice(`#${i.number}`.length) : t}
+              </Text>
+            ))}
+            <Text dimColor wrap="truncate-end">{`${i.state} · ${milestone} · ${comments}`}</Text>
+            <Text dimColor wrap="truncate-end">{`opened ${age(i.created, now)} ago by ${i.author} · updated ${age(i.updated, now)} ago`}</Text>
+          </Box>,
+        )
+        if (facts.length > 0) {
+          body.push(
+            <Box key="facts" flexDirection="column" flexShrink={0} marginTop={1}>
+              {facts}
+            </Box>,
+          )
+        }
+        body.push(
+          <Box key="actions" height={1} flexShrink={0} marginTop={1}>
+            <Button key="work" label="Work on this" hotkey="w" onPress={() => workOn($, i)} />
+            <Text>{'  '}</Text>
+            <Button key="open" label="Open in browser" hotkey="o" onPress={() => openUrl($, i.url)} />
+          </Box>,
+        )
+        body.push(<Box key="gap-desc" height={1} flexShrink={0} />, rule('desc', 'Description'))
+        if (descLines.length === 0) body.push(line('no-desc', 'No description.', { dimColor: true }))
+        descLines.slice(0, descShown).forEach((t, k) => body.push(line(`d-${k}`, t || ' ')))
+        if (descShown < descLines.length) {
+          body.push(line('d-more', `… ${descLines.length - descShown} more lines`, { dimColor: true }))
+        }
+        if (last) {
+          body.push(
+            <Box key="gap-last" height={1} flexShrink={0} />,
+            rule('last', `Last comment ── ${last.author} · ${age(last.when, now)} ago`),
+          )
+          lastLines.slice(0, lastShown).forEach((t, k) => body.push(line(`c-${k}`, t || ' ')))
+          if (lastShown < lastLines.length) {
+            body.push(line('c-more', `… ${lastLines.length - lastShown} more lines`, { dimColor: true }))
+          }
+          if (i.comments > 1) {
+            const earlier = i.comments - 1
+            body.push(line('earlier', `${earlier} earlier ${earlier === 1 ? 'comment' : 'comments'}`, { dimColor: true }))
+          }
+        }
+      }
+      return (
+        <Box flexDirection="column" height={height}>
+          {top}
+          <Box key="gap" height={1} flexShrink={0} />
+          <Box key="detail" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+            {body}
+          </Box>
+          {line('where', `${r.host}/${slug(r)}`, { dimColor: true })}
+        </Box>
+      )
+    }
+
     // Once setup passes and the list has loaded or is loading, the list.
     if (s.kind === 'ready' && r && m.kind !== 'idle' && m.kind !== 'error') {
       const now = await $.clock.now()
@@ -433,24 +652,18 @@ export const register: Register = (on, options) => {
         rows.push(para('none', `No open issues assigned to you in ${slug(r)}.`, { dimColor: true }))
       }
       if (m.kind === 'ok') {
-        const sel = await read($, picked)
         // The number column: the longest number and a space, so titles and
         // the lines under them line up whatever the numbers.
         const numWidth = Math.max(...m.issues.map(i => `#${i.number}`.length), 0) + 1
         const indent = ' '.repeat(numWidth)
         for (const i of m.issues) {
-          const isPicked = sel === i.number
           const facts = [i.milestone ?? 'no milestone', i.labels.join(', '), `opened ${age(i.created, now)} ago`]
             .filter(Boolean)
             .join(' · ')
           rows.push(
-            <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={isPicked ? 0 : 1}>
-              <Button
-                key={`pick-${i.number}`}
-                plain
-                onPress={() => update($, picked, n => (n === i.number ? null : i.number))}
-              >
-                <Text wrap="truncate-end" bold={isPicked} inverse={isPicked}>
+            <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={1}>
+              <Button key={`pick-${i.number}`} plain onPress={() => openIssue($, i.number)}>
+                <Text wrap="truncate-end">
                   <Text color="suggestion">{`#${i.number}`.padEnd(numWidth)}</Text>
                   {fit(i.title, columns - numWidth)}
                 </Text>
@@ -461,14 +674,6 @@ export const register: Register = (on, options) => {
                   {facts}
                 </Text>
               </Box>
-              {/* The actions take the blank line under the issue, so selecting moves nothing. */}
-              {isPicked && (
-                <Box key="actions" height={1} paddingLeft={numWidth}>
-                  <Button key="work" label="Work on this" hotkey="w" onPress={() => workOn($, i)} />
-                  <Text>{'  '}</Text>
-                  <Button key="open" label="Open in browser" hotkey="o" onPress={() => openUrl($, i.url)} />
-                </Box>
-              )}
             </Box>,
           )
         }
