@@ -352,11 +352,31 @@ export const register: Register = (on, options) => {
       const about = intro(s, r, tokenText)
       if (about) body.push(para('intro', about), <Box key="gap-intro" height={1} />)
       const actions = todo(s, r, tokenText)
-      body.push(line('todo', 'What to do', { bold: true }))
+      if (actions.length > 0) body.push(line('todo', 'What to do', { bold: true }))
       actions.forEach((t, i) => body.push(para(`todo-${i}`, `${i + 1}. ${t}`)))
-      // The no-repo action ends in pressing r itself.
-      if (!noRepo) body.push(para('again', `${actions.length + 1}. Press r to check again.`, { dimColor: true }))
+      // Checking again is the guide's last step, so its button ends it.
+      body.push(
+        <Box key="again" height={1} marginTop={1} paddingLeft={3}>
+          <Button key="refresh" plain label="check again" hotkey="r" onPress={() => refresh($)} />
+        </Box>,
+      )
     }
+
+    // A heading with, on its right, how to reach the pane's keys: the key
+    // itself while the pane has the keyboard, else how to give it the keyboard.
+    const focused = e.props.isFocused
+    const heading = (text: string, action?: { label: string }) => (
+      <Box key="title" height={1} flexShrink={0}>
+        <Text bold wrap="truncate-end">
+          {text}
+        </Text>
+        <Box flexGrow={1} />
+        {!focused && <Text dimColor>ctrl+x tab to use</Text>}
+        {focused && action && (
+          <Button key="refresh" plain label={action.label} hotkey="r" onPress={() => refresh($)} />
+        )}
+      </Box>
+    )
 
     // Once setup passes and the list has loaded or is loading, the list.
     if (s.kind === 'ready' && r && m.kind !== 'idle' && m.kind !== 'error') {
@@ -390,15 +410,12 @@ export const register: Register = (on, options) => {
       const count = m.kind === 'ok' ? ` (${m.issues.length})` : ''
       return (
         <Box flexDirection="column" height={height}>
-          {line('title', `My issues${count}`, { bold: true })}
+          {heading(`My issues${count}`, { label: 'refresh' })}
           <Box key="gap" height={1} flexShrink={0} />
           <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
             {rows}
           </Box>
           {line('where', `${r.host}/${slug(r)}`, { dimColor: true })}
-          <Box key="buttons" height={1} flexShrink={0}>
-            <Button key="refresh" label="Refresh" hotkey="r" onPress={() => refresh($)} />
-          </Box>
         </Box>
       )
     }
@@ -408,14 +425,11 @@ export const register: Register = (on, options) => {
         <Box key="setup" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
           {m.kind === 'error' && para('mine-error', `Could not load your issues: ${m.message}.`, { color: 'error' })}
           {s.kind === 'ready'
-            ? line('title', 'Forgejo for Claude is ready!', { bold: true })
-            : line('title', 'Set up Forgejo for Claude', { bold: true })}
+            ? heading('Forgejo for Claude is ready!', { label: 'refresh' })
+            : heading('Set up Forgejo for Claude')}
           {steps}
           <Box key="gap" height={1} />
           {body}
-        </Box>
-        <Box key="buttons" height={1} flexShrink={0}>
-          <Button key="refresh" label="Check again" hotkey="r" onPress={() => refresh($)} />
         </Box>
       </Box>
     )

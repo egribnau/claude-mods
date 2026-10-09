@@ -139,6 +139,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     expect(all).toEqual([
       'Set up Forgejo for Claude',
+      'ctrl+x tab to use',
       '✗ Repo    no Forgejo repo here',
       '· Forgejo needs a repo',
       '✓ Token   from the Token setting',
@@ -231,7 +232,9 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   expect(all).toContain('https://git.example.org/user/settings/applications')
   expect(all).toContain('/plugin configure fj@egribnau-mods')
   expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as Token.')
-  expect(all).toContain('3. Press r to check again.')
+  expect(all.some(t => t.includes('Press r'))).toBe(false)
+  // Checking again ends the guide, as a button of its own.
+  await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
   expect(all.some(t => t.includes('FORGEJO_TOKEN'))).toBe(false)
   expect(asked.map(a => a.url)).toEqual(['https://git.example.org/api/v1/version'])
 })
@@ -255,7 +258,7 @@ for (const [status, label, about, first] of [
     "boats/radar, from origin, was not found, or the token's owner cannot see it.",
     '1. If origin points to the wrong repo: git remote set-url origin https://git.example.org/owner/repo.git.',
   ],
-  [500, 'no answer', 'Forgejo could not be asked: boats/radar: HTTP 500.', '1. Press r to check again.'],
+  [500, 'no answer', 'Forgejo could not be asked: boats/radar: HTTP 500.', null],
 ] as const) {
   test(`access answered ${status}: says what happened, then what to do`, TOKEN, async ($, on) => {
     world(on, { repo: status })
@@ -267,8 +270,14 @@ for (const [status, label, about, first] of [
     expect(all).toContain('✓ Token   from the Token setting')
     expect(all).toContain(`✗ Access  ${label}`)
     expect(all.indexOf(about)).toBeGreaterThan(0)
-    expect(all.indexOf(about)).toBeLessThan(all.indexOf('What to do'))
-    expect(all[all.indexOf('What to do') + 1]).toBe(first)
+    if (first === null) {
+      // Nothing to do but check again.
+      expect(all).not.toContain('What to do')
+    } else {
+      expect(all.indexOf(about)).toBeLessThan(all.indexOf('What to do'))
+      expect(all[all.indexOf('What to do') + 1]).toBe(first)
+    }
+    await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
   })
 }
 

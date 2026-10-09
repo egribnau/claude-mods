@@ -79,6 +79,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     expect(await texts(ui)).toEqual([
       'My issues (3)',
+      'ctrl+x tab to use',
       '#29  ',
       'Issue 29',
       '     ',
@@ -119,16 +120,45 @@ test('none assigned: says so', TOKEN, async ($, on) => {
   expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar: 0 issues assigned to you.' }))
 })
 
-test('the repo line and Refresh sit at the bottom of the pane, however long the list', TOKEN, async ($, on) => {
+test('the repo line sits at the bottom of the pane, however long the list', TOKEN, async ($, on) => {
   world(on, [Array.from({ length: 30 }, (_, k) => issue(200 + k, 'boats/radar', '2026-09-01T00:00:00Z'))])
 
   await $.command.run(RUN)
   // A short pane: 30 issues need far more than 12 rows.
   const rows = 12
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: rows } }, surface: 'terminal' })
-  const root = (await ui.findAll({ type: 'Box' }))[0] as unknown as { props: { height?: number } }
-  expect(root.props.height).toBe(rows)
-  const list = (await ui.findAll({ type: 'Box' })).find(b => b.key === 'list') as unknown as { props: Record<string, unknown> }
+  const boxes = await ui.findAll({ type: 'Box' })
+  expect((boxes[0] as unknown as { props: { height?: number } }).props.height).toBe(rows)
+  const list = boxes.find(b => b.key === 'list') as unknown as { props: Record<string, unknown> }
   expect(list.props).toEqual(expect.objectContaining({ flexGrow: 1, flexShrink: 1, overflow: 'hidden' }))
-  await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
+  const all = await texts(ui)
+  expect(all.at(-1)).toBe('git.example.org/boats/radar')
 })
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`not focused, the title row says how to reach the keys on ${surface}`, TOKEN, async ($, on) => {
+    world(on, [[issue(7, 'boats/radar', '2026-09-01T00:00:00Z')]])
+
+    await $.command.run(RUN)
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    const all = await texts(ui)
+    expect(all.slice(0, 2)).toEqual(['My issues (1)', 'ctrl+x tab to use'])
+    await expect(ui.find({ key: 'refresh' })).resolves.toBeUndefined()
+  })
+
+  test(`focused, the title row holds r refresh on ${surface}`, TOKEN, async ($, on) => {
+    const asked: string[] = []
+    world(on, [[issue(7, 'boats/radar', '2026-09-01T00:00:00Z')]], asked)
+
+    await $.command.run(RUN)
+    const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, isFocused: true }, surface })
+
+    expect(await texts(ui)).not.toContain('ctrl+x tab to use')
+    const button = (await ui.find({ key: 'refresh' })) as unknown as { props: Record<string, unknown> }
+    expect(button.props).toEqual(expect.objectContaining({ label: 'refresh', hotkey: 'r', plain: true }))
+    const before = asked.length
+    await ui.press({ key: 'refresh' })
+    expect(asked.length).toBeGreaterThan(before)
+  })
+}
