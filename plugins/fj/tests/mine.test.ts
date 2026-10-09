@@ -246,3 +246,20 @@ test('long titles are cut to one line, and numbers of any width line up', TOKEN,
   expect(all).toContain('#1000 A title far too long to…')
   expect(all.find(t => t.startsWith('#1000 '))?.length).toBe(30)
 })
+
+test('selecting moves nothing: the actions take the blank line under the issue', TOKEN, async ($, on) => {
+  world(on, [[issue(29, 'boats/radar', '2026-09-18T09:00:00Z'), issue(37, 'boats/radar', '2026-10-02T09:00:00Z')]])
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  type Box = { key?: string; props: Record<string, unknown> }
+  const row = async (n: number) => (await ui.findAll({ type: 'Box' })).find(b => b.key === `issue-${n}`) as unknown as Box
+
+  expect((await row(29)).props.marginBottom).toBe(1)
+  await ui.press({ key: 'pick-29' })
+  expect((await row(29)).props.marginBottom).toBe(0)
+  const actions = (await ui.findAll({ type: 'Box' })).find(b => b.key === 'actions') as unknown as Box
+  expect(actions.props).toEqual(expect.objectContaining({ height: 1 }))
+  expect(actions.props.marginTop).toBeUndefined()
+  expect((await row(37)).props.marginBottom).toBe(1)
+})

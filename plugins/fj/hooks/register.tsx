@@ -416,7 +416,7 @@ export const register: Register = (on, options) => {
             .filter(Boolean)
             .join(' · ')
           rows.push(
-            <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={1}>
+            <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={isPicked ? 0 : 1}>
               <Button
                 key={`pick-${i.number}`}
                 plain
@@ -433,6 +433,7 @@ export const register: Register = (on, options) => {
                   {facts}
                 </Text>
               </Box>
+              {/* The actions take the blank line under the issue, so selecting moves nothing. */}
               {isPicked && (
                 <Box key="actions" height={1} paddingLeft={numWidth}>
                   <Button key="open" label="Open in browser" hotkey="o" onPress={() => openUrl($, i.url)} />
