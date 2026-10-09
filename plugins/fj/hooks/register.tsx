@@ -1,10 +1,13 @@
 import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
-import type { Actions, Detail, Epic, EpicChild, EpicGroup, Epics, IssueDetail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
-import { bar, groupsFor, openChildren, pickerOptions, standing, summary, tally } from './epics'
-import { day, dueText, duration, loadIssue, readable, wrap } from './issue'
-import { pickNext, waitingText } from './next'
+import type { Detail, Epic, Epics, IssueDetail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
+import { bar, openChildren, pickerOptions, standing, summary, tally } from './epics'
+import { forgejo } from './forgejo'
+import { day, dueText, duration, readable, wrap } from './issue'
+import { epicGroups, loadRepo, whatsNext, type Memory } from './load'
+import { waitingText } from './next'
+import { message, type Send, type Tracker } from './tracker'
 
 const PANE = 'fj'
 const EPICS_PANE = 'fj-epics'
@@ -31,10 +34,15 @@ const requests = atom({ plugin: 'fj', key: 'requests' } as const, null)
 
 // Every request fj sends Forgejo, counted, so Debug can say what each action cost.
 let requestsMade = 0
-function forgejo($: EngineInterface, url: string, init: Parameters<EngineInterface['http']['fetch']>[1]) {
-  requestsMade++
-  return $.http.fetch(url, init)
-}
+const send =
+  ($: EngineInterface): Send =>
+  (url, init) => {
+    requestsMade++
+    return $.http.fetch(url, init)
+  }
+
+// The tracker behind repo `r`: Forgejo, the only one so far.
+const tracker = ($: EngineInterface, r: Repo): Tracker => forgejo(send($), r, configToken, configLabel)
 
 // Runs an action and records how many requests it sent, under `label`.
 async function counted<T>($: EngineInterface, label: string, action: () => Promise<T>): Promise<T> {
@@ -100,7 +108,6 @@ function parseRemote(url: string): Repo | null {
 }
 
 const slug = (r: Repo) => `${r.owner}/${r.name}`
-const base = (r: Repo) => `https://${r.host}/api/v1`
 
 // The token for a request: the Token setting, kept in secure storage. It is
 // the only source, so the token is the same in the terminal and the app.
@@ -108,13 +115,9 @@ async function readToken(_$: EngineInterface): Promise<{ value: string | null; f
   return configToken ? { value: configToken, from: 'setting' } : { value: null, from: 'none' }
 }
 
-// An error's message, without the host's `fj: $.http.fetch: ` in front.
-const message = (err: unknown) =>
-  (err instanceof Error ? err.message : String(err)).replace(/^[\w-]+: \$\.[\w.]+: /, '')
-
 // Each step in turn, stopping at the first that fails: the repo behind
-// origin, a Forgejo (or Gitea) at its host, a token, and the token reading
-// the repo. Every step is written to the session's state as it ends.
+// origin, then the tracker's own steps: a Forgejo (or Gitea) at its host, a
+// token, and the token reading the repo.
 async function check($: EngineInterface): Promise<Repo | null> {
   await update($, setup, (): Setup => ({ kind: 'checking' }))
   const tok = await readToken($)
@@ -141,236 +144,38 @@ async function check($: EngineInterface): Promise<Repo | null> {
     return null
   }
 
-  // Forgejo or Gitea answers /api/v1/version without a token. Forgejo's
-  // version carries `+gitea-…`, which is how the two are told apart.
-  const res = await forgejo($, `${base(r)}/version`, { method: 'GET', headers: { Accept: 'application/json' } })
-    .catch((err: unknown) => message(err))
-  if (typeof res === 'string') {
-    await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: 'no-answer', detail: res }))
-    return r
-  }
-  let raw: unknown
-  try {
-    raw = res.ok ? (JSON.parse(res.text) as { version?: unknown }).version : undefined
-  } catch {
-    raw = undefined
-  }
-  if (typeof raw !== 'string') {
-    const detail = `HTTP ${res.status} for /api/v1/version`
-    await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: 'other', detail }))
-    return r
-  }
-  const shown = `${raw.includes('+gitea-') ? '' : 'Gitea '}${raw.replace(/\+.*$/, '')}`
-  await update($, version, () => shown)
-  if (!supported(raw)) {
-    await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: 'too-old', detail: shown }))
-    return r
-  }
-
-  if (!tok.value) {
-    await update($, setup, (): Setup => ({ kind: 'no-token' }))
-    return r
-  }
-
-  try {
-    const res = await forgejo($, `${base(r)}/repos/${slug(r)}`, {
-      method: 'GET',
-      headers: { Authorization: `token ${tok.value}`, Accept: 'application/json' },
-    })
-    const headers = { Authorization: `token ${tok.value}`, Accept: 'application/json' }
-    // Who the token belongs to, once the repo answers: what makes an issue yours.
-    const user = res.ok ? await forgejo($, `${base(r)}/user`, { method: 'GET', headers }) : null
-    const login = user?.ok ? (JSON.parse(user.text) as { login: string }).login : null
-    const next: Setup = user?.ok && login !== null
-      ? {
-          kind: 'ready',
-          openIssues: (JSON.parse(res.text) as { open_issues_count: number }).open_issues_count,
-          login,
-          actions: await mayAct($, r, tok.value, login, (JSON.parse(res.text) as RawRepo).permissions?.push === true),
-          features: {
-            time: (JSON.parse(res.text) as RawRepo).internal_tracker?.enable_time_tracker !== false,
-            deps: (JSON.parse(res.text) as RawRepo).internal_tracker?.enable_issue_dependencies !== false,
-          },
-        }
-      : user && (user.status === 401 || user.status === 403)
-        ? { kind: 'no-scope', missing: 'read:user' }
-        : user
-          ? { kind: 'error', message: `/user: HTTP ${user.status}` }
-          : res.status === 401
-        ? { kind: 'token-refused' }
-        : res.status === 403
-          ? { kind: 'no-scope' }
-          : res.status === 404
-            ? { kind: 'not-found' }
-            : { kind: 'error', message: `${slug(r)}: HTTP ${res.status}` }
-    await update($, setup, () => next)
-  } catch (err) {
-    await update($, setup, (): Setup => ({ kind: 'error', message: message(err) }))
-  }
+  const c = await tracker($, r).check()
+  await update($, version, () => c.version)
+  await update($, setup, () => c.setup)
   return r
 }
 
-type RawRepo = {
-  open_issues_count: number
-  permissions?: { push?: boolean }
-  internal_tracker?: { enable_time_tracker?: boolean; enable_issue_dependencies?: boolean }
-}
-
-// Whether fj may assign and close: the token's scopes, from the list of the
-// account's tokens (the one ending in the same eight characters), and push
-// rights on the repo. A list Forgejo refuses leaves it unknown.
-async function mayAct($: EngineInterface, r: Repo, token: string, login: string, push: boolean): Promise<Actions> {
-  const res = await forgejo($, `${base(r)}/users/${encodeURIComponent(login)}/tokens?limit=50`, {
-    method: 'GET',
-    headers: { Authorization: `token ${token}`, Accept: 'application/json' },
-  }).catch(() => null)
-  let scopes: string[] | null = null
-  try {
-    const list = res?.ok ? (JSON.parse(res.text) as { token_last_eight?: string; scopes?: string[] | null }[]) : null
-    scopes = list?.find(t => t.token_last_eight === token.slice(-8))?.scopes ?? null
-  } catch {
-    scopes = null
-  }
-  if (scopes === null) return push ? { kind: 'unknown' } : { kind: 'read-only', reason: 'push' }
-  if (!scopes.some(sc => sc === 'all' || sc === 'write:issue' || sc === 'write:all')) return { kind: 'read-only', reason: 'scope' }
-  return push ? { kind: 'ok' } : { kind: 'read-only', reason: 'push' }
-}
-
-// Whether a Forgejo or Gitea version is 1.19 or newer, the first with
-// scoped tokens. Forgejo numbers from 7.0 on are all newer.
-function supported(version: string): boolean {
-  const [major, minor] = version.split(/[.+-]/).map(Number)
-  if (major === undefined || Number.isNaN(major)) return false
-  return major > 1 || (major === 1 && (minor ?? 0) >= 19)
-}
-
-type RawListed = {
-  number: number
-  title: string
-  created_at: string
-  html_url: string
-  body: string | null
-  milestone: { title: string } | null
-  labels: { name: string; color?: string }[] | null
-}
-type RawFound = RawListed & { repository: { full_name: string } }
-type RawOpen = RawListed & { assignee?: { login: string } | null; assignees?: { login: string }[] | null }
-
-const toRow = (i: RawListed): IssueRow => ({
-  number: i.number,
-  title: i.title,
-  milestone: i.milestone?.title ?? null,
-  labels: (i.labels ?? []).map(l => ({ name: l.name, color: l.color ?? '' })),
-  created: i.created_at,
-  url: i.html_url,
-  body: i.body ?? '',
-})
-
-const oldestFirst = (a: IssueRow, b: IssueRow) => a.created.localeCompare(b.created)
-
-// Every page of a list, 50 at a time; a page that fails names `what`.
-async function fetchAll<T>($: EngineInterface, url: string, what: string): Promise<T[]> {
-  const tok = await readToken($)
-  const headers = { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' }
-  const found: T[] = []
-  for (let page = 1; ; page++) {
-    const res = await forgejo($, `${url}&limit=50&page=${page}`, { method: 'GET', headers })
-    if (!res.ok) throw new Error(`${what}: HTTP ${res.status}`)
-    const batch = JSON.parse(res.text) as T[]
-    found.push(...batch)
-    if (batch.length < 50) break
-  }
-  return found
-}
-
-// One request's JSON, or null when it failed.
-async function fetchJson<T>($: EngineInterface, url: string): Promise<T | null> {
-  const tok = await readToken($)
-  const res = await forgejo($, url, {
-    method: 'GET',
-    headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' },
-  })
-    .catch(() => null)
-  if (!res?.ok) return null
-  try {
-    return JSON.parse(res.text) as T
-  } catch {
-    return null
-  }
-}
-
-type RawDep = {
-  number: number
-  title: string
-  state: string
-  assignees?: { login: string }[] | null
-  labels?: { name: string; color?: string }[] | null
-  milestone?: { title: string } | null
-  created_at?: string
-}
-type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string }[] | null }
-type RawMilestone = { title: string; due_on: string | null; open_issues: number; closed_issues: number }
-type MilestoneRow = { title: string; due: string | null; closed: number; total: number }
-
-// What fj remembers of a repo until the next Refresh or /fj, so the picker
-// can switch without asking Forgejo again: its open milestones, your open
-// issues and the free ones, the dependencies checked so far, the epics, and
-// the children of each epic loaded so far.
-type Memory = {
-  repo: string
-  milestones: MilestoneRow[]
-  mine: IssueRow[]
-  free: IssueRow[]
-  blockers: Map<number, number[] | null>
-  epics: (Omit<RawEpic, 'milestone'> & { milestone: string | null })[]
-  children: Map<number, EpicChild[] | null>
-}
+// What fj remembers of the repo until the next Refresh or /fj.
 let memory: Memory | null = null
 
-// Whether an issue's milestone is in what the picker picked.
-const inPick = (pick: string, milestone: string | null) =>
-  pick === 'all' || (pick === 'none' ? milestone === null : pick === `m:${milestone}`)
+// Whether the tracker turned a feature off; a setup check from older code
+// may not say, which counts as on.
+async function off($: EngineInterface, feature: 'deps' | 'epics'): Promise<boolean> {
+  const s = await read($, setup)
+  return s.kind === 'ready' && s.features[feature] === false
+}
 
-// Asks Forgejo for what the panes show: the open milestones (none when the
-// list is refused), your open issues from Forgejo's search (it covers every
-// repo the token sees, so it is narrowed to this one), the repo's open
-// issues, and the epics. Then the picker, What's next and the epics follow.
+// Asks the tracker for what the panes show: the open milestones, your open
+// issues, the repo's open issues, and the epics. Then the picker, What's
+// next and the epics follow.
 async function load($: EngineInterface, r: Repo) {
-  const api = `${base(r)}/repos/${slug(r)}`
   memory = null
   if ((await read($, overview)).kind !== 'ok') await update($, overview, (): Overview => ({ kind: 'loading' }))
   if ((await read($, epics)).kind !== 'ok') await update($, epics, (): Epics => ({ kind: 'loading' }))
-  const milestones = (await fetchAll<RawMilestone>($, `${api}/milestones?state=open`, 'milestones').catch(() => [])).map(m => ({
-    title: m.title,
-    due: m.due_on,
-    closed: m.closed_issues,
-    total: m.open_issues + m.closed_issues,
-  }))
-  let mine: IssueRow[] = []
-  let free: IssueRow[] = []
-  try {
-    const found = await fetchAll<RawFound>($, `${base(r)}/repos/issues/search?assigned=true&state=open&type=issues`, 'your issues')
-    mine = found.filter(i => i.repository.full_name === slug(r)).map(toRow).sort(oldestFirst)
-    const open = await fetchAll<RawOpen>($, `${api}/issues?state=open&type=issues`, 'open issues')
-    const yours = new Set(mine.map(i => i.number))
-    free = open.filter(i => !yours.has(i.number) && !i.assignee && (i.assignees ?? []).length === 0).map(toRow).sort(oldestFirst)
-  } catch (err) {
-    await update($, overview, (): Overview => ({ kind: 'error', message: message(err) }))
-  }
-  let found: Memory['epics'] = []
-  try {
-    const label = configLabel
-    found = (await fetchAll<RawEpic>($, `${api}/issues?state=all&type=issues&labels=${encodeURIComponent(label)}`, 'epics'))
-      .filter(i => (i.labels ?? []).some(l => l.name === label))
-      .map(i => ({ ...i, milestone: i.milestone?.title ?? null }))
-  } catch (err) {
-    await update($, epics, (): Epics => ({ kind: 'error', message: message(err) }))
-  }
-  memory = { repo: `${r.host}/${slug(r)}`, milestones, mine, free, blockers: new Map(), epics: found, children: new Map() }
-  const failed = (await read($, overview)).kind === 'error'
+  const loaded = await loadRepo(tracker($, r), !(await off($, 'epics')))
+  const issuesError = loaded.issuesError
+  const epicsError = loaded.epicsError
+  if (issuesError !== null) await update($, overview, (): Overview => ({ kind: 'error', message: issuesError }))
+  if (epicsError !== null) await update($, epics, (): Epics => ({ kind: 'error', message: epicsError }))
+  memory = loaded.memory
   await showPicker($)
-  if (!failed) await showNext($, r)
-  if ((await read($, epics)).kind !== 'error') await showEpics($, r)
+  if (issuesError === null) await showNext($, r)
+  if (epicsError === null) await showEpics($, r)
 }
 
 // The picker's options from what is open, and the pick: the person's when it
@@ -386,35 +191,23 @@ async function showPicker($: EngineInterface) {
   await update($, picker, () => ({ options, pick }))
 }
 
-// What's next within the pick: yours in it are In progress; of the free ones
-// in it, walked oldest first, the first with no open dependencies is Next.
+// What's next within the pick.
 async function showNext($: EngineInterface, r: Repo) {
   if (!memory) return
   const known = memory
   const pick = (await read($, picker))?.pick ?? 'all'
-  const inProgress = known.mine.filter(i => inPick(pick, i.milestone))
-  const free = known.free.filter(i => inPick(pick, i.milestone))
-  const { next, queue, blocked } = await pickNext(free, async n => {
-    if (known.blockers.has(n)) return known.blockers.get(n) ?? null
-    const deps = await fetchJson<{ number: number; state: string }[]>($, `${base(r)}/repos/${slug(r)}/issues/${n}/dependencies`)
-    const open = deps ? deps.filter(d => d.state === 'open').map(d => d.number) : null
-    known.blockers.set(n, open)
-    return open
-  })
-  await update($, overview, (): Overview => ({ kind: 'ok', inProgress, next, queue, blocked }))
+  const next = await whatsNext(tracker($, r), known, pick, !(await off($, 'deps')))
+  await update($, overview, (): Overview => ({ kind: 'ok', ...next }))
   // An issue that is closed, or now someone else's, closes: What's next shows.
   const shown = new Set([...known.mine, ...known.free].map(i => i.number))
   await update($, memberOf(picked, { requestId: PANE }), n => (n !== null && shown.has(n) ? n : null))
 }
 
-// The epics within the pick, by milestone. For each open epic shown, its
-// children: the issues it depends on, with whether each is yours and, for
-// the others, whether it is blocked. What was shown stays up while this
-// loads, so the picker does not vanish under the person's hand.
+// The epics within the pick, by milestone. What was shown stays up while
+// this loads, so the picker does not vanish under the person's hand.
 async function showEpics($: EngineInterface, r: Repo) {
   if (!memory) return
   const known = memory
-  const api = `${base(r)}/repos/${slug(r)}`
   const openEpics = known.epics.filter(i => i.state === 'open').length
   if (openEpics === 0) {
     await update($, epics, (): Epics => ({ kind: 'ok', groups: [], openEpics }))
@@ -424,47 +217,8 @@ async function showEpics($: EngineInterface, r: Repo) {
   const s = await read($, setup)
   const me = s.kind === 'ready' ? s.login : null
   const pick = (await read($, picker))?.pick ?? 'all'
-  const deps = (n: number) => fetchJson<RawDep[]>($, `${api}/issues/${n}/dependencies`)
-  const loadOne = async (i: Memory['epics'][number]): Promise<Epic> => {
-    const state = i.state === 'closed' ? 'closed' : 'open'
-    if (state === 'closed') return { number: i.number, title: i.title, state, children: null }
-    if (known.children.has(i.number)) return { number: i.number, title: i.title, state, children: known.children.get(i.number) ?? null }
-    const raw = await deps(i.number)
-    const children = raw
-      ? await Promise.all(
-          raw.map(async (c): Promise<EpicChild> => {
-            const assignees = (c.assignees ?? []).map(a => a.login)
-            const open = c.state !== 'closed'
-            const mine = me !== null && assignees.includes(me)
-            // Only an open child that is not yours is checked for what blocks it.
-            const blockedBy = open && !mine ? ((await deps(c.number)) ?? []).filter(d => d.state !== 'closed').map(d => d.number) : []
-            return {
-              number: c.number,
-              title: c.title,
-              state: open ? 'open' : 'closed',
-              assignees,
-              mine,
-              blocked: blockedBy.length > 0,
-              labels: (c.labels ?? []).map(l => ({ name: l.name, color: l.color ?? '' })),
-              milestone: c.milestone?.title ?? null,
-              created: c.created_at ?? '',
-              blockedBy,
-            }
-          }),
-        )
-      : null
-    known.children.set(i.number, children)
-    return { number: i.number, title: i.title, state, children }
-  }
   try {
-    const groups: EpicGroup[] = await Promise.all(
-      groupsFor(pick, known.milestones, known.epics).map(async g => {
-        const shown = await Promise.all(g.epics.map(loadOne))
-        shown.sort((a, b) => (a.state === 'closed' ? 1 : 0) - (b.state === 'closed' ? 1 : 0) || a.number - b.number)
-        const m = g.milestone
-        return { title: m?.title ?? null, due: m?.due ?? null, closed: m?.closed ?? 0, total: m?.total ?? 0, epics: shown }
-      }),
-    )
+    const groups = await epicGroups(tracker($, r), known, pick, me)
     await update($, epics, (): Epics => ({ kind: 'ok', groups, openEpics }))
   } catch (err) {
     await update($, epics, (): Epics => ({ kind: 'error', message: message(err) }))
@@ -498,25 +252,10 @@ async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) 
     return
   }
   await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'loading', number: n }))
-  const tok = await readToken($)
-  const get = async (path: string) => {
-    const res = await forgejo($, `${base(r)}/repos/${slug(r)}${path}`, {
-        method: 'GET',
-        headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' },
-      })
-      .catch(() => null)
-    if (!res) return null
-    let json: unknown = null
-    try {
-      json = res.ok ? JSON.parse(res.text) : null
-    } catch {
-      json = null
-    }
-    return { ok: res.ok, status: res.status, json }
-  }
   try {
     const s = await read($, setup)
-    const issue = await loadIssue(get, n, s.kind === 'ready' ? s.features : undefined)
+    const features = s.kind === 'ready' ? s.features : { time: true, deps: true, epics: true }
+    const issue = await tracker($, r).issue(n, features)
     issuesRead.set(key, issue)
     // Another issue opened while this one loaded wins.
     if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
@@ -574,27 +313,20 @@ function fit(text: string, width: number): string {
   return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`
 }
 
-// Changes issue `n` in Forgejo (`what` names the change for a refusal), then
+// Changes issue `n` with `change` (`what` names it for a refusal), then
 // reads it again with What's next and the epics, so the change shows
 // everywhere. A refusal is shown under the actions of pane `pane`.
-async function writeIssue($: EngineInterface, pane: string, n: number, body: object, what: string): Promise<boolean> {
+async function writeIssue(
+  $: EngineInterface,
+  pane: string,
+  n: number,
+  change: (t: Tracker) => Promise<string | null>,
+  what: string,
+): Promise<boolean> {
   const r = await read($, repo)
   if (!r) return false
-  const tok = await readToken($)
-  const res = await forgejo($, `${base(r)}/repos/${slug(r)}/issues/${n}`, {
-    method: 'PATCH',
-    headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  }).catch((err: unknown) => message(err))
-  if (typeof res === 'string' || !res.ok) {
-    let why = typeof res === 'string' ? res : `HTTP ${res.status}`
-    if (typeof res !== 'string') {
-      try {
-        why = (JSON.parse(res.text) as { message?: string }).message || why
-      } catch {
-        // The status says enough.
-      }
-    }
+  const why = await change(tracker($, r))
+  if (why !== null) {
     const error = `Could not ${what} #${n}: ${why.replace(/\.$/, '')}.`
     await update($, memberOf(detail, { requestId: pane }), (d): Detail => (d.kind === 'ok' ? { ...d, error } : d))
     return false
@@ -612,7 +344,8 @@ async function assignMe($: EngineInterface, pane: string, i: IssueDetail, on: bo
   const s = await read($, setup)
   if (s.kind !== 'ready') return false
   const others = i.assignees.filter(a => a !== s.login)
-  return writeIssue($, pane, i.number, { assignees: on ? [...others, s.login] : others }, on ? 'assign' : 'unassign')
+  const assignees = on ? [...others, s.login] : others
+  return writeIssue($, pane, i.number, t => t.assign(i.number, assignees), on ? 'assign' : 'unassign')
 }
 
 // What a draft is made from: the issue, and its last comment when known.
@@ -721,8 +454,9 @@ function intro(s: Setup, r: Repo | null, tokenText: string): string | null {
 }
 
 // What to do about the step that failed, one line per action.
-function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
-  const page = r ? `https://${r.host}/user/settings/applications` : 'Settings › Applications in Forgejo'
+// `tokens`: where the tracker makes tokens, once there is a repo.
+function todo(s: Setup, r: Repo | null, tokens: string | null): string[] {
+  const page = tokens ?? 'Settings › Applications in Forgejo'
   const create = `Create a token at ${page} with ${SCOPES}.`
   const set = [`Run \`${CONFIGURE}\` and paste it as Token.`]
   switch (s.kind) {
@@ -906,7 +640,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   if (s.kind !== 'ready' && s.kind !== 'checking') {
     const about = intro(s, r, tokenText)
     if (about) body.push(para('intro', about), <Box key="gap-intro" height={1} />)
-    const actions = todo(s, r, tokenText)
+    const actions = todo(s, r, r ? tracker($, r).tokensUrl : null)
     if (actions.length > 0) body.push(line('todo', 'What to do', { bold: true }))
     actions.forEach((t, i) => body.push(para(`todo-${i}`, `${i + 1}. ${t}`)))
     // Checking again is the guide's last step, so its button ends it.
@@ -1298,7 +1032,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 hotkey="c"
                 onPress={() =>
                   counted($, `${closed ? 'reopen' : 'close'} #${i.number}`, () =>
-                    writeIssue($, e.requestId, i.number, { state: closed ? 'open' : 'closed' }, closed ? 'reopen' : 'close'),
+                    writeIssue($, e.requestId, i.number, t => t.close(i.number, !closed), closed ? 'reopen' : 'close'),
                   )
                 }
               />

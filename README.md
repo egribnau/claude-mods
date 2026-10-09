@@ -21,7 +21,9 @@ Personal Claude Code mods, distributed as a plugin marketplace.
 .claude-plugin/marketplace.json      marketplace manifest
 plugins/fj/                          a mod: a hooks module, no skills
   .claude-plugin/plugin.json         plugin manifest, settings under userConfig
-  hooks/register.tsx                 the hooks module
+  hooks/register.tsx                 the hooks module: the panes and /fj
+  hooks/tracker.ts                   what the panes ask a tracker
+  hooks/forgejo.ts                   Forgejo as a tracker: every Forgejo URL
   types/index.d.ts                   the session state it keeps
   tests/*.test.ts                    run with `claude plugin test plugins/fj`
 ```
