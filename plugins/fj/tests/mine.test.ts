@@ -156,7 +156,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     expect(await texts(ui)).not.toContain('ctrl+x tab to use')
     const button = (await ui.find({ key: 'refresh' })) as unknown as { props: Record<string, unknown> }
-    expect(button.props).toEqual(expect.objectContaining({ label: 'refresh', hotkey: 'r', plain: true }))
+    expect(button.props).toEqual(expect.objectContaining({ label: 'Refresh', hotkey: 'r' }))
     const before = asked.length
     await ui.press({ key: 'refresh' })
     expect(asked.length).toBeGreaterThan(before)

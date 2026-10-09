@@ -357,7 +357,7 @@ export const register: Register = (on, options) => {
       // Checking again is the guide's last step, so its button ends it.
       body.push(
         <Box key="again" height={1} marginTop={1} paddingLeft={3}>
-          <Button key="refresh" plain label="check again" hotkey="r" onPress={() => refresh($)} />
+          <Button key="refresh" label="Check again" hotkey="r" onPress={() => refresh($)} />
         </Box>,
       )
     }
@@ -373,7 +373,7 @@ export const register: Register = (on, options) => {
         <Box flexGrow={1} />
         {!focused && <Text dimColor>ctrl+x tab to use</Text>}
         {focused && action && (
-          <Button key="refresh" plain label={action.label} hotkey="r" onPress={() => refresh($)} />
+          <Button key="refresh" label={action.label} hotkey="r" onPress={() => refresh($)} />
         )}
       </Box>
     )
@@ -410,7 +410,7 @@ export const register: Register = (on, options) => {
       const count = m.kind === 'ok' ? ` (${m.issues.length})` : ''
       return (
         <Box flexDirection="column" height={height}>
-          {heading(`My issues${count}`, { label: 'refresh' })}
+          {heading(`My issues${count}`, { label: 'Refresh' })}
           <Box key="gap" height={1} flexShrink={0} />
           <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
             {rows}
@@ -425,7 +425,7 @@ export const register: Register = (on, options) => {
         <Box key="setup" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
           {m.kind === 'error' && para('mine-error', `Could not load your issues: ${m.message}.`, { color: 'error' })}
           {s.kind === 'ready'
-            ? heading('Forgejo for Claude is ready!', { label: 'refresh' })
+            ? heading('Forgejo for Claude is ready!', { label: 'Refresh' })
             : heading('Set up Forgejo for Claude')}
           {steps}
           <Box key="gap" height={1} />
