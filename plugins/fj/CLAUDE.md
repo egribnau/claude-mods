@@ -29,5 +29,5 @@
 
 ## Hard rules
 
-- The token comes only from the Token setting: no environment variables, no
-  files of other tools.
+- Tokens come only from the token settings (Forgejo tokens, GitLab tokens):
+  no environment variables, no files of other tools.

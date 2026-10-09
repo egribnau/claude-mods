@@ -15,7 +15,7 @@ const PANE = {
   },
 } as const
 
-// The Token setting, as /plugin configure stores it.
+// The Forgejo tokens setting, as /plugin configure stores it.
 const TOKEN = { options: { token: 'secret', icons: 'text', compact: 'off' } }
 
 const RUN = {
@@ -91,6 +91,8 @@ function world(on: On, w: World) {
       const status = w.forge ?? 200
       return reply(status, status === 200 ? { version: w.version ?? '12.0.1+gitea-1.22.0' } : { message: 'Not Found' })
     }
+    // Neither GitLab nor GitHub Enterprise.
+    if (e.url.includes('/api/v4/') || e.url.includes('/api/v3/')) return reply(404, { message: 'Not Found' })
     if (e.url.includes('/repos/issues/search')) {
       const page = new URL(e.url).searchParams.get('page')
       const status = w.search ?? 200
@@ -135,8 +137,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(all).toEqual(
       expect.arrayContaining([
         '✓ Repo    boats/radar',
-        '✓ Forgejo 12.0.1 at git.example.org',
-        '✓ Token   from the Token setting',
+        '✓ Forge   Forgejo 12.0.1 at git.example.org',
+        '✓ Token   from Forgejo tokens',
         '✓ Access  7 open issues, as alice',
       ]),
     )
@@ -158,8 +160,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(all).toEqual([
       'Set up Forgejo for Claude',
       '✗ Repo    no Forgejo repo here',
-      '· Forgejo needs a repo',
-      '✓ Token   from the Token setting',
+      '· Forge   needs a repo',
+      '✓ Token   from Forgejo tokens',
       '· Access  needs a repo',
       '· Actions needs a repo',
       'fj shows the issues of the repo this session runs in. ~/Documents/notes is not a git repo, so there is nothing to show here.',
@@ -212,9 +214,9 @@ test('an origin that names no host is quoted', TOKEN, async ($, on) => {
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`a host that is not Forgejo: says so, with nothing to do, on ${surface}`, TOKEN, async ($, on) => {
+  test(`a host that runs no forge fj knows: says so, with nothing to do, on ${surface}`, TOKEN, async ($, on) => {
     const asked: World['asked'] = []
-    world(on, { remote: 'git@github.com:boats/radar.git', forge: 404, asked })
+    world(on, { forge: 404, asked })
 
     await $.command.run(RUN)
     const ui = await $.ui.mount({ ...PANE, surface })
@@ -223,17 +225,76 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(all).toEqual([
       'Set up Forgejo for Claude',
       '✓ Repo    boats/radar',
-      '✗ Forgejo not found at github.com',
-      '✓ Token   from the Token setting',
+      '✗ Forge   no known forge at git.example.org',
+      '· Token   needs Forgejo',
       '· Access  needs Forgejo',
       '· Actions needs Forgejo',
-      'github.com does not answer as Forgejo or Gitea (HTTP 404 for /api/v1/version). fj works with Forgejo and Gitea only, so it has nothing to show for this repo.',
+      'git.example.org does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (HTTP 404 for /api/v1/version). fj has nothing to show for this repo.',
     ])
     await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
     // The token goes to no host that is not Forgejo.
-    expect(asked?.every(a => a.auth === undefined)).toBe(true)
+    expect(asked.map(a => a.url)).toEqual([
+      'https://git.example.org/api/v1/version',
+      'https://git.example.org/api/v4/version',
+      'https://git.example.org/api/v3/meta',
+    ])
+    expect(asked.every(a => a.auth === undefined)).toBe(true)
   })
 }
+
+test('github.com: known without asking, and not supported', TOKEN, async ($, on) => {
+  const asked: World['asked'] = []
+  world(on, { remote: 'git@github.com:boats/radar.git', asked })
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toEqual([
+    'Set up Forgejo for Claude',
+    '✓ Repo    boats/radar',
+    '✗ Forge   GitHub at github.com, not supported',
+    '· Token   needs Forgejo',
+    '· Access  needs Forgejo',
+    '· Actions needs Forgejo',
+    'github.com runs GitHub. fj does not show GitHub repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.',
+  ])
+  expect(asked).toEqual([])
+})
+
+test('gitlab.com: the token step reads GitLab tokens, and nothing is asked', {
+  options: { token: 'secret', gitlabTokens: 'gitlab.com=glpat-1', icons: 'text', compact: 'off' },
+}, async ($, on) => {
+  const asked: World['asked'] = []
+  world(on, { remote: 'https://gitlab.com/boats/radar.git', asked })
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('✗ Forge   GitLab at gitlab.com, not supported')
+  expect(all).toContain('✓ Token   for gitlab.com from GitLab tokens')
+  expect(all).toContain('· Access  needs Forgejo')
+  expect(all).toContain(
+    'gitlab.com runs GitLab. fj does not show GitLab repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.',
+  )
+  expect(all).not.toContain('What to do')
+  expect(asked).toEqual([])
+})
+
+test("a host=token pair wins over a bare token, and the pane names the host", {
+  options: { token: 'bare other.org=elsewhere git.example.org=secret', icons: 'text', compact: 'off' },
+}, async ($, on) => {
+  const asked: World['asked'] = []
+  world(on, { asked, search: 500 })
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('✓ Token   for git.example.org from Forgejo tokens')
+  expect(asked[1]).toEqual({ url: 'https://git.example.org/api/v1/repos/boats/radar', auth: 'token secret' })
+})
 
 test('a host that does not answer is named, with how to check it', TOKEN, async ($, on) => {
   world(on, { forge: 'down' })
@@ -242,7 +303,7 @@ test('a host that does not answer is named, with how to check it', TOKEN, async 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✗ Forgejo no answer from git.example.org')
+  expect(all).toContain('✗ Forge   no answer from git.example.org')
   expect(all).toContain(
     'git.example.org did not answer (connect ECONNREFUSED). Check that https://git.example.org opens from this computer.',
   )
@@ -255,7 +316,7 @@ test('a version older than 1.19 is too old', TOKEN, async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✗ Forgejo Gitea 1.18.5, too old')
+  expect(all).toContain('✗ Forge   Gitea 1.18.5, too old')
   expect(all).toContain(
     'fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). git.example.org runs Gitea 1.18.5.',
   )
@@ -264,9 +325,9 @@ test('a version older than 1.19 is too old', TOKEN, async ($, on) => {
 for (const [version, shown] of [
   ['1.19.0', 'Gitea 1.19.0'],
   ['1.22.6', 'Gitea 1.22.6'],
-  ['1.21.11-2+gitea-1.21.11', '1.21.11-2'],
-  ['7.0.0+gitea-1.21.0', '7.0.0'],
-  ['16.0.5+gitea-1.22.0', '16.0.5'],
+  ['1.21.11-2+gitea-1.21.11', 'Forgejo 1.21.11-2'],
+  ['7.0.0+gitea-1.21.0', 'Forgejo 7.0.0'],
+  ['16.0.5+gitea-1.22.0', 'Forgejo 16.0.5'],
 ] as const) {
   test(`${version} is new enough, shown as ${shown}`, async ($, on) => {
     world(on, { version })
@@ -274,7 +335,7 @@ for (const [version, shown] of [
     await $.command.run(RUN)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-    expect(await texts(ui)).toContain(`✓ Forgejo ${shown} at git.example.org`)
+    expect(await texts(ui)).toContain(`✓ Forge   ${shown} at git.example.org`)
   })
 }
 
@@ -286,7 +347,7 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✓ Forgejo 12.0.1 at git.example.org')
+  expect(all).toContain('✓ Forge   Forgejo 12.0.1 at git.example.org')
   expect(all).toContain('✗ Token   none found')
   expect(all).toContain('· Access  ')
   expect(all).toContain(
@@ -295,7 +356,7 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   // The address is a link, the command a command; neither keeps punctuation.
   expect(all).toContain('https://git.example.org/user/settings/applications')
   expect(all).toContain('/plugin configure fj@egribnau-mods')
-  expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as Token.')
+  expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as Forgejo tokens, alone or as git.example.org=<token> next to tokens for other hosts.')
   expect(all.some(t => t.includes('Press r'))).toBe(false)
   // Checking again ends the guide, as a button of its own.
   await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
@@ -328,7 +389,7 @@ test('a token without read:user: says it needs that scope too', TOKEN, async ($,
 
   expect(all).toContain('✗ Access  no read:user')
   expect(all).toContain(
-    'The token from the Token setting reads boats/radar, but not who it belongs to: fj needs read:user too.',
+    'The token from Forgejo tokens reads boats/radar, but not who it belongs to: fj needs read:user too.',
   )
   expect(all).toContain(
     '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
@@ -340,13 +401,13 @@ for (const [status, label, about, first] of [
   [
     401,
     'token refused',
-    'Forgejo did not accept the token from the Token setting: it may be mistyped, expired or revoked.',
+    'Forgejo did not accept the token from Forgejo tokens: it may be mistyped, expired or revoked.',
     '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
   ],
   [
     403,
     'no permission',
-    'The token from the Token setting is valid but may not read this repo.',
+    'The token from Forgejo tokens is valid but may not read this repo.',
     '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
   ],
   [
@@ -364,7 +425,7 @@ for (const [status, label, about, first] of [
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const all = await texts(ui)
 
-    expect(all).toContain('✓ Token   from the Token setting')
+    expect(all).toContain('✓ Token   from Forgejo tokens')
     expect(all).toContain(`✗ Access  ${label}`)
     expect(all.indexOf(about)).toBeGreaterThan(0)
     if (first === null) {
@@ -397,7 +458,7 @@ test('r checks again and the list follows once setup passes', TOKEN, async ($, o
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await texts(ui)).toContain('✗ Forgejo no answer from git.example.org')
+  expect(await texts(ui)).toContain('✗ Forge   no answer from git.example.org')
 
   w.forge = 200
   await ui.press({ key: 'refresh' })

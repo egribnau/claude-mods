@@ -1,11 +1,12 @@
 // The repo the pane is about: read from `git remote get-url origin`.
 export type Repo = { host: string; owner: string; name: string }
 
-// Where a request's token comes from; never the token itself.
-export type TokenSource = 'setting' | 'none'
+// Where a request's token comes from, never the token itself: the setting,
+// and the host when a `host=token` pair gave it. null: none found.
+export type TokenSource = { setting: 'Forgejo tokens' | 'GitLab tokens'; host: string | null } | null
 
 // How far setting up got: each kind but `ready` names the first step that
-// failed, which the pane explains. Steps: repo, Forgejo, token, access.
+// failed, which the pane explains. Steps: repo, forge, token, access.
 export type Setup =
   | { kind: 'checking' }
   // `dir`: where the session runs, `~` for the home folder. `origin`: the
@@ -14,6 +15,8 @@ export type Setup =
   // `reason`: the host answered, but not as Forgejo or Gitea; it did not
   // answer at all; or it runs a version older than fj needs.
   | { kind: 'not-forgejo'; reason: 'other' | 'no-answer' | 'too-old'; detail: string }
+  // A forge fj knows but does not show issues of yet.
+  | { kind: 'unsupported'; forge: 'gitlab' | 'github' }
   | { kind: 'no-token' }
   | { kind: 'token-refused' }
   // `missing`: the scope the token lacks, when the repo answered but /user
@@ -146,6 +149,7 @@ declare module 'claude-code' {
   interface PluginState {
     fj: {
       repo: Repo | null
+      // The forge at the repo's host, with its version, as the pane shows it.
       version: string | null
       token: TokenSource
       setup: Setup

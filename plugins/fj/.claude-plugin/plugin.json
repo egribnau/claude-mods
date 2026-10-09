@@ -1,6 +1,6 @@
 {
   "name": "fj",
-  "version": "0.39.0",
+  "version": "0.40.0",
   "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
   "author": {
     "name": "Erwin Gribnau"
@@ -9,8 +9,15 @@
   "userConfig": {
     "token": {
       "type": "string",
-      "title": "Token",
-      "description": "A Forgejo access token, kept in secure storage. Needs read:issue, read:repository and read:user; write:issue instead of read:issue lets fj assign and close.",
+      "title": "Forgejo tokens",
+      "description": "Forgejo or Gitea access tokens, kept in secure storage. A bare token is for every host; more hosts take host=token pairs separated by spaces. A pair wins over a bare token. Needs read:issue, read:repository and read:user; write:issue instead of read:issue lets fj assign and close.",
+      "default": "",
+      "sensitive": true
+    },
+    "gitlabTokens": {
+      "type": "string",
+      "title": "GitLab tokens",
+      "description": "GitLab access tokens, kept in secure storage, in the same form as Forgejo tokens. fj recognises GitLab but does not show its issues yet.",
       "default": "",
       "sensitive": true
     },

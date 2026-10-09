@@ -1,11 +1,13 @@
 import type { Actions, CommitRef, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
+import { forgeName } from './forge'
 import { message, type Checked, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // Forgejo, or Gitea, behind the tracker the pane asks: every Forgejo URL
-// lives here. `token` is the Token setting, null when it is empty; `label`
-// is the Epic label setting.
-export function forgejo(send: Send, r: Repo, token: string | null, label: string): Tracker {
+// lives here. `token` is from the Forgejo tokens setting, null when it has
+// none for the host; `label` is the Epic label setting. `known`: the raw
+// version detection already read, so check does not ask for it again.
+export function forgejo(send: Send, r: Repo, token: string | null, label: string, known?: string): Tracker {
   const slug = `${r.owner}/${r.name}`
   const base = `https://${r.host}/api/v1`
   const api = `${base}/repos/${slug}`
@@ -60,21 +62,9 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
   // Each step in turn, stopping at the first that fails: a Forgejo (or
   // Gitea) at the host, a token, and the token reading the repo.
   async function check(): Promise<Checked> {
-    // Forgejo or Gitea answers /api/v1/version without a token. Forgejo's
-    // version carries `+gitea-…`, which is how the two are told apart.
-    const res = await send(`${base}/version`, { method: 'GET', headers: { Accept: 'application/json' } })
-      .catch((err: unknown) => message(err))
-    if (typeof res === 'string') return { version: null, setup: { kind: 'not-forgejo', reason: 'no-answer', detail: res } }
-    let raw: unknown
-    try {
-      raw = res.ok ? (JSON.parse(res.text) as { version?: unknown }).version : undefined
-    } catch {
-      raw = undefined
-    }
-    if (typeof raw !== 'string') {
-      return { version: null, setup: { kind: 'not-forgejo', reason: 'other', detail: `HTTP ${res.status} for /api/v1/version` } }
-    }
-    const version = `${raw.includes('+gitea-') ? '' : 'Gitea '}${raw.replace(/\+.*$/, '')}`
+    const raw = known ?? (await askVersion())
+    if (typeof raw !== 'string') return { version: null, setup: raw }
+    const version = forgeName({ kind: 'forgejo', version: raw })
     if (!supported(raw)) return { version, setup: { kind: 'not-forgejo', reason: 'too-old', detail: version } }
     if (!token) return { version, setup: { kind: 'no-token' } }
 
@@ -111,6 +101,21 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     } catch (err) {
       return { version, setup: { kind: 'error', message: message(err) } }
     }
+  }
+
+  // Forgejo or Gitea answers /api/v1/version without a token: its raw
+  // version, or why there is none.
+  async function askVersion(): Promise<string | Setup> {
+    const res = await send(`${base}/version`, { method: 'GET', headers: { Accept: 'application/json' } })
+      .catch((err: unknown) => message(err))
+    if (typeof res === 'string') return { kind: 'not-forgejo', reason: 'no-answer', detail: res }
+    let raw: unknown
+    try {
+      raw = res.ok ? (JSON.parse(res.text) as { version?: unknown }).version : undefined
+    } catch {
+      raw = undefined
+    }
+    return typeof raw === 'string' ? raw : { kind: 'not-forgejo', reason: 'other', detail: `HTTP ${res.status} for /api/v1/version` }
   }
 
   // Whether fj may assign and close: the token's scopes, from the list of the

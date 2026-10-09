@@ -3,6 +3,7 @@ import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } fro
 
 import type { Detail, Epic, Epics, IssueDetail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
 import { bar, openChildren, pickerOptions, standing, summary, tally } from './epics'
+import { detect, forgeName, tokenFor, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { day, dueText, duration, readable, wrap } from './issue'
 import { epicGroups, loadRepo, whatsNext, type Memory } from './load'
@@ -16,7 +17,7 @@ const SCOPES = 'read:issue, read:repository and read:user'
 
 const repo = atom({ plugin: 'fj', key: 'repo' } as const, null)
 const version = atom({ plugin: 'fj', key: 'version' } as const, null)
-const token = atom({ plugin: 'fj', key: 'token' } as const, 'none')
+const token = atom({ plugin: 'fj', key: 'token' } as const, null)
 const setup = atom({ plugin: 'fj', key: 'setup' } as const, { kind: 'checking' })
 const overview = atom({ plugin: 'fj', key: 'overview' } as const, { kind: 'idle' })
 // Per pane, keyed by its id: each opens issues in a detail view of its own.
@@ -42,7 +43,8 @@ const send =
   }
 
 // The tracker behind repo `r`: Forgejo, the only one so far.
-const tracker = ($: EngineInterface, r: Repo): Tracker => forgejo(send($), r, configToken, configLabel)
+const tracker = ($: EngineInterface, r: Repo): Tracker =>
+  forgejo(send($), r, tokenFor(configTokens['Forgejo tokens'], r.host)?.value ?? null, configLabel)
 
 // Runs an action and records how many requests it sent, under `label`.
 async function counted<T>($: EngineInterface, label: string, action: () => Promise<T>): Promise<T> {
@@ -53,8 +55,8 @@ async function counted<T>($: EngineInterface, label: string, action: () => Promi
   return result
 }
 
-// The Token setting, read in `register`; a reload reads it again.
-let configToken: string | null = null
+// The token settings' text, read in `register`; a reload reads them again.
+const configTokens: Record<TokenSetting, string> = { 'Forgejo tokens': '', 'GitLab tokens': '' }
 // The Icons setting: ask, icons or text.
 let configIcons = 'ask'
 // The Compact setting: ask, on or off.
@@ -109,19 +111,20 @@ function parseRemote(url: string): Repo | null {
 
 const slug = (r: Repo) => `${r.owner}/${r.name}`
 
-// The token for a request: the Token setting, kept in secure storage. It is
-// the only source, so the token is the same in the terminal and the app.
-async function readToken(_$: EngineInterface): Promise<{ value: string | null; from: TokenSource }> {
-  return configToken ? { value: configToken, from: 'setting' } : { value: null, from: 'none' }
+// The token for `host` (null: no repo yet) from one token setting, kept in
+// secure storage. The settings are the only source, so the token is the
+// same in the terminal and the app.
+function readToken(setting: TokenSetting, host: string | null): { value: string | null; from: TokenSource } {
+  const t = tokenFor(configTokens[setting], host)
+  return t ? { value: t.value, from: { setting, host: t.host ? host : null } } : { value: null, from: null }
 }
 
 // Each step in turn, stopping at the first that fails: the repo behind
-// origin, then the tracker's own steps: a Forgejo (or Gitea) at its host, a
-// token, and the token reading the repo.
+// origin, the forge at its host, then the tracker's own steps: a token, and
+// the token reading the repo.
 async function check($: EngineInterface): Promise<Repo | null> {
   await update($, setup, (): Setup => ({ kind: 'checking' }))
-  const tok = await readToken($)
-  await update($, token, () => tok.from)
+  await update($, token, () => readToken('Forgejo tokens', null).from)
 
   const git = async (...args: string[]) => {
     const run = await $.process.run(['git', ...args]).catch(() => null)
@@ -144,7 +147,23 @@ async function check($: EngineInterface): Promise<Repo | null> {
     return null
   }
 
-  const c = await tracker($, r).check()
+  const forge = await detect(send($), r.host)
+  if (forge.kind === 'unknown') {
+    await update($, token, () => null)
+    await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: forge.reason, detail: forge.detail }))
+    return r
+  }
+  if (forge.kind !== 'forgejo') {
+    // No GitHub tokens setting yet.
+    const from = forge.kind === 'gitlab' ? readToken('GitLab tokens', r.host).from : null
+    await update($, token, () => from)
+    await update($, version, () => forgeName(forge))
+    await update($, setup, (): Setup => ({ kind: 'unsupported', forge: forge.kind }))
+    return r
+  }
+  const tok = readToken('Forgejo tokens', r.host)
+  await update($, token, () => tok.from)
+  const c = await forgejo(send($), r, tok.value, configLabel, forge.version).check()
   await update($, version, () => c.version)
   await update($, setup, () => c.setup)
   return r
@@ -403,15 +422,16 @@ function age(iso: string, now: number): string {
   return `${Math.floor(d / 365)}y`
 }
 
-type Step = 'repo' | 'forgejo' | 'token' | 'access' | 'actions'
-const STEPS: readonly Step[] = ['repo', 'forgejo', 'token', 'access', 'actions']
-const LABEL: Record<Step, string> = { repo: 'Repo', forgejo: 'Forgejo', token: 'Token', access: 'Access', actions: 'Actions' }
+type Step = 'repo' | 'forge' | 'token' | 'access' | 'actions'
+const STEPS: readonly Step[] = ['repo', 'forge', 'token', 'access', 'actions']
+const LABEL: Record<Step, string> = { repo: 'Repo', forge: 'Forge', token: 'Token', access: 'Access', actions: 'Actions' }
 
 // The step each outcome stopped at; `ready` is past them all.
 const STOPPED_AT: Record<Setup['kind'], number> = {
   checking: -1,
   'no-repo': 0,
   'not-forgejo': 1,
+  unsupported: 1,
   'no-token': 2,
   'token-refused': 3,
   'no-scope': 3,
@@ -420,8 +440,9 @@ const STOPPED_AT: Record<Setup['kind'], number> = {
   ready: 5,
 }
 
-// What the pane says about the step that failed, before what to do.
-function intro(s: Setup, r: Repo | null, tokenText: string): string | null {
+// What the pane says about the step that failed, before what to do. `v`:
+// the forge, as the Forge step names it.
+function intro(s: Setup, r: Repo | null, v: string | null, tokenText: string): string | null {
   const what = 'fj shows the issues of the repo this session runs in.'
   switch (s.kind) {
     case 'no-repo':
@@ -446,7 +467,11 @@ function intro(s: Setup, r: Repo | null, tokenText: string): string | null {
         ? `${host} did not answer (${s.detail}). Check that https://${host} opens from this computer.`
         : s.reason === 'too-old'
           ? `fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). ${host} runs ${s.detail}.`
-          : `${host} does not answer as Forgejo or Gitea (${s.detail}). fj works with Forgejo and Gitea only, so it has nothing to show for this repo.`
+          : `${host} does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (${s.detail}). fj has nothing to show for this repo.`
+    }
+    case 'unsupported': {
+      const which = s.forge === 'gitlab' ? 'GitLab' : 'GitHub'
+      return `${r?.host ?? 'This host'} runs ${v ?? which}. fj does not show ${which} repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.`
     }
     default:
       return null
@@ -458,7 +483,10 @@ function intro(s: Setup, r: Repo | null, tokenText: string): string | null {
 function todo(s: Setup, r: Repo | null, tokens: string | null): string[] {
   const page = tokens ?? 'Settings › Applications in Forgejo'
   const create = `Create a token at ${page} with ${SCOPES}.`
-  const set = [`Run \`${CONFIGURE}\` and paste it as Token.`]
+  const host = r?.host ?? 'your-forgejo'
+  const set = [
+    `Run \`${CONFIGURE}\` and paste it as Forgejo tokens, alone or as \`${host}=<token>\` next to tokens for other hosts.`,
+  ]
   switch (s.kind) {
     case 'no-repo': {
       const remote = 'https://your-forgejo/owner/repo.git'
@@ -471,6 +499,7 @@ function todo(s: Setup, r: Repo | null, tokens: string | null): string[] {
       ]
     }
     case 'not-forgejo':
+    case 'unsupported':
       return []
     case 'no-token':
       return [create, ...set]
@@ -479,7 +508,7 @@ function todo(s: Setup, r: Repo | null, tokens: string | null): string[] {
       return [create, ...set]
     case 'not-found':
       return [
-        `If origin points to the wrong repo: \`git remote set-url origin https://${r?.host ?? 'your-forgejo'}/owner/repo.git\`.`,
+        `If origin points to the wrong repo: \`git remote set-url origin https://${host}/owner/repo.git\`.`,
         'If the repo is private, create the token as a user who can see it.',
         ...set,
       ]
@@ -520,7 +549,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const inEpics = e.requestId === EPICS_PANE
   const r = await read($, repo)
   const v = await read($, version)
-  const from = await read($, token)
+  // Older code kept a word here: that counts as none found.
+  const held = await read($, token)
+  const from = held && typeof held === 'object' ? held : null
   const s = await read($, setup)
   const m = await read($, overview)
   // The pane's full height, so the last rows sit at its bottom.
@@ -572,23 +603,24 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
   }
 
-  const tokenText =
-    from === 'setting' ? 'from the Token setting' : 'none found'
+  const tokenText = from ? `${from.host ? `for ${from.host} ` : ''}from ${from.setting}` : 'none found'
   const doneText: Record<Step, string> = {
     repo: r ? slug(r) : '',
-    forgejo: v && r ? `${v} at ${r.host}` : '',
+    forge: v && r ? `${v} at ${r.host}` : '',
     token: tokenText,
     access: s.kind === 'ready' ? `${s.openIssues} open issues, as ${s.login}` : '',
     actions: 'assign and close',
   }
   const failText: Record<Step, string> = {
     repo: 'no Forgejo repo here',
-    forgejo:
+    forge:
       s.kind === 'not-forgejo' && s.reason === 'no-answer'
         ? `no answer from ${r?.host ?? 'this host'}`
         : s.kind === 'not-forgejo' && s.reason === 'too-old'
           ? `${s.detail}, too old`
-          : `not found at ${r?.host ?? 'this host'}`,
+          : s.kind === 'unsupported'
+            ? `${v} at ${r?.host ?? 'this host'}, not supported`
+            : `no known forge at ${r?.host ?? 'this host'}`,
     token: 'none found',
     actions: '',
     access:
@@ -601,17 +633,22 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             : 'no answer',
   }
   const at = STOPPED_AT[s.kind]
-  // Without a repo the token is still checked: it needs none. The steps
-  // that do say so.
+  // Without a repo, on a Forgejo too old, or on GitLab, the token is still
+  // checked: it needs no answer from the forge. The steps that do say so;
+  // the token too, where fj has no setting for the forge or knows none.
   const noRepo = s.kind === 'no-repo'
-  const noForge = s.kind === 'not-forgejo'
+  const noForge = s.kind === 'not-forgejo' || s.kind === 'unsupported'
+  const tokenChecked =
+    noRepo || (s.kind === 'not-forgejo' && s.reason === 'too-old') || (s.kind === 'unsupported' && s.forge === 'gitlab')
   const steps = STEPS.map((step, i) => {
     const mark =
       s.kind === 'checking'
         ? '…'
-        : (noRepo || noForge) && step === 'token'
-          ? from === 'none' ? '✗' : '✓'
-          : i < at ? '✓' : i === at ? '✗' : '·'
+        : noForge && !tokenChecked && step === 'token'
+          ? '·'
+          : tokenChecked && step === 'token'
+            ? from ? '✓' : '✗'
+            : i < at ? '✓' : i === at ? '✗' : '·'
     const color = mark === '✓' ? 'success' : mark === '✗' ? 'error' : 'inactive'
     const text =
       mark === '✓'
@@ -638,7 +675,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
   const body: RenderChildren[] = []
   if (s.kind !== 'ready' && s.kind !== 'checking') {
-    const about = intro(s, r, tokenText)
+    const about = intro(s, r, v, tokenText)
     if (about) body.push(para('intro', about), <Box key="gap-intro" height={1} />)
     const actions = todo(s, r, r ? tracker($, r).tokensUrl : null)
     if (actions.length > 0) body.push(line('todo', 'What to do', { bold: true }))
@@ -1385,7 +1422,8 @@ async function runFj($: EngineInterface, word: string) {
 }
 
 export const register: Register = (on, options) => {
-  configToken = String(options.token ?? '').trim() || null
+  configTokens['Forgejo tokens'] = String(options.token ?? '').trim()
+  configTokens['GitLab tokens'] = String(options.gitlabTokens ?? '').trim()
   configIcons = String(options.icons ?? 'ask')
   configCompact = String(options.compact ?? 'ask')
   configLabel = String(options.label ?? 'epic').trim() || 'epic'
