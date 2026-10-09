@@ -1,6 +1,6 @@
 {
   "name": "fj",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
   "author": {
     "name": "Erwin Gribnau"
@@ -13,6 +13,17 @@
       "description": "A Forgejo access token, kept in secure storage. Needs read:issue and read:repository.",
       "default": "",
       "sensitive": true
+    },
+    "icons": {
+      "type": "string",
+      "title": "Icons",
+      "description": "Buttons as Nerd Font icons, which needs a Nerd Font in the terminal, or as words. ask: fj asks once, after setup.",
+      "default": "ask",
+      "options": [
+        "ask",
+        "icons",
+        "text"
+      ]
     }
   }
 }

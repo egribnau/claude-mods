@@ -22,7 +22,7 @@ const RUN = {
   presentation: { isFullscreen: true, columns: 170 },
 } as const
 
-const TOKEN = { options: { token: 'secret' } }
+const TOKEN = { options: { token: 'secret', icons: 'text' } }
 const NOW = Date.parse('2026-10-09T12:00:00Z')
 
 function issue(number: number, repo: string, created: string, extra: { milestone?: string; labels?: string[] } = {}) {

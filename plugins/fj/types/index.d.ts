@@ -88,6 +88,8 @@ declare module 'claude-code' {
       // The issue open in the detail view, by number; null shows the list.
       picked: number | null
       detail: Detail
+      // Icons chosen in this session, before a reload brings the setting.
+      icons: 'icons' | 'text' | null
     }
   }
 }

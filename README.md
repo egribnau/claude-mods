@@ -32,8 +32,9 @@ plugins/fj/                          a mod: a hooks module, no skills
 | --- | --- | --- |
 | `fj` | `/fj` opens a docked pane on the Forgejo repo behind the current directory's `origin`. Until setup is complete, the pane guides it step by step: the repo, Forgejo at its host, a token, and the token reading the repo. Then it lists your open issues in the repo, oldest first; selecting one shows its detail (labels, due date, branch, tracked time, what blocks it and what it blocks, pull requests and commits that refer to it, its description and last comment) with Work on this, which drafts a prompt from the issue, and Open in browser. The prototype is tagged `fj-prototype`. | a Forgejo access token; Forgejo or Gitea |
 
-`fj` has one setting, **Token**: a Forgejo access token, kept in secure storage. `/config` does not
-list it: set it with `/plugin configure fj@egribnau-mods`. The token needs `read:issue` and
+`fj` has two settings. **Icons** (`ask`, `icons` or `text`, in `/config` under fj): buttons as Nerd Font
+icons or as words; with `ask`, fj asks once, right after setup. **Token**: a Forgejo access token, kept
+in secure storage. `/config` does not list it: set it with `/plugin configure fj@egribnau-mods`. The token needs `read:issue` and
 `read:repository`. fj reads no environment variables.
 
 `fj` is for the terminal. A Code session in the Claude desktop app loads it but gets none of its

@@ -15,9 +15,26 @@ const setup = atom({ plugin: 'fj', key: 'setup' } as const, { kind: 'checking' }
 const mine = atom({ plugin: 'fj', key: 'mine' } as const, { kind: 'idle' })
 const picked = atom({ plugin: 'fj', key: 'picked' } as const, null)
 const detail = atom({ plugin: 'fj', key: 'detail' } as const, { kind: 'idle' })
+const iconsChosen = atom({ plugin: 'fj', key: 'icons' } as const, null)
 
 // The Token setting, read in `register`; a reload reads it again.
 let configToken: string | null = null
+// The Icons setting: ask, icons or text.
+let configIcons = 'ask'
+
+// Nerd Font icons for the buttons (Material Design set).
+const ICON = { refresh: '\u{F0450}', work: '\u{F0674}', open: '\u{F03CC}', back: '\u{F004D}' } as const
+
+// Saves the Icons choice: in /config where the session offers it, and in the
+// session's state so it shows at once.
+async function chooseIcons($: EngineInterface, value: 'icons' | 'text') {
+  await update($, iconsChosen, () => value)
+  const rows = await $.config.list()
+  const row = rows.find(r => /^fj(@[^.]*)?\.icons$/.test(r.key))
+  if (!row) return
+  const done = await $.config.set({ key: row.key, value })
+  if (done.deny !== undefined) $.ui.toast(`Icons not saved: ${done.deny}`)
+}
 
 // The host, owner and repo a git remote URL names, in any of the forms git
 // takes: ssh://git@host:2222/o/r.git, git@host:o/r.git, https://host/o/r.
@@ -356,6 +373,7 @@ function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
 
 export const register: Register = (on, options) => {
   configToken = String(options.token ?? '').trim() || null
+  configIcons = String(options.icons ?? 'ask')
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'fj', description: 'Open the Forgejo pane for this repo' })
@@ -383,6 +401,9 @@ export const register: Register = (on, options) => {
     const m = await read($, mine)
     // The pane's full height, so the last rows sit at its bottom.
     const height = e.props.scroll.bodyRows
+    const icons = (await read($, iconsChosen)) ?? configIcons
+    // A button's label: its icon when icons are on, else its words.
+    const say = (icon: string, words: string) => (icons === 'icons' ? icon : words)
     const columns = e.props.bodyColumns
 
     const line = (key: string, text: string, props: Record<string, unknown> = {}) => (
@@ -479,9 +500,58 @@ export const register: Register = (on, options) => {
           {text}
         </Text>
         <Box flexGrow={1} />
-        {action && <Button key="refresh" label={action.label} hotkey="r" onPress={() => refresh($)} />}
+        {action && <Button key="refresh" label={say(ICON.refresh, action.label)} hotkey="r" onPress={() => refresh($)} />}
       </Box>
     )
+
+    // Setup passed and Icons is still ask: the one-time choice, before the list.
+    if (s.kind === 'ready' && r && icons === 'ask') {
+      const glyphs = [
+        { icon: ICON.refresh, name: 'refresh' },
+        { icon: ICON.work, name: 'work on' },
+        { icon: ICON.open, name: 'browser' },
+        { icon: ICON.back, name: 'back' },
+      ]
+      return (
+        <Box flexDirection="column" height={height}>
+          <Box key="choice" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+            {heading('Forgejo for Claude is ready!')}
+            {steps}
+            <Box key="gap" height={1} />
+            {line('ask', 'One choice: icons on buttons', { bold: true })}
+            {para(
+              'why',
+              'fj can show its buttons as Nerd Font icons, which keeps them narrow. Look at the four below: do they show as icons, or as boxes or question marks?',
+            )}
+            <Box key="gap-glyphs" height={1} />
+            <Box key="glyphs" height={1}>
+              {glyphs.map(g => (
+                <Box key={`g-${g.name}`} width={Math.max(10, Math.floor(columns / 4))}>
+                  <Text>{`  ${g.icon}`}</Text>
+                </Box>
+              ))}
+            </Box>
+            <Box key="names" height={1}>
+              {glyphs.map(g => (
+                <Box key={`n-${g.name}`} width={Math.max(10, Math.floor(columns / 4))}>
+                  <Text dimColor>{g.name}</Text>
+                </Box>
+              ))}
+            </Box>
+            <Box key="gap-look" height={1} />
+            {line('look', 'Buttons would look like this:', { dimColor: true })}
+            <Text key="sample">{glyphs.map(g => `[ ${g.icon} ]`).join('  ')}</Text>
+            <Box key="choose" height={1} marginTop={1}>
+              <Button key="use-icons" label="Use icons" onPress={() => chooseIcons($, 'icons')} />
+              <Text>{'  '}</Text>
+              <Button key="keep-text" label="Keep text" onPress={() => chooseIcons($, 'text')} />
+            </Box>
+            <Box key="gap-later" height={1} />
+            {para('later', 'Asked once. Change it later in /config, under fj: Icons.', { dimColor: true })}
+          </Box>
+        </Box>
+      )
+    }
 
     // An issue open: its detail in place of the list.
     const open = await read($, picked)
@@ -491,9 +561,9 @@ export const register: Register = (on, options) => {
       const rule = (key: string, name: string) => line(key, `── ${name} `.padEnd(columns, '─'), { dimColor: true })
       const top = (
         <Box key="title" height={1} flexShrink={0}>
-          <Button key="back" label="← My issues" hotkey="b" onPress={() => openIssue($, null)} />
+          <Button key="back" label={say(ICON.back, '← My issues')} hotkey="b" onPress={() => openIssue($, null)} />
           <Box flexGrow={1} />
-          <Button key="refresh" label="Refresh" hotkey="r" onPress={() => refresh($)} />
+          <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => refresh($)} />
         </Box>
       )
       const body: RenderChildren[] = []
@@ -605,9 +675,9 @@ export const register: Register = (on, options) => {
         }
         body.push(
           <Box key="actions" height={1} flexShrink={0} marginTop={1}>
-            <Button key="work" label="Work on this" hotkey="w" onPress={() => workOn($, i)} />
+            <Button key="work" label={say(ICON.work, 'Work on this')} hotkey="w" onPress={() => workOn($, i)} />
             <Text>{'  '}</Text>
-            <Button key="open" label="Open in browser" hotkey="o" onPress={() => openUrl($, i.url)} />
+            <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, i.url)} />
           </Box>,
         )
         body.push(<Box key="gap-desc" height={1} flexShrink={0} />, rule('desc', 'Description'))
