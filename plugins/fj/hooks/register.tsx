@@ -434,7 +434,7 @@ export const register: Register = (on, options) => {
                 </Text>
               </Box>
               {isPicked && (
-                <Box key="actions" height={1} marginTop={1} paddingLeft={numWidth}>
+                <Box key="actions" height={1} paddingLeft={numWidth}>
                   <Button key="open" label="Open in browser" hotkey="o" onPress={() => openUrl($, i.url)} />
                 </Box>
               )}
