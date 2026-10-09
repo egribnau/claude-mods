@@ -139,7 +139,6 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     expect(all).toEqual([
       'Set up Forgejo for Claude',
-      'ctrl+x tab to use',
       '✗ Repo    no Forgejo repo here',
       '· Forgejo needs a repo',
       '✓ Token   from the Token setting',

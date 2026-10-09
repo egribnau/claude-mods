@@ -362,19 +362,14 @@ export const register: Register = (on, options) => {
       )
     }
 
-    // A heading with, on its right, how to reach the pane's keys: the key
-    // itself while the pane has the keyboard, else how to give it the keyboard.
-    const focused = e.props.isFocused
+    // A heading with, on its right, the pane's own action when it has one.
     const heading = (text: string, action?: { label: string }) => (
       <Box key="title" height={1} flexShrink={0}>
         <Text bold wrap="truncate-end">
           {text}
         </Text>
         <Box flexGrow={1} />
-        {!focused && <Text dimColor>ctrl+x tab to use</Text>}
-        {focused && action && (
-          <Button key="refresh" label={action.label} hotkey="r" onPress={() => refresh($)} />
-        )}
+        {action && <Button key="refresh" label={action.label} hotkey="r" onPress={() => refresh($)} />}
       </Box>
     )
 
