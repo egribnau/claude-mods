@@ -1,6 +1,6 @@
 {
   "name": "fj",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
   "author": {
     "name": "Erwin Gribnau"

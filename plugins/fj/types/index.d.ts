@@ -8,7 +8,9 @@ export type TokenSource = 'setting' | 'none'
 // failed, which the pane explains. Steps: repo, Forgejo, token, access.
 export type Setup =
   | { kind: 'checking' }
-  | { kind: 'no-repo'; detail: string }
+  // `dir`: where the session runs, `~` for the home folder. `origin`: the
+  // remote's URL when it names no host fj can read.
+  | { kind: 'no-repo'; reason: 'not-git' | 'no-origin' | 'bad-origin'; dir: string; origin?: string }
   | { kind: 'not-forgejo'; detail: string }
   | { kind: 'no-token' }
   | { kind: 'token-refused' }

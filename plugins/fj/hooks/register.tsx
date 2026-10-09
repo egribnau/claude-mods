@@ -46,14 +46,24 @@ async function check($: EngineInterface): Promise<Repo | null> {
   const tok = await readToken($)
   await update($, token, () => tok.from)
 
-  const run = await $.process.run(['git', 'remote', 'get-url', 'origin']).catch(() => null)
-  const url = run?.exitCode === 0 ? run.stdout.trim() : null
+  const git = async (...args: string[]) => {
+    const run = await $.process.run(['git', ...args]).catch(() => null)
+    return run?.exitCode === 0 ? run.stdout.trim() : null
+  }
+  const url = await git('remote', 'get-url', 'origin')
   const r = url ? parseRemote(url) : null
   await update($, repo, () => r)
   await update($, version, () => null)
   if (!r) {
-    const detail = url ? `cannot read a repo from ${url}` : 'no git remote "origin" here'
-    await update($, setup, (): Setup => ({ kind: 'no-repo', detail }))
+    const inRepo = url !== null || (await git('rev-parse', '--is-inside-work-tree')) === 'true'
+    const pwd = await $.process.run(['pwd']).catch(() => null)
+    const dir = (pwd?.exitCode === 0 ? pwd.stdout.trim() : 'this folder').replace(/^\/(?:Users|home)\/[^/]+/, '~')
+    const next: Setup = !inRepo
+      ? { kind: 'no-repo', reason: 'not-git', dir }
+      : url === null
+        ? { kind: 'no-repo', reason: 'no-origin', dir }
+        : { kind: 'no-repo', reason: 'bad-origin', dir, origin: url }
+    await update($, setup, () => next)
     return null
   }
 
@@ -110,19 +120,33 @@ const STOPPED_AT: Record<Setup['kind'], number> = {
   ready: 4,
 }
 
+// What the pane says about the step that failed, before what to do.
+function intro(s: Setup): string | null {
+  if (s.kind !== 'no-repo') return null
+  const what = 'fj shows the issues of the repo this session runs in.'
+  return s.reason === 'not-git'
+    ? `${what} ${s.dir} is not a git repo, so there is nothing to show here.`
+    : s.reason === 'no-origin'
+      ? `${what} This repo has no remote origin.`
+      : `${what} origin is ${s.origin}, which names no host.`
+}
+
 // What to do about the step that failed, one line per action.
 function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
   const page = r ? `https://${r.host}/user/settings/applications` : 'Settings › Applications in Forgejo'
   const create = `Create a token at ${page} with ${SCOPES}.`
   const set = [`Run ${CONFIGURE} and paste it as Token.`]
   switch (s.kind) {
-    case 'no-repo':
+    case 'no-repo': {
+      const remote = 'https://your-forgejo/owner/repo.git'
       return [
-        s.detail.startsWith('no git')
-          ? 'fj found no git remote "origin" in this directory.'
-          : `fj could not read a repo from origin: ${s.detail.replace(/^cannot read a repo from /, '')}.`,
-        'Start claude in a clone of a repo hosted on Forgejo or Gitea.',
+        s.reason === 'not-git'
+          ? `If this folder belongs on Forgejo: git init and git remote add origin ${remote}, then press r.`
+          : s.reason === 'no-origin'
+            ? `If this repo is on Forgejo: git remote add origin ${remote}, then press r.`
+            : `If this repo is on Forgejo: git remote set-url origin ${remote}, then press r.`,
       ]
+    }
     case 'not-forgejo':
       return [
         `${r?.host ?? 'This host'} does not answer as Forgejo or Gitea (${s.detail}).`,
@@ -189,16 +213,25 @@ export const register: Register = (on, options) => {
       access: s.kind === 'ready' ? `${s.openIssues} open issues` : '',
     }
     const failText: Record<Step, string> = {
-      repo: 'not found',
+      repo: 'no Forgejo repo here',
       forgejo: `not at ${r?.host ?? 'this host'}`,
       token: 'none found',
       access: 'refused',
     }
     const at = STOPPED_AT[s.kind]
+    // Without a repo the token is still checked: it needs none. The steps
+    // that do say so.
+    const noRepo = s.kind === 'no-repo'
     const steps = STEPS.map((step, i) => {
-      const mark = s.kind === 'checking' ? '…' : i < at ? '✓' : i === at ? '✗' : '·'
+      const mark =
+        s.kind === 'checking'
+          ? '…'
+          : noRepo && step === 'token'
+            ? from === 'none' ? '✗' : '✓'
+            : i < at ? '✓' : i === at ? '✗' : '·'
       const color = mark === '✓' ? 'success' : mark === '✗' ? 'error' : 'inactive'
-      const text = mark === '✓' ? doneText[step] : mark === '✗' ? failText[step] : ''
+      const text =
+        mark === '✓' ? doneText[step] : mark === '✗' ? failText[step] : noRepo ? 'needs a repo' : ''
       return line(`step-${step}`, `${mark} ${LABEL[step].padEnd(8)}${text}`, { color })
     })
 
@@ -206,10 +239,13 @@ export const register: Register = (on, options) => {
     if (s.kind === 'ready') {
       body.push(line('ready', 'Ready.', { color: 'success', bold: true }))
     } else if (s.kind !== 'checking') {
+      const about = intro(s)
+      if (about) body.push(para('intro', about), <Box key="gap-intro" height={1} />)
       const actions = todo(s, r, tokenText)
       body.push(line('todo', 'What to do', { bold: true }))
       actions.forEach((t, i) => body.push(para(`todo-${i}`, `${i + 1}. ${t}`)))
-      body.push(para('again', `${actions.length + 1}. Press r to check again.`, { dimColor: true }))
+      // The no-repo action ends in pressing r itself.
+      if (!noRepo) body.push(para('again', `${actions.length + 1}. Press r to check again.`, { dimColor: true }))
     }
 
     return (

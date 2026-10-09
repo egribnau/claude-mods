@@ -27,6 +27,9 @@ const RUN = {
 
 type World = {
   remote?: string | null
+  // false: the session runs outside any git repo.
+  inGit?: boolean
+  pwd?: string
   // What /api/v1/version answers: a status, or 'down' for no answer at all.
   forge?: number | 'down'
   // What /repos/<o>/<r> answers.
@@ -37,17 +40,24 @@ type World = {
 }
 
 function world(on: On, w: World) {
-  on('process.run', () => {
+  on('process.run', (_$, e) => {
     const remote = w.remote === undefined ? 'ssh://git@git.example.org:2222/boats/radar.git' : w.remote
-    return {
-      value: {
-        exitCode: remote === null ? 2 : 0,
-        stdout: remote === null ? '' : `${remote}\n`,
-        stderr: remote === null ? "error: No such remote 'origin'" : '',
-        isStdoutTruncated: false,
-        isStderrTruncated: false,
-      },
-    }
+    const ok = (stdout: string) => ({ exitCode: 0, stdout: `${stdout}\n`, stderr: '' })
+    const fail = (stderr: string) => ({ exitCode: 128, stdout: '', stderr })
+    const cmd = e.argv.join(' ')
+    const out =
+      cmd === 'pwd'
+        ? ok(w.pwd ?? '/Users/jdoe/Documents/notes')
+        : w.inGit === false
+          ? fail('fatal: not a git repository (or any of the parent directories): .git')
+          : cmd === 'git rev-parse --is-inside-work-tree'
+            ? ok('true')
+            : cmd === 'git remote get-url origin'
+              ? remote === null
+                ? fail("error: No such remote 'origin'")
+                : ok(remote)
+              : fail(`unexpected: ${cmd}`)
+    return { value: { ...out, isStdoutTruncated: false, isStderrTruncated: false } }
   })
   // A FORGEJO_TOKEN in the environment, which fj must not read.
   on('env.get', (_$, e) => {
@@ -106,31 +116,64 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('no origin: says to start claude in a clone, and asks nothing', async ($, on) => {
-  const asked: World['asked'] = []
-  world(on, { remote: null, asked })
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`not a git repo: names the folder and asks nothing on ${surface}`, TOKEN, async ($, on) => {
+    const asked: World['asked'] = []
+    const opened: World['opened'] = []
+    world(on, { inGit: false, asked, opened })
 
-  const out = await $.command.run(RUN)
+    const out = await $.command.run(RUN)
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const all = await texts(ui)
+
+    expect(all).toEqual([
+      'Set up Forgejo for Claude',
+      '✗ Repo    no Forgejo repo here',
+      '· Forgejo needs a repo',
+      '✓ Token   from the Token setting',
+      '· Access  needs a repo',
+      'fj shows the issues of the repo this session runs in. ~/Documents/notes is not a git repo, so there is nothing to show here.',
+      'What to do',
+      '1. If this folder belongs on Forgejo: git init and git remote add origin https://your-forgejo/owner/repo.git, then press r.',
+    ])
+    await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
+    expect(asked).toEqual([])
+    expect(opened.map(o => o.title)).toEqual(['fj'])
+    expect(out).toEqual(expect.objectContaining({ text: 'fj needs setting up: see its pane.' }))
+  })
+}
+
+test('not a git repo, and no token: the token step says so too', async ($, on) => {
+  world(on, { inGit: false, pwd: '/home/jdoe/scratch' })
+
+  await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('Set up Forgejo for Claude')
-  expect(all).toContain('✗ Repo    not found')
-  expect(all).toContain('· Forgejo ')
-  expect(all).toContain('1. fj found no git remote "origin" in this directory.')
-  expect(all).toContain('2. Start claude in a clone of a repo hosted on Forgejo or Gitea.')
-  expect(all).toContain('3. Press r to check again.')
-  expect(asked).toEqual([])
-  expect(out).toEqual(expect.objectContaining({ text: 'fj needs setting up: see its pane.' }))
+  expect(all).toContain('✗ Token   none found')
+  expect(all.some(t => t.includes('~/scratch is not a git repo'))).toBe(true)
 })
 
-test('an origin that names no repo is quoted', async ($, on) => {
+test('a repo without origin', TOKEN, async ($, on) => {
+  world(on, { remote: null })
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('fj shows the issues of the repo this session runs in. This repo has no remote origin.')
+  expect(all).toContain('1. If this repo is on Forgejo: git remote add origin https://your-forgejo/owner/repo.git, then press r.')
+})
+
+test('an origin that names no host is quoted', TOKEN, async ($, on) => {
   world(on, { remote: '/srv/git/radar' })
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
 
-  expect(await texts(ui)).toContain('1. fj could not read a repo from origin: /srv/git/radar.')
+  expect(all).toContain('fj shows the issues of the repo this session runs in. origin is /srv/git/radar, which names no host.')
+  expect(all).toContain('1. If this repo is on Forgejo: git remote set-url origin https://your-forgejo/owner/repo.git, then press r.')
 })
 
 test('a host that is not Forgejo is named', TOKEN, async ($, on) => {
