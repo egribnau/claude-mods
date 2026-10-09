@@ -1,0 +1,36 @@
+{
+  "name": "fj",
+  "version": "0.11.0",
+  "description": "Forgejo in a pane: the oldest issue assigned to you and the epics of a milestone, for the repo behind the current directory's origin",
+  "author": {
+    "name": "Erwin Gribnau"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "label": {
+      "type": "string",
+      "title": "Epic label",
+      "description": "The label that marks an issue as an epic.",
+      "default": "epic"
+    },
+    "childrenHeading": {
+      "type": "string",
+      "title": "Children heading",
+      "description": "The ## heading in an epic's body under which its child issues are listed as a checklist.",
+      "default": "Children"
+    },
+    "login": {
+      "type": "string",
+      "title": "Login",
+      "description": "Your Forgejo login, for Assign to me. Empty asks Forgejo, which needs FORGEJO_TOKEN to have the read:user scope.",
+      "default": ""
+    },
+    "token": {
+      "type": "string",
+      "title": "Token",
+      "description": "A Forgejo access token, kept in secure storage. Empty uses FORGEJO_TOKEN from the environment. Needs read:issue; write:issue for Assign to me.",
+      "default": "",
+      "sensitive": true
+    }
+  }
+}

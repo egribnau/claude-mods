@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "egribnau-mods",
+  "description": "Personal Claude Code mods",
+  "owner": {
+    "name": "Erwin Gribnau"
+  },
+  "plugins": [
+    {
+      "name": "fj",
+      "description": "Forgejo in a pane: the oldest issue assigned to you, a milestone's epics and their children, and the selected issue's detail",
+      "source": "./plugins/fj",
+      "category": "productivity"
+    }
+  ]
+}
