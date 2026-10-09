@@ -1,13 +1,15 @@
-import type { Actions, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
+import type { Actions, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName } from './forge'
 import { message, type Checked, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // GitLab behind the tracker the pane asks: every GitLab URL lives here.
 // `token` is from the GitLab tokens setting, null when it has none for the
-// host; `known`: the version detection found, null when it would not say.
-// No blockers or epics yet.
-export function gitlab(send: Send, r: Repo, token: string | null, known: string | null): Tracker {
+// host; `known`: the version detection found, null when it would not say;
+// `label` is the Epic label setting.
+// An epic is an issue with the Epic label; its children are the issues it
+// links as related. Blocking links exist only on GitLab EE.
+export function gitlab(send: Send, r: Repo, token: string | null, known: string | null, label = 'epic'): Tracker {
   const slug = `${r.owner}/${r.name}`
   const base = `https://${r.host}/api/v4`
   // The owner may be a group path with slashes: GitLab takes the whole path
@@ -16,6 +18,11 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
   const headers = { 'PRIVATE-TOKEN': token ?? '', Accept: 'application/json' }
   const get = (url: string) => send(url, { method: 'GET', headers })
   const ids = idsAt(r.host)
+  // A linked issue's web_url starts with this when it is in this project:
+  // links may reach into other projects, which fj leaves out.
+  const here = `https://${r.host}/${slug}/-/issues/`
+  const epicLabel = label.toLowerCase()
+  const isEpic = (names: string[]) => names.some(l => l.toLowerCase() === epicLabel)
 
   // One request's JSON, or null when it failed.
   async function fetchJson<T>(url: string): Promise<T | null> {
@@ -59,7 +66,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
   }
 
   // The people an issue names carry their ids: kept for assigning later.
-  function remember(i: RawIssue) {
+  function remember(i: Pick<RawIssue, 'author' | 'assignees'>) {
     for (const u of [i.author, ...(i.assignees ?? [])]) if (u?.id !== undefined) ids.set(u.username, u.id)
   }
 
@@ -69,7 +76,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
   async function fetchAll<T>(url: string, what: string): Promise<T[]> {
     const found: T[] = []
     for (let page = 1; ; page++) {
-      const res = await get(`${url}&per_page=100&page=${page}`)
+      const res = await get(`${url}${url.includes('?') ? '&' : '?'}per_page=100&page=${page}`)
       if (!res.ok) throw new Error(`${what}: HTTP ${res.status}`)
       const batch = JSON.parse(res.text) as T[]
       found.push(...batch)
@@ -77,6 +84,32 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       if (next !== undefined ? next.trim() === '' : batch.length < 100) break
     }
     return found
+  }
+
+  // The issues linked to issue `n` that are in this project, of one kind;
+  // null when GitLab would not say. Their people's ids are kept.
+  async function links(n: number, kind: RawLink['link_type']): Promise<RawLink[] | null> {
+    const raw = await fetchJson<RawLink[]>(`${project}/issues/${n}/links`)
+    if (!Array.isArray(raw)) return null
+    raw.forEach(remember)
+    return raw.filter(l => l.link_type === kind && l.web_url.startsWith(here))
+  }
+
+  // The project's labels by name, with their colour as `rrggbb`, read once
+  // per project for the run: links name labels without colours.
+  function colours(): Promise<Map<string, string>> {
+    const seen = coloursByProject.get(project)
+    if (seen) return seen
+    // A refused list is asked again next time; until then labels have no colour.
+    const asked = fetchAll<{ name: string; color?: string }>(`${project}/labels`, 'labels').then(
+      all => new Map(all.map(l => [l.name, (l.color ?? '').replace(/^#/, '')])),
+      () => {
+        coloursByProject.delete(project)
+        return new Map<string, string>()
+      },
+    )
+    coloursByProject.set(project, asked)
+    return asked
   }
 
   // Each step in turn, stopping at the first that fails: a token, its
@@ -108,7 +141,9 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       const login = me.username
       if (me.id !== undefined) ids.set(login, me.id)
 
-      const res = await get(project)
+      // GitLab EE says so in its metadata: only there can issues block
+      // others (on a paid tier). Community Edition, or no answer, has none.
+      const [res, meta] = await Promise.all([get(project), fetchJson<{ enterprise?: boolean }>(`${base}/metadata`)])
       if (res.status === 401) return done({ kind: 'token-refused' })
       if (res.status === 403) return done({ kind: 'no-scope' })
       if (res.status === 404) return done({ kind: 'not-found' })
@@ -125,13 +160,15 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
             : write === null
               ? { kind: 'unknown' }
               : { kind: 'ok' }
+      const deps = meta?.enterprise === true
+      depsByProject.set(project, deps)
       return done({
         kind: 'ready',
         openIssues: repo.open_issues_count ?? 0,
         login,
         actions,
         // GitLab always tracks time.
-        features: { time: true, deps: false, epics: false },
+        features: { time: true, deps, epics: true },
       })
     } catch (err) {
       return done({ kind: 'error', message: message(err) })
@@ -148,7 +185,14 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
 
     async milestones(): Promise<MilestoneRow[]> {
       const raw = await fetchAll<RawMilestone>(`${project}/milestones?state=active&include_ancestors=true`, 'milestones').catch(() => [])
-      return raw.map(m => ({ title: m.title, due: m.due_date ?? null, closed: 0, total: 0 }))
+      // How many of each one's issues are closed, of all: 0 of 0 when GitLab would not say.
+      return Promise.all(
+        raw.map(async m => {
+          const s = await fetchJson<RawStatistics>(`${project}/issues_statistics?milestone=${encodeURIComponent(m.title)}`)
+          const counts = s?.statistics?.counts
+          return { title: m.title, due: m.due_date ?? null, closed: counts?.closed ?? 0, total: counts?.all ?? 0 }
+        }),
+      )
     },
 
     async mine(): Promise<IssueRow[]> {
@@ -163,20 +207,70 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       return found.map(i => ({ ...toRow(i), assignees: (i.assignees ?? []).map(a => a.username) }))
     },
 
-    epics: async (): Promise<EpicRow[]> => [],
-    blockers: async () => null,
-    children: async () => null,
+    // GitLab matches labels without regard to case; so does fj.
+    async epics(): Promise<EpicRow[]> {
+      const found = await fetchAll<RawIssue>(
+        `${project}/issues?state=all&labels=${encodeURIComponent(label)}&with_labels_details=true`,
+        'epics',
+      )
+      found.forEach(remember)
+      return found
+        .filter(i => isEpic(labels(i).map(l => l.name)))
+        .map(i => ({ number: i.iid, title: i.title, state: i.state === 'opened' ? 'open' : 'closed', milestone: i.milestone?.title ?? null }))
+    },
 
-    // The issue, its latest notes and the merge requests that mention it,
-    // read in one go. Only the issue itself must answer; each other part is
-    // left out when it fails.
-    async issue(n: number): Promise<IssueDetail> {
+    async blockers(n: number): Promise<number[] | null> {
+      const raw = await links(n, 'is_blocked_by')
+      return raw ? raw.filter(l => l.state === 'opened').map(l => l.iid) : null
+    },
+
+    // An epic's children are the issues it links as related, other epics
+    // left out: those are its peers.
+    async children(n: number, me: string | null): Promise<EpicChild[] | null> {
+      const raw = await links(n, 'relates_to')
+      if (!raw) return null
+      const kids = raw.filter(l => !isEpic(names(l)))
+      const colour = kids.some(c => names(c).length > 0) ? await colours() : new Map<string, string>()
+      const deps = depsByProject.get(project) ?? false
+      return Promise.all(
+        kids.map(async (c): Promise<EpicChild> => {
+          const assignees = (c.assignees ?? []).map(a => a.username)
+          const open = c.state === 'opened'
+          const mine = me !== null && assignees.includes(me)
+          // Only an open child that is not yours is checked for what blocks
+          // it, and only where issues can block others.
+          const blockedBy =
+            deps && open && !mine ? ((await links(c.iid, 'is_blocked_by')) ?? []).filter(b => b.state === 'opened').map(b => b.iid) : []
+          return {
+            number: c.iid,
+            title: c.title,
+            state: open ? 'open' : 'closed',
+            assignees,
+            mine,
+            blocked: blockedBy.length > 0,
+            labels: names(c).map(name => ({ name, color: colour.get(name) ?? '' })),
+            milestone: c.milestone?.title ?? null,
+            created: c.created_at ?? '',
+            blockedBy,
+          }
+        }),
+      )
+    },
+
+    // The issue, its latest notes, the merge requests that mention it and,
+    // where issues can block others, its links, read in one go. Only the
+    // issue itself must answer; each other part is left out when it fails.
+    async issue(n: number, features: Features): Promise<IssueDetail> {
       const at = `${project}/issues/${n}`
-      const [res, notes, merges] = await Promise.all([
+      const [res, notes, merges, linked] = await Promise.all([
         get(at),
         fetchJson<RawNote[]>(`${at}/notes?sort=desc&order_by=created_at&per_page=20`),
         fetchJson<RawRef[]>(`${at}/related_merge_requests`),
+        features.deps ? fetchJson<RawLink[]>(`${at}/links`) : null,
       ])
+      const ours = Array.isArray(linked) ? linked.filter(l => l.web_url.startsWith(here)) : null
+      ours?.forEach(remember)
+      const of = (kind: RawLink['link_type']) => ours?.filter(l => l.link_type === kind).map(toRef) ?? null
       if (!res.ok) throw new Error(`#${n}: HTTP ${res.status}`)
       const i = JSON.parse(res.text) as RawIssue
       remember(i)
@@ -199,8 +293,8 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
         estimate: i.time_stats?.time_estimate || null,
         labels: labels(i),
         assignees: (i.assignees ?? []).map(a => a.username),
-        blockedBy: null,
-        blocks: null,
+        blockedBy: of('is_blocked_by'),
+        blocks: of('blocks'),
         pulls: Array.isArray(merges) ? merges.map(toRef) : null,
         commits: null,
         lastComment: last ? { author: last.author?.username ?? 'someone', when: last.created_at, body: last.body ?? '' } : null,
@@ -244,6 +338,23 @@ type RawIssue = {
   time_stats?: { time_estimate?: number | null; total_time_spent?: number | null } | null
 }
 type RawMilestone = { title: string; due_date?: string | null }
+type RawStatistics = { statistics?: { counts?: { all?: number; closed?: number } | null } | null }
+
+// An issue linked to another, as GitLab lists the links: labels as plain
+// names, and how it is linked. `blocks` and `is_blocked_by` only on EE.
+type RawLink = {
+  iid: number
+  title: string
+  state: string
+  web_url: string
+  labels?: string[] | null
+  assignees?: RawUser[] | null
+  milestone?: { title: string } | null
+  created_at?: string
+  author?: RawUser | null
+  link_type: 'relates_to' | 'blocks' | 'is_blocked_by'
+}
+const names = (l: RawLink) => l.labels ?? []
 
 // Labels with their colour as `rrggbb`, GitLab's without its `#`.
 const labels = (i: RawIssue) =>
@@ -275,6 +386,13 @@ type RawNote = { author?: { username: string } | null; created_at: string; body:
 type RawRef = { iid: number; title: string; state: string }
 
 const toRef = (m: RawRef): Ref => ({ number: m.iid, title: m.title, state: m.state === 'opened' ? 'open' : m.state })
+
+// Whether issues can block others in each project, by its API URL: what
+// check found, false until it did.
+const depsByProject = new Map<string, boolean>()
+
+// Each project's label colours, by its API URL, read once for the run.
+const coloursByProject = new Map<string, Promise<Map<string, string>>>()
 
 // The user ids fj saw on each host, by username: assigning takes ids.
 const idsByHost = new Map<string, Map<string, number>>()

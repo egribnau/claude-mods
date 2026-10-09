@@ -462,11 +462,11 @@ const actionsOf = async (host: string, w: World) => {
   return { setup: got.setup as { kind: string; actions?: unknown; features?: unknown }, asked }
 }
 
-test('check: api and Developer may act, in three requests, and GitLab tracks time', async () => {
+test('check: api and Developer may act, in four requests, GitLab tracks time and has epics, no metadata no blockers', async () => {
   const { setup, asked } = await actionsOf('check-ok.example', {})
   expect(setup).toMatchObject({ kind: 'ready', login: 'alice', actions: { kind: 'ok' } })
-  expect(setup.features).toMatchObject({ time: true })
-  expect(asked).toHaveLength(3)
+  expect(setup.features).toEqual({ time: true, deps: false, epics: true })
+  expect(asked).toHaveLength(4)
 })
 
 test('check: read_api alone is read only for the scope', async () => {
@@ -500,7 +500,7 @@ test('check: read_api alone says scope even as a Guest', async () => {
 test('check: an older GitLab without the scopes, as a Developer, is unknown', async () => {
   const { setup, asked } = await actionsOf('check-old.example', { self: { status: 404, body: { error: '404 Not Found' } } })
   expect(setup).toMatchObject({ kind: 'ready', actions: { kind: 'unknown' } })
-  expect(asked).toHaveLength(3)
+  expect(asked).toHaveLength(4)
 })
 
 test('check: an older GitLab as a Guest is still read only for the role', async () => {

@@ -167,13 +167,15 @@ function fakeSend(route: (url: URL, method: string) => Reply, asked: Asked[] = [
   }) as unknown as Send
 }
 
-type Check = { self?: Reply; user?: Reply; project?: Reply }
+type Check = { self?: Reply; user?: Reply; project?: Reply; metadata?: Reply }
 
-// The three answers check asks for, path by path; 404 for anything else.
+// The four answers check asks for, path by path; 404 for anything else.
+// /metadata is 404 unless given, as on a GitLab older than 15.2.
 function checkRoute(c: Check = {}) {
   return (u: URL): Reply => {
     const p = u.pathname
     if (p === '/api/v4/personal_access_tokens/self') return c.self ?? { status: 200, body: SELF }
+    if (p === '/api/v4/metadata') return c.metadata ?? { status: 404, body: { message: '404 Not Found' } }
     if (p === '/api/v4/user') return c.user ?? { status: 200, body: USER }
     if (p.startsWith('/api/v4/projects/') && !p.slice('/api/v4/projects/'.length).includes('/')) {
       return c.project ?? { status: 200, body: PROJ }
@@ -188,7 +190,7 @@ const READY = {
   openIssues: 7,
   login: 'alice',
   actions: { kind: 'read-only', reason: 'scope' },
-  features: { time: true, deps: false, epics: false },
+  features: { time: true, deps: false, epics: true },
 }
 
 // The project with your access levels in it and in its group.
@@ -203,12 +205,12 @@ const API = { status: 200, body: { ...SELF, scopes: ['api'] } }
 
 // check()
 
-test('check: ready in exactly three requests, with PRIVATE-TOKEN and no Authorization', async () => {
+test('check: ready in exactly four requests, the project and metadata together, with PRIVATE-TOKEN and no Authorization', async () => {
   const asked: Asked[] = []
   const got = await gitlab(fakeSend(checkRoute(), asked), R, 'glpat-x', null).check()
 
   expect(got).toEqual({ version: 'GitLab', setup: READY })
-  expect(asked.map(a => a.url)).toEqual([`${BASE}/personal_access_tokens/self`, `${BASE}/user`, PROJECT])
+  expect(asked.map(a => a.url)).toEqual([`${BASE}/personal_access_tokens/self`, `${BASE}/user`, PROJECT, `${BASE}/metadata`])
   for (const a of asked) {
     expect(a.method).toBe('GET')
     expect(a.headers['PRIVATE-TOKEN']).toBe('glpat-x')
@@ -226,7 +228,7 @@ test('check: a token with api and Developer may assign and close', async () => {
   const asked: Asked[] = []
   const got = await gitlab(fakeSend(checkRoute({ self: API, project: { status: 200, body: access(30, null) } }), asked), R, 'glpat-x', null).check()
   expect(got.setup).toEqual({ ...READY, actions: { kind: 'ok' } })
-  expect(asked).toHaveLength(3)
+  expect(asked).toHaveLength(4)
 })
 
 test('check: the higher of the project and group role counts, Reporter is enough', async () => {
@@ -247,6 +249,31 @@ test('check: a token with api but no permissions in the answer is read only by r
 test('check: read_api only is read only by scope, even as Maintainer', async () => {
   const got = await gitlab(fakeSend(checkRoute({ project: { status: 200, body: access(40, null) } })), R, 'glpat-x', null).check()
   expect(got.setup).toEqual(READY)
+})
+
+const META = (enterprise: boolean) => ({
+  status: 200,
+  body: { version: '17.4.1-ee', revision: 'a1b2c3d4', kas: { enabled: true, externalUrl: null, version: null }, enterprise },
+})
+
+test('check: GitLab EE may have blocking links, so dependencies are on; epics always', async () => {
+  const got = await gitlab(fakeSend(checkRoute({ metadata: META(true) })), at('meta-ee.example'), 'glpat-x', null).check()
+  expect(got.setup).toEqual({ ...READY, features: { time: true, deps: true, epics: true } })
+})
+
+test('check: Community Edition, metadata refused or down leave dependencies off, and setup passes', async () => {
+  const ce = await gitlab(fakeSend(checkRoute({ metadata: META(false) })), at('meta-ce.example'), 'glpat-x', null).check()
+  expect(ce.setup).toEqual(READY)
+  const refused = await gitlab(fakeSend(checkRoute({ metadata: { status: 403 } })), at('meta-403.example'), 'glpat-x', null).check()
+  expect(refused.setup).toEqual(READY)
+  const route = checkRoute()
+  const down = await gitlab(
+    fakeSend(u => (u.pathname === '/api/v4/metadata' ? 'down' : route(u))),
+    at('meta-down.example'),
+    'glpat-x',
+    null,
+  ).check()
+  expect(down.setup).toEqual(READY)
 })
 
 test('check: no token, no request', async () => {
@@ -278,7 +305,7 @@ test('check: an older GitLab without personal_access_tokens/self still reaches r
   const old = { status: 404, body: { error: '404 Not Found' } }
   const got = await gitlab(fakeSend(checkRoute({ self: old, project: { status: 200, body: access(30, null) } }), asked), R, 'glpat-x', null).check()
   expect(got.setup).toEqual({ ...READY, actions: { kind: 'unknown' } })
-  expect(asked).toHaveLength(3)
+  expect(asked).toHaveLength(4)
   // Below Reporter it is read only all the same.
   const guest = await gitlab(fakeSend(checkRoute({ self: old, project: { status: 200, body: access(10, null) } })), R, 'glpat-x', null).check()
   expect(guest.setup).toMatchObject({ actions: { kind: 'read-only', reason: 'role' } })
@@ -465,13 +492,38 @@ test('milestones: active ones with their due date; none when refused', async () 
   expect(await refused.milestones()).toEqual([])
 })
 
-test('no epics, blockers or children on GitLab yet, and nothing asked for them', async () => {
+test('milestones: closed of all from issues_statistics, per milestone; one refused keeps 0 of 0', async () => {
   const asked: Asked[] = []
-  const t = gitlab(fakeSend(checkRoute(), asked), R, 'glpat-x', null)
-  expect(await t.epics()).toEqual([])
+  const path = '/api/v4/projects/boats%2Fradar/milestones'
+  const list = listRoute(path, [[V12, V13]])
+  const stats = (all: number, closed: number) => ({ statistics: { counts: { all, closed, opened: all - closed } } })
+  const t = gitlab(
+    fakeSend(u => {
+      if (u.pathname !== '/api/v4/projects/boats%2Fradar/issues_statistics') return list(u)
+      return u.searchParams.get('milestone') === 'v1.2' ? { status: 200, body: stats(8, 3) } : { status: 500 }
+    }, asked),
+    R,
+    'glpat-x',
+    null,
+  )
+  expect(await t.milestones()).toEqual([
+    { title: 'v1.2', due: '2026-10-31', closed: 3, total: 8 },
+    { title: 'v1.3', due: '2026-11-30', closed: 0, total: 0 },
+  ])
+  expect(asked.slice(1).map(a => a.url).sort()).toEqual([
+    `${PROJECT}/issues_statistics?milestone=v1.2`,
+    `${PROJECT}/issues_statistics?milestone=v1.3`,
+  ])
+})
+
+test('epics, blockers and children ask GitLab; links refused leave blockers and children unknown', async () => {
+  const asked: Asked[] = []
+  const t = gitlab(fakeSend(listRoute(ISSUES, [[issue(20, '2026-09-01T00:00:00.000Z', { labels: ['Epic'] })]]), asked), R, 'glpat-x', null)
+  expect(await t.epics()).toEqual([{ number: 20, title: 'Issue 20', state: 'open', milestone: null }])
+  expect(new URL(asked[0]?.url ?? '').searchParams.get('labels')).toBe('epic')
   expect(await t.blockers(12)).toBe(null)
-  expect(await t.children(12, 'alice')).toBe(null)
-  expect(asked).toEqual([])
+  expect(await t.children(20, 'alice')).toBe(null)
+  expect(asked.slice(1).map(a => a.url)).toEqual([`${PROJECT}/issues/12/links`, `${PROJECT}/issues/20/links`])
 })
 
 // One issue
@@ -519,6 +571,57 @@ test('issue: three requests by iid, mapped for the detail view; notes and merge 
     `${PROJECT}/issues/12/notes?sort=desc&order_by=created_at&per_page=20`,
     `${PROJECT}/issues/12/related_merge_requests`,
   ])
+})
+
+// An issue linked to #12, as GitLab lists the links.
+const link = (iid: number, kind: string, state = 'opened', project = 'boats/radar') => ({
+  ...issue(iid, '2026-09-01T00:00:00.000Z'),
+  labels: [],
+  state,
+  web_url: `https://gitlab.com/${project}/-/issues/${iid}`,
+  issue_link_id: 5000 + iid,
+  link_type: kind,
+  link_created_at: '2026-09-02T00:00:00.000Z',
+  link_updated_at: '2026-09-02T00:00:00.000Z',
+})
+
+test('issue: with dependencies on, a fourth request for its links: what blocks it and what it blocks, this project only', async () => {
+  const asked: Asked[] = []
+  const links = [
+    link(31, 'is_blocked_by'),
+    link(32, 'is_blocked_by', 'closed'),
+    link(33, 'blocks'),
+    link(34, 'relates_to'),
+    link(35, 'is_blocked_by', 'opened', 'boats/sonar'),
+  ]
+  const raw = issue(12, '2026-09-25T09:00:00.000Z')
+  const t = gitlab(
+    fakeSend(
+      u =>
+        u.pathname === `${ISSUES}/12`
+          ? { status: 200, body: raw }
+          : u.pathname === `${ISSUES}/12/links`
+            ? { status: 200, body: links }
+            : { status: 200, body: [] },
+      asked,
+    ),
+    R,
+    'glpat-x',
+    null,
+  )
+  const got = await t.issue(12, { time: true, deps: true, epics: true })
+  expect(got.blockedBy).toEqual([
+    { number: 31, title: 'Issue 31', state: 'open' },
+    { number: 32, title: 'Issue 32', state: 'closed' },
+  ])
+  expect(got.blocks).toEqual([{ number: 33, title: 'Issue 33', state: 'open' }])
+  expect(asked.map(a => a.url)).toContain(`${PROJECT}/issues/12/links`)
+  expect(asked).toHaveLength(4)
+
+  const refused = gitlab(fakeSend(u => (u.pathname === `${ISSUES}/12` ? { status: 200, body: raw } : { status: 500 })), R, 'glpat-x', null)
+  const unknown = await refused.issue(12, { time: true, deps: true, epics: true })
+  expect(unknown.blockedBy).toBe(null)
+  expect(unknown.blocks).toBe(null)
 })
 
 const note = (author: string, created: string, body: string, system = false) => ({
@@ -751,6 +854,11 @@ type World = {
   // The status your issues answer with; 200 when left out.
   mineStatus?: number
   milestones?: unknown[]
+  // The issues with the Epic label, and each issue's links by iid.
+  epics?: unknown[]
+  links?: Record<number, unknown[]>
+  // What /metadata says of the edition; 404 when left out.
+  enterprise?: boolean
   asked?: { url: string; token: string | undefined; auth: string | undefined }[]
 }
 
@@ -778,13 +886,18 @@ function world(on: On, w: World) {
       return reply(status, status === 200 ? SELF : { message: '401 Unauthorized' })
     }
     if (p === '/api/v4/user') return reply(200, USER)
+    if (p === '/api/v4/metadata') return w.enterprise === undefined ? reply(404, { message: '404 Not Found' }) : reply(200, { version: '17.4.1', enterprise: w.enterprise })
     if (p === '/api/v4/projects/boats%2Fradar') return reply(200, PROJ)
+    const links = /^\/api\/v4\/projects\/boats%2Fradar\/issues\/(\d+)\/links$/.exec(p)
+    if (links) return reply(200, w.links?.[Number(links[1])] ?? [])
+    if (p === '/api/v4/projects/boats%2Fradar/labels') return list([{ id: 1, name: 'bug', color: '#d9534f' }])
     if (p === '/api/v4/projects/boats%2Fradar/milestones') return w.milestones ? list(w.milestones) : reply(403, { message: '403 Forbidden' })
     if (p === '/api/v4/projects/boats%2Fradar/issues') {
       if (u.searchParams.get('scope') === 'assigned_to_me') {
         const status = w.mineStatus ?? 200
         return status === 200 ? list(w.mine ?? []) : reply(status, { message: '500 Internal Server Error' })
       }
+      if (u.searchParams.has('labels')) return list(w.epics ?? [])
       return list(w.open ?? [])
     }
     return reply(404, { message: '404 Not Found' })
@@ -916,4 +1029,43 @@ test('gitlab.com refusing the token: says GitLab did not accept it', GL, async (
     'GitLab did not accept the token for gitlab.com from GitLab tokens: it may be mistyped, expired or revoked.',
   )
   expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
+})
+
+const EPICS_PANE = { ...PANE, requestId: 'fj-epics', props: { ...PANE.props, title: 'Epics' } } as const
+
+test('gitlab.com Free: an epic with its related issues in the Epics pane, no blockers asked and no error', GL, async ($, on) => {
+  const asked: World['asked'] = []
+  const clock = world(on, {
+    mine: [MINE],
+    open: OPEN,
+    enterprise: false,
+    epics: [issue(20, '2026-08-01T09:00:00.000Z', { title: 'Radar sweep', labels: ['Epic'] })],
+    links: {
+      20: [
+        { ...link(14, 'relates_to'), labels: ['bug'] },
+        { ...link(12, 'relates_to'), assignees: [person('alice', 991)] },
+        link(22, 'relates_to', 'closed'),
+        { ...link(23, 'relates_to'), labels: ['epic'] },
+        link(24, 'relates_to', 'opened', 'boats/sonar'),
+      ],
+    },
+    asked,
+  })
+  await clock.set(NOW)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'fold-20' })
+  const all = await texts(ui)
+
+  expect(all.some(t => t.includes('Radar sweep'))).toBe(true)
+  expect(all).toContain('  ● #12 Issue 12')
+  expect(all).toContain('    #14 Issue 14')
+  expect(all).toContain('  ✓ 1 closed')
+  // Another epic is a peer, and another project's issue is left out.
+  expect(all.some(t => t.includes('#23') || t.includes('#24'))).toBe(false)
+  expect(all.some(t => /could not|error|HTTP/i.test(t))).toBe(false)
+  expect((await ui.findAll({ type: 'Text' })).find(t => t.text === 'bug')?.props.color).toBe('#d9534f')
+  // Only the epic's links: no child is asked what blocks it.
+  expect(asked?.filter(a => a.url.endsWith('/links')).map(a => a.url)).toEqual([`${PROJECT}/issues/20/links`])
 })

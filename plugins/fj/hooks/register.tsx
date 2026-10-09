@@ -49,7 +49,7 @@ const forges = new Map<string, Forge>()
 const tracker = ($: EngineInterface, r: Repo): Tracker => {
   const forge = forges.get(r.host)
   return forge?.kind === 'gitlab'
-    ? gitlab(send($), r, tokenFor(configTokens['GitLab tokens'], r.host)?.value ?? null, forge.version)
+    ? gitlab(send($), r, tokenFor(configTokens['GitLab tokens'], r.host)?.value ?? null, forge.version, configLabel)
     : forgejo(send($), r, tokenFor(configTokens['Forgejo tokens'], r.host)?.value ?? null, configLabel)
 }
 
@@ -172,7 +172,7 @@ async function check($: EngineInterface): Promise<Repo | null> {
   await update($, token, () => tok.from)
   const c =
     forge.kind === 'gitlab'
-      ? await gitlab(send($), r, tok.value, forge.version).check()
+      ? await gitlab(send($), r, tok.value, forge.version, configLabel).check()
       : await forgejo(send($), r, tok.value, configLabel, forge.version).check()
   await update($, version, () => c.version)
   await update($, setup, () => c.setup)
@@ -770,10 +770,14 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             {o.who && <Text dimColor>{o.who}</Text>}
           </Text>
         </Button>
-        <Box>
-          <Text>{`${lead}${' '.repeat(2 + o.numWidth)}`}</Text>
-          <Text wrap="truncate-end">{facts}</Text>
-        </Box>
+        {/* One row: a line too long for the pane is cut, but would still
+            take the height of its overflow. */}
+        {facts.length > 0 && (
+          <Box height={1}>
+            <Text>{`${lead}${' '.repeat(2 + o.numWidth)}`}</Text>
+            <Text wrap="truncate-end">{facts}</Text>
+          </Box>
+        )}
       </Box>
     )
   }
