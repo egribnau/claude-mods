@@ -174,6 +174,10 @@ async function check($: EngineInterface): Promise<Repo | null> {
           openIssues: (JSON.parse(res.text) as { open_issues_count: number }).open_issues_count,
           login,
           actions: await mayAct($, r, tok.value, login, (JSON.parse(res.text) as RawRepo).permissions?.push === true),
+          features: {
+            time: (JSON.parse(res.text) as RawRepo).internal_tracker?.enable_time_tracker !== false,
+            deps: (JSON.parse(res.text) as RawRepo).internal_tracker?.enable_issue_dependencies !== false,
+          },
         }
       : user && (user.status === 401 || user.status === 403)
         ? { kind: 'no-scope', missing: 'read:user' }
@@ -193,7 +197,11 @@ async function check($: EngineInterface): Promise<Repo | null> {
   return r
 }
 
-type RawRepo = { open_issues_count: number; permissions?: { push?: boolean } }
+type RawRepo = {
+  open_issues_count: number
+  permissions?: { push?: boolean }
+  internal_tracker?: { enable_time_tracker?: boolean; enable_issue_dependencies?: boolean }
+}
 
 // Whether fj may assign and close: the token's scopes, from the list of the
 // account's tokens (the one ending in the same eight characters), and push
@@ -475,7 +483,8 @@ async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) 
     return { ok: res.ok, status: res.status, json }
   }
   try {
-    const issue = await loadIssue(get, n)
+    const s = await read($, setup)
+    const issue = await loadIssue(get, n, s.kind === 'ready' ? s.features : undefined)
     issuesRead.set(key, issue)
     // Another issue opened while this one loaded wins.
     if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return

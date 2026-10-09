@@ -103,6 +103,9 @@ type Rights = {
   // The writes fj sends, and what Forgejo answers them.
   sent?: { method: string; path: string; body: unknown }[]
   refuse?: { status: number; message: string }
+  // Whether the repo tracks time and has dependencies; both when left out.
+  time?: boolean
+  deps?: boolean
 }
 
 function world(on: On, answers: Answers, asked: string[] = [], opened: string[] = [], opener = 'open', rights: Rights = {}) {
@@ -146,9 +149,24 @@ function world(on: On, answers: Answers, asked: string[] = [], opened: string[] 
     if (url.pathname.endsWith('/issues/search')) return reply(200, url.searchParams.get('page') === '1' ? [LISTED] : [])
     // The repo's open issues: only #29, which is yours.
     if (url.pathname.endsWith('/repos/boats/radar/issues')) return reply(200, [])
-    const path = e.url.startsWith(API) ? e.url.slice(API.length) : ''
-    if (path === '') return reply(200, { full_name: 'boats/radar', open_issues_count: 9, permissions: { push: rights.push ?? false } })
-    return path in answers ? reply(200, answers[path]) : reply(404, { message: 'not found' })
+    const path = e.url.startsWith(API) ? url.pathname.slice(new URL(API).pathname.length) : ''
+    if (path === '') {
+      return reply(200, {
+        full_name: 'boats/radar',
+        open_issues_count: 9,
+        permissions: { push: rights.push ?? false },
+        internal_tracker: { enable_time_tracker: rights.time ?? true, enable_issue_dependencies: rights.deps ?? true },
+      })
+    }
+    if (!(path in answers)) return reply(404, { message: 'not found' })
+    // A list asked for in pages answers the page asked for.
+    const answer = answers[path]
+    const limit = Number(url.searchParams.get('limit'))
+    if (Array.isArray(answer) && limit > 0) {
+      const page = Number(url.searchParams.get('page') ?? '1')
+      return reply(200, answer.slice((page - 1) * limit, page * limit))
+    }
+    return reply(200, answer)
   })
   return clock
 }
@@ -308,6 +326,30 @@ test('an issue opened again is shown from memory until Refresh', TOKEN, async ($
 })
 
 type Filled = { text: string; mode?: string }[]
+
+test('reads every page of the timeline, so a late pull request still shows', TOKEN, async ($, on) => {
+  const filler = Array.from({ length: 55 }, () => ({ type: 'comment', created_at: '2026-10-01T12:00:00Z', body: 'x', ref_commit_sha: null, ref_issue: null }))
+  const late = {
+    type: 'pull_ref',
+    created_at: '2026-10-06T12:00:00Z',
+    body: '',
+    ref_commit_sha: null,
+    ref_issue: { number: 77, title: 'A late pull request', state: 'open', pull_request: { merged: false } },
+  }
+  const asked: string[] = []
+  world(on, { ...FULL, '/issues/29/timeline': [...filler, late] }, asked)
+  const ui = await opened($)
+  expect((await texts(ui)).some(t => t.includes('A late pull request'))).toBe(true)
+  expect(asked.filter(u => u.includes('/timeline')).map(u => new URL(u).searchParams.get('page'))).toEqual(['1', '2'])
+})
+
+test('a repo without time tracking and dependencies is not asked for them', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, FULL, asked, [], 'open', { time: false, deps: false })
+  await opened($)
+  const parts = asked.filter(u => u.includes('/issues/29')).map(u => new URL(u).pathname.split('/issues/29')[1])
+  expect(parts.sort()).toEqual(['', '/comments', '/timeline'])
+})
 
 const WRITE: Rights = { push: true, scopes: ['write:issue', 'read:repository', 'read:user'] }
 const keys = async (ui: { findAll: (q: { type: string }) => Promise<unknown[]> }) =>

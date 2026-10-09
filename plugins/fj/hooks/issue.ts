@@ -1,4 +1,4 @@
-import type { CommitRef, IssueDetail, Ref } from '../types'
+import type { CommitRef, Features, IssueDetail, Ref } from '../types'
 
 // What one GET answered: its status and, when it was ok, its parsed body.
 export type Got = { ok: boolean; status: number; json: unknown }
@@ -34,6 +34,18 @@ type RawTimeline = {
 }
 type RawTime = { time: number }
 
+// Every page of a list, 50 at a time, as one answer; the first page's
+// failure is the answer's.
+async function pages(get: Get, path: string): Promise<Got | null> {
+  const all: unknown[] = []
+  for (let page = 1; ; page++) {
+    const got = await get(`${path}?limit=50&page=${page}`)
+    if (!got?.ok || !Array.isArray(got.json)) return page === 1 ? got : { ok: true, status: 200, json: all }
+    all.push(...got.json)
+    if (got.json.length < 50) return { ok: true, status: 200, json: all }
+  }
+}
+
 const list = <T>(got: Got | null): T[] | null => (got?.ok && Array.isArray(got.json) ? (got.json as T[]) : null)
 
 const ref = (r: RawRef): Ref => ({
@@ -59,15 +71,18 @@ function commitMessage(body: string): string {
 // its comments, what blocks it and what it blocks, its timeline (pull
 // requests and commits that refer to it) and its tracked time. Only the
 // issue itself must answer; each other part is left out when it fails.
-export async function loadIssue(get: Get, n: number): Promise<IssueDetail> {
+// What the repo turned off (time tracking, dependencies) is not asked for, and
+// its lines are left out. The timeline is read page by page, to its end.
+export async function loadIssue(get: Get, n: number, features: Features = { time: true, deps: true }): Promise<IssueDetail> {
   const at = `/issues/${n}`
+  const none = async (): Promise<Got | null> => null
   const [main, comments, deps, blocks, timeline, times] = await Promise.all([
     get(at),
     get(`${at}/comments`),
-    get(`${at}/dependencies`),
-    get(`${at}/blocks`),
-    get(`${at}/timeline`),
-    get(`${at}/times`),
+    features.deps ? get(`${at}/dependencies`) : none(),
+    features.deps ? get(`${at}/blocks`) : none(),
+    pages(get, `${at}/timeline`),
+    features.time ? get(`${at}/times`) : none(),
   ])
   if (!main) throw new Error(`#${n}: no answer`)
   if (!main.ok) throw new Error(`#${n}: HTTP ${main.status}`)

@@ -23,7 +23,11 @@ export type Setup =
   | { kind: 'error'; message: string }
   // `login`: who the token belongs to, from /user. `actions`: whether fj may
   // assign and close.
-  | { kind: 'ready'; openIssues: number; login: string; actions: Actions }
+  // `features`: whether the repo tracks time and has dependencies; what it
+  // turned off is not asked for.
+  | { kind: 'ready'; openIssues: number; login: string; actions: Actions; features: Features }
+
+export type Features = { time: boolean; deps: boolean }
 
 // Whether fj may assign and close issues: the token needs write:issue and
 // you push rights on the repo. `unknown`: Forgejo would not list the token's
