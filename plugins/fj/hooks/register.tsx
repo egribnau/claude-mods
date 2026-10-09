@@ -135,7 +135,7 @@ function intro(s: Setup, r: Repo | null, tokenText: string): string | null {
     case 'no-scope':
       return `The token ${tokenText} is valid but may not read this repo.`
     case 'not-found':
-      return `${r ? slug(r) : 'The repo'} was not found, or the token's owner cannot see it.`
+      return `${r ? slug(r) : 'The repo'}, from origin, was not found, or the token's owner cannot see it.`
     case 'error':
       return `Forgejo could not be asked: ${s.message}.`
     default:
@@ -170,7 +170,11 @@ function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
     case 'no-scope':
       return [create, ...set]
     case 'not-found':
-      return ['If the repo is private, create the token as a user who can see it.', ...set]
+      return [
+        `If origin points to the wrong repo: \`git remote set-url origin https://${r?.host ?? 'your-forgejo'}/owner/repo.git\`.`,
+        'If the repo is private, create the token as a user who can see it.',
+        ...set,
+      ]
     case 'error':
       return []
     default:

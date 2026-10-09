@@ -241,8 +241,8 @@ for (const [status, label, about, first] of [
   [
     404,
     'not found',
-    "boats/radar was not found, or the token's owner cannot see it.",
-    '1. If the repo is private, create the token as a user who can see it.',
+    "boats/radar, from origin, was not found, or the token's owner cannot see it.",
+    '1. If origin points to the wrong repo: git remote set-url origin https://git.example.org/owner/repo.git.',
   ],
   [500, 'no answer', 'Forgejo could not be asked: boats/radar: HTTP 500.', '1. Press r to check again.'],
 ] as const) {
