@@ -30,12 +30,12 @@ plugins/fj/                          a mod: a hooks module, no skills
 
 | Mod | What it does | Requires |
 | --- | --- | --- |
-| `fj` | `/fj` opens a docked pane on the Forgejo repo behind the current directory's `origin`. Starting fresh from 0.13.0: for now it shows the repo, where the token comes from and whether Forgejo answers. The prototype is tagged `fj-prototype`. | a Forgejo access token; Forgejo or Gitea |
+| `fj` | `/fj` opens a docked pane on the Forgejo repo behind the current directory's `origin`. Until setup is complete, the pane guides it step by step: the repo, Forgejo at its host, a token, and the token reading the repo. The prototype is tagged `fj-prototype`. | a Forgejo access token; Forgejo or Gitea |
 
 `fj` has one setting, **Token**: a Forgejo access token, kept in secure storage. `/config` does not
 list it: set it with `/plugin configure fj@egribnau-mods`. Left empty, the plugin reads
 `FORGEJO_TOKEN` from the environment, which the desktop app does not pass on from `~/.zshenv`.
-The pane says which one it uses. Reading needs a token with `read:issue`.
+The pane says which one it uses. The token needs `read:issue` and `read:repository`.
 
 `fj` is for the terminal. A Code session in the Claude desktop app loads it but gets none of its
 settings: `/config` lists no rows for it there, the secret Token stays empty, and the app does not

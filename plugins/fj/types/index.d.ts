@@ -4,20 +4,26 @@ export type Repo = { host: string; owner: string; name: string }
 // Where a request's token comes from; never the token itself.
 export type TokenSource = 'setting' | 'FORGEJO_TOKEN' | 'none'
 
-// The last check that Forgejo answers for the repo with the token.
-export type Check =
-  | { kind: 'idle' }
-  | { kind: 'loading' }
-  | { kind: 'ok'; openIssues: number }
+// How far setting up got: each kind but `ready` names the first step that
+// failed, which the pane explains. Steps: repo, Forgejo, token, access.
+export type Setup =
+  | { kind: 'checking' }
+  | { kind: 'no-repo'; detail: string }
+  | { kind: 'not-forgejo'; detail: string }
+  | { kind: 'no-token' }
+  | { kind: 'token-refused' }
+  | { kind: 'no-scope' }
+  | { kind: 'not-found' }
   | { kind: 'error'; message: string }
+  | { kind: 'ready'; openIssues: number }
 
 declare module 'claude-code' {
   interface PluginState {
     fj: {
       repo: Repo | null
-      repoError: string | null
+      version: string | null
       token: TokenSource
-      check: Check
+      setup: Setup
     }
   }
 }
