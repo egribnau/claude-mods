@@ -84,7 +84,7 @@ function world(on: On, w: World) {
   })
 }
 
-type Ui = { findAll: (q: { type: string }) => Promise<{ text: string }[]> }
+type Ui = { findAll: (q: { type: string }) => Promise<{ text: string; props: Record<string, unknown> }[]> }
 const texts = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text)
 
 for (const surface of ['terminal', 'desktop'] as const) {
@@ -135,7 +135,12 @@ for (const surface of ['terminal', 'desktop'] as const) {
       'fj shows the issues of the repo this session runs in. ~/Documents/notes is not a git repo, so there is nothing to show here.',
       'What to do',
       '1. If this folder belongs on Forgejo: git init and git remote add origin https://your-forgejo/owner/repo.git, then press r.',
+      // The commands, drawn in their own color inside that line.
+      'git init',
+      'git remote add origin https://your-forgejo/owner/repo.git',
     ])
+    const cmd = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'git init')
+    expect(cmd?.props.color).toBe('warning')
     await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
     expect(asked).toEqual([])
     expect(opened.map(o => o.title)).toEqual(['fj'])
@@ -211,6 +216,9 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   expect(all).toContain(
     '1. Create a token at https://git.example.org/user/settings/applications with read:issue and read:repository.',
   )
+  // The address is a link, the command a command; neither keeps punctuation.
+  expect(all).toContain('https://git.example.org/user/settings/applications')
+  expect(all).toContain('/plugin configure fj@egribnau-mods')
   expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as Token.')
   expect(all).toContain('3. Press r to check again.')
   expect(all.some(t => t.includes('FORGEJO_TOKEN'))).toBe(false)

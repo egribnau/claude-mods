@@ -135,16 +135,16 @@ function intro(s: Setup): string | null {
 function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
   const page = r ? `https://${r.host}/user/settings/applications` : 'Settings › Applications in Forgejo'
   const create = `Create a token at ${page} with ${SCOPES}.`
-  const set = [`Run ${CONFIGURE} and paste it as Token.`]
+  const set = [`Run \`${CONFIGURE}\` and paste it as Token.`]
   switch (s.kind) {
     case 'no-repo': {
       const remote = 'https://your-forgejo/owner/repo.git'
       return [
         s.reason === 'not-git'
-          ? `If this folder belongs on Forgejo: git init and git remote add origin ${remote}, then press r.`
+          ? `If this folder belongs on Forgejo: \`git init\` and \`git remote add origin ${remote}\`, then press r.`
           : s.reason === 'no-origin'
-            ? `If this repo is on Forgejo: git remote add origin ${remote}, then press r.`
-            : `If this repo is on Forgejo: git remote set-url origin ${remote}, then press r.`,
+            ? `If this repo is on Forgejo: \`git remote add origin ${remote}\`, then press r.`
+            : `If this repo is on Forgejo: \`git remote set-url origin ${remote}\`, then press r.`,
       ]
     }
     case 'not-forgejo':
@@ -198,11 +198,34 @@ export const register: Register = (on, options) => {
         {text}
       </Text>
     )
-    const para = (key: string, text: string, props: Record<string, unknown> = {}) => (
-      <Text key={key} wrap="wrap" {...props}>
-        {text}
-      </Text>
-    )
+    // A wrapped paragraph in which `a command` shows as a command and an
+    // https:// address as a link; the backticks themselves are not drawn.
+    const para = (key: string, text: string, props: Record<string, unknown> = {}) => {
+      const parts: RenderChildren[] = []
+      text.split(/`([^`]+)`/).forEach((piece, i) => {
+        if (i % 2 === 1) {
+          parts.push(<Text key={`${key}-c${i}`} color="warning">{piece}</Text>)
+          return
+        }
+        piece.split(/(https:\/\/\S+?)(?=[.,;:)]?(?:\s|$))/).forEach((bit, j) => {
+          if (bit === '') return
+          parts.push(
+            j % 2 === 1 ? (
+              <Text key={`${key}-u${i}-${j}`} color="suggestion" underline>
+                {bit}
+              </Text>
+            ) : (
+              bit
+            ),
+          )
+        })
+      })
+      return (
+        <Text key={key} wrap="wrap" {...props}>
+          {parts}
+        </Text>
+      )
+    }
 
     const tokenText =
       from === 'setting' ? 'from the Token setting' : 'none found'
