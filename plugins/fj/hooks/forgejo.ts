@@ -137,7 +137,10 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
 
   return {
     check,
+    name: 'Forgejo',
     tokensUrl: `https://${r.host}/user/settings/applications`,
+    scopes: 'read:issue, read:repository and read:user',
+    setting: 'Forgejo tokens',
 
     async milestones(): Promise<MilestoneRow[]> {
       const raw = await fetchAll<RawMilestone>(`${api}/milestones?state=open`, 'milestones').catch(() => [])

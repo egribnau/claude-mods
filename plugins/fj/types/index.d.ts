@@ -16,12 +16,13 @@ export type Setup =
   // answer at all; or it runs a version older than fj needs.
   | { kind: 'not-forgejo'; reason: 'other' | 'no-answer' | 'too-old'; detail: string }
   // A forge fj knows but does not show issues of yet.
-  | { kind: 'unsupported'; forge: 'gitlab' | 'github' }
+  | { kind: 'unsupported'; forge: 'github' }
   | { kind: 'no-token' }
   | { kind: 'token-refused' }
-  // `missing`: the scope the token lacks, when the repo answered but /user
-  // refused; absent when the repo itself refused.
-  | { kind: 'no-scope'; missing?: 'read:user' }
+  // `missing`: the scope the token lacks: Forgejo's read:user when the repo
+  // answered but /user refused, GitLab's read_api when its token or /user
+  // said so; absent when the repo itself refused.
+  | { kind: 'no-scope'; missing?: 'read:user' | 'read_api' }
   | { kind: 'not-found' }
   | { kind: 'error'; message: string }
   // `login`: who the token belongs to, from /user. `actions`: whether fj may
@@ -34,8 +35,9 @@ export type Features = { time: boolean; deps: boolean; epics: boolean }
 
 // Whether fj may assign and close issues: the token needs write:issue and
 // you push rights on the repo. `unknown`: Forgejo would not list the token's
-// scopes, so the buttons show and Forgejo has the last word.
-export type Actions = { kind: 'ok' } | { kind: 'read-only'; reason: 'scope' | 'push' } | { kind: 'unknown' }
+// scopes, so the buttons show and Forgejo has the last word. `later`: fj
+// cannot assign or close on this forge yet (GitLab).
+export type Actions = { kind: 'ok' } | { kind: 'read-only'; reason: 'scope' | 'push' | 'later' } | { kind: 'unknown' }
 
 // One open issue in this repo, as the overview lists it.
 export type IssueRow = {
@@ -168,7 +170,7 @@ declare module 'claude-code' {
       picker: Picker | null
       // Whether the picker's list is open.
       pickerOpen: boolean
-      // With Debug on: the last action, the requests it sent Forgejo, and
+      // With Debug on: the last action, the requests it sent the forge, and
       // the requests of the session so far.
       requests: { label: string; count: number; total: number } | null
       // The epics folded open in the Epics pane, by number.

@@ -257,12 +257,12 @@ test('github.com: known without asking, and not supported', TOKEN, async ($, on)
     '· Token   needs Forgejo',
     '· Access  needs Forgejo',
     '· Actions needs Forgejo',
-    'github.com runs GitHub. fj does not show GitHub repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.',
+    'github.com runs GitHub. fj does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.',
   ])
   expect(asked).toEqual([])
 })
 
-test('gitlab.com: the token step reads GitLab tokens, and nothing is asked', {
+test('gitlab.com: the token step reads GitLab tokens, and GitLab is asked with it', {
   options: { token: 'secret', gitlabTokens: 'gitlab.com=glpat-1', icons: 'text', compact: 'off' },
 }, async ($, on) => {
   const asked: World['asked'] = []
@@ -272,14 +272,15 @@ test('gitlab.com: the token step reads GitLab tokens, and nothing is asked', {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✗ Forge   GitLab at gitlab.com, not supported')
+  expect(all).toContain('✓ Forge   GitLab at gitlab.com')
   expect(all).toContain('✓ Token   for gitlab.com from GitLab tokens')
-  expect(all).toContain('· Access  needs Forgejo')
-  expect(all).toContain(
-    'gitlab.com runs GitLab. fj does not show GitLab repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.',
-  )
+  expect(all).toContain('✗ Access  no answer')
+  expect(all).toContain('GitLab could not be asked: /user: HTTP 404.')
   expect(all).not.toContain('What to do')
-  expect(asked).toEqual([])
+  expect(asked.map(a => a.url)).toEqual([
+    'https://gitlab.com/api/v4/personal_access_tokens/self',
+    'https://gitlab.com/api/v4/user',
+  ])
 })
 
 test("a host=token pair wins over a bare token, and the pane names the host", {

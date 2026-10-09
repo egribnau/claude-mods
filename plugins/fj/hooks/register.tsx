@@ -3,8 +3,9 @@ import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } fro
 
 import type { Detail, Epic, Epics, IssueDetail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
 import { bar, openChildren, pickerOptions, standing, summary, tally } from './epics'
-import { detect, forgeName, tokenFor, type TokenSetting } from './forge'
+import { detect, forgeName, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
+import { gitlab } from './gitlab'
 import { day, dueText, duration, readable, wrap } from './issue'
 import { epicGroups, loadRepo, whatsNext, type Memory } from './load'
 import { waitingText } from './next'
@@ -13,7 +14,6 @@ import { message, type Send, type Tracker } from './tracker'
 const PANE = 'fj'
 const EPICS_PANE = 'fj-epics'
 const CONFIGURE = '/plugin configure fj@egribnau-mods'
-const SCOPES = 'read:issue, read:repository and read:user'
 
 const repo = atom({ plugin: 'fj', key: 'repo' } as const, null)
 const version = atom({ plugin: 'fj', key: 'version' } as const, null)
@@ -33,7 +33,7 @@ const picker = atom({ plugin: 'fj', key: 'picker' } as const, null)
 const pickerOpen = atom({ plugin: 'fj', key: 'pickerOpen' } as const, false)
 const requests = atom({ plugin: 'fj', key: 'requests' } as const, null)
 
-// Every request fj sends Forgejo, counted, so Debug can say what each action cost.
+// Every request fj sends the forge, counted, so Debug can say what each action cost.
 let requestsMade = 0
 const send =
   ($: EngineInterface): Send =>
@@ -42,9 +42,16 @@ const send =
     return $.http.fetch(url, init)
   }
 
-// The tracker behind repo `r`: Forgejo, the only one so far.
-const tracker = ($: EngineInterface, r: Repo): Tracker =>
-  forgejo(send($), r, tokenFor(configTokens['Forgejo tokens'], r.host)?.value ?? null, configLabel)
+// The forge each host runs, as setup's check found it.
+const forges = new Map<string, Forge>()
+
+// The tracker behind repo `r`: GitLab where setup found it, else Forgejo.
+const tracker = ($: EngineInterface, r: Repo): Tracker => {
+  const forge = forges.get(r.host)
+  return forge?.kind === 'gitlab'
+    ? gitlab(send($), r, tokenFor(configTokens['GitLab tokens'], r.host)?.value ?? null, forge.version)
+    : forgejo(send($), r, tokenFor(configTokens['Forgejo tokens'], r.host)?.value ?? null, configLabel)
+}
 
 // Runs an action and records how many requests it sent, under `label`.
 async function counted<T>($: EngineInterface, label: string, action: () => Promise<T>): Promise<T> {
@@ -148,22 +155,25 @@ async function check($: EngineInterface): Promise<Repo | null> {
   }
 
   const forge = await detect(send($), r.host)
+  forges.set(r.host, forge)
   if (forge.kind === 'unknown') {
     await update($, token, () => null)
     await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: forge.reason, detail: forge.detail }))
     return r
   }
-  if (forge.kind !== 'forgejo') {
+  if (forge.kind === 'github') {
     // No GitHub tokens setting yet.
-    const from = forge.kind === 'gitlab' ? readToken('GitLab tokens', r.host).from : null
-    await update($, token, () => from)
+    await update($, token, () => null)
     await update($, version, () => forgeName(forge))
-    await update($, setup, (): Setup => ({ kind: 'unsupported', forge: forge.kind }))
+    await update($, setup, (): Setup => ({ kind: 'unsupported', forge: 'github' }))
     return r
   }
-  const tok = readToken('Forgejo tokens', r.host)
+  const tok = readToken(forge.kind === 'gitlab' ? 'GitLab tokens' : 'Forgejo tokens', r.host)
   await update($, token, () => tok.from)
-  const c = await forgejo(send($), r, tok.value, configLabel, forge.version).check()
+  const c =
+    forge.kind === 'gitlab'
+      ? await gitlab(send($), r, tok.value, forge.version).check()
+      : await forgejo(send($), r, tok.value, configLabel, forge.version).check()
   await update($, version, () => c.version)
   await update($, setup, () => c.setup)
   return r
@@ -441,8 +451,10 @@ const STOPPED_AT: Record<Setup['kind'], number> = {
 }
 
 // What the pane says about the step that failed, before what to do. `v`:
-// the forge, as the Forge step names it.
-function intro(s: Setup, r: Repo | null, v: string | null, tokenText: string): string | null {
+// the forge, as the Forge step names it; `t`: the tracker, once there is a
+// repo.
+function intro(s: Setup, r: Repo | null, t: Tracker | null, v: string | null, tokenText: string): string | null {
+  const name = t?.name ?? 'Forgejo'
   const what = 'fj shows the issues of the repo this session runs in.'
   switch (s.kind) {
     case 'no-repo':
@@ -452,15 +464,17 @@ function intro(s: Setup, r: Repo | null, v: string | null, tokenText: string): s
           ? `${what} This repo has no remote origin.`
           : `${what} origin is ${s.origin}, which names no host.`
     case 'token-refused':
-      return `Forgejo did not accept the token ${tokenText}: it may be mistyped, expired or revoked.`
+      return `${name} did not accept the token ${tokenText}: it may be mistyped, expired or revoked.`
     case 'no-scope':
-      return s.missing
-        ? `The token ${tokenText} reads ${r ? slug(r) : 'the repo'}, but not who it belongs to: fj needs ${s.missing} too.`
-        : `The token ${tokenText} is valid but may not read this repo.`
+      return s.missing === 'read_api'
+        ? `The token ${tokenText} may not read ${r ? slug(r) : 'the repo'}: fj needs read_api.`
+        : s.missing
+          ? `The token ${tokenText} reads ${r ? slug(r) : 'the repo'}, but not who it belongs to: fj needs ${s.missing} too.`
+          : `The token ${tokenText} is valid but may not read this repo.`
     case 'not-found':
       return `${r ? slug(r) : 'The repo'}, from origin, was not found, or the token's owner cannot see it.`
     case 'error':
-      return `Forgejo could not be asked: ${s.message}.`
+      return `${name} could not be asked: ${s.message}.`
     case 'not-forgejo': {
       const host = r?.host ?? 'This host'
       return s.reason === 'no-answer'
@@ -469,23 +483,21 @@ function intro(s: Setup, r: Repo | null, v: string | null, tokenText: string): s
           ? `fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). ${host} runs ${s.detail}.`
           : `${host} does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (${s.detail}). fj has nothing to show for this repo.`
     }
-    case 'unsupported': {
-      const which = s.forge === 'gitlab' ? 'GitLab' : 'GitHub'
-      return `${r?.host ?? 'This host'} runs ${v ?? which}. fj does not show ${which} repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.`
-    }
+    case 'unsupported':
+      return `${r?.host ?? 'This host'} runs ${v ?? 'GitHub'}. fj does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.`
     default:
       return null
   }
 }
 
 // What to do about the step that failed, one line per action.
-// `tokens`: where the tracker makes tokens, once there is a repo.
-function todo(s: Setup, r: Repo | null, tokens: string | null): string[] {
-  const page = tokens ?? 'Settings › Applications in Forgejo'
-  const create = `Create a token at ${page} with ${SCOPES}.`
+// `t`: the tracker, which says where it makes tokens, once there is a repo.
+function todo(s: Setup, r: Repo | null, t: Tracker | null): string[] {
+  const page = t?.tokensUrl ?? 'Settings › Applications in Forgejo'
+  const create = `Create a token at ${page} with ${t?.scopes ?? 'read:issue, read:repository and read:user'}.`
   const host = r?.host ?? 'your-forgejo'
   const set = [
-    `Run \`${CONFIGURE}\` and paste it as Forgejo tokens, alone or as \`${host}=<token>\` next to tokens for other hosts.`,
+    `Run \`${CONFIGURE}\` and paste it as ${t?.setting ?? 'Forgejo tokens'}, alone or as \`${host}=<token>\` next to tokens for other hosts.`,
   ]
   switch (s.kind) {
     case 'no-repo': {
@@ -604,6 +616,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   }
 
   const tokenText = from ? `${from.host ? `for ${from.host} ` : ''}from ${from.setting}` : 'none found'
+  // The tracker behind the repo, for its name and where it makes tokens.
+  const t = r ? tracker($, r) : null
   const doneText: Record<Step, string> = {
     repo: r ? slug(r) : '',
     forge: v && r ? `${v} at ${r.host}` : '',
@@ -633,13 +647,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             : 'no answer',
   }
   const at = STOPPED_AT[s.kind]
-  // Without a repo, on a Forgejo too old, or on GitLab, the token is still
-  // checked: it needs no answer from the forge. The steps that do say so;
-  // the token too, where fj has no setting for the forge or knows none.
+  // Without a repo, or on a Forgejo too old, the token is still checked: it
+  // needs no answer from the forge. The steps that do say so; the token too,
+  // where fj has no setting for the forge or knows none.
   const noRepo = s.kind === 'no-repo'
   const noForge = s.kind === 'not-forgejo' || s.kind === 'unsupported'
-  const tokenChecked =
-    noRepo || (s.kind === 'not-forgejo' && s.reason === 'too-old') || (s.kind === 'unsupported' && s.forge === 'gitlab')
+  const tokenChecked = noRepo || (s.kind === 'not-forgejo' && s.reason === 'too-old')
   const steps = STEPS.map((step, i) => {
     const mark =
       s.kind === 'checking'
@@ -665,9 +678,11 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const why =
         s.actions.kind === 'unknown'
           ? 'unknown, scopes not listed'
-          : s.actions.reason === 'scope'
-            ? 'read only, token lacks write:issue'
-            : `read only, ${s.login} may not push here`
+          : s.actions.reason === 'later'
+            ? `read only on ${t?.name ?? 'this forge'} for now`
+            : s.actions.reason === 'scope'
+              ? 'read only, token lacks write:issue'
+              : `read only, ${s.login} may not push here`
       return line(`step-${step}`, `· ${LABEL[step].padEnd(8)}${why}`, { color: 'inactive' })
     }
     return line(`step-${step}`, `${mark} ${LABEL[step].padEnd(8)}${text}`, { color })
@@ -675,9 +690,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
   const body: RenderChildren[] = []
   if (s.kind !== 'ready' && s.kind !== 'checking') {
-    const about = intro(s, r, v, tokenText)
+    const about = intro(s, r, t, v, tokenText)
     if (about) body.push(para('intro', about), <Box key="gap-intro" height={1} />)
-    const actions = todo(s, r, r ? tracker($, r).tokensUrl : null)
+    const actions = todo(s, r, t)
     if (actions.length > 0) body.push(line('todo', 'What to do', { bold: true }))
     actions.forEach((t, i) => body.push(para(`todo-${i}`, `${i + 1}. ${t}`)))
     // Checking again is the guide's last step, so its button ends it.
@@ -761,7 +776,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
   }
   // With Debug on, under the repo line: what the last action and the session
-  // asked Forgejo.
+  // asked the forge.
   const req = configDebug ? await read($, requests) : null
   const counter = req && (
     <Box key="requests" height={1} flexShrink={0}>
@@ -1079,7 +1094,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, i.url)} />
           </Box>
           {!canAct &&
-            para('read-only', "Assign and close need a token with write:issue: the setup guide's steps make one.", { dimColor: true })}
+            para(
+              'read-only',
+              acts.kind === 'read-only' && acts.reason === 'later'
+                ? `fj cannot assign or close ${t?.name ?? 'its'} issues yet.`
+                : "Assign and close need a token with write:issue: the setup guide's steps make one.",
+              { dimColor: true },
+            )}
           {error && para('action-error', error, { color: 'error' })}
         </Box>,
       )

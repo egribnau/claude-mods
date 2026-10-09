@@ -1,6 +1,6 @@
 {
   "name": "fj",
-  "version": "0.40.0",
+  "version": "0.41.0",
   "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
   "author": {
     "name": "Erwin Gribnau"
@@ -17,7 +17,7 @@
     "gitlabTokens": {
       "type": "string",
       "title": "GitLab tokens",
-      "description": "GitLab access tokens, kept in secure storage, in the same form as Forgejo tokens. fj recognises GitLab but does not show its issues yet.",
+      "description": "GitLab access tokens, kept in secure storage, in the same form as Forgejo tokens. Needs read_api.",
       "default": "",
       "sensitive": true
     },
@@ -30,7 +30,7 @@
     "debug": {
       "type": "boolean",
       "title": "Debug",
-      "description": "Count fj's requests to Forgejo, on a line under the repo line: the last action's and the session's.",
+      "description": "Count fj's requests to the forge, on a line under the repo line: the last action's and the session's.",
       "default": false
     },
     "compact": {

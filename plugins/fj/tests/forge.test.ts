@@ -187,7 +187,7 @@ function world(on: On, remote: string, replies: Record<string, Reply>, asked: As
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('http.fetch', (_$, e) => {
     const headers = (e.init?.headers ?? {}) as Record<string, string>
-    asked.push({ url: e.url, auth: headers.Authorization })
+    asked.push({ url: e.url, auth: headers.Authorization ?? headers['PRIVATE-TOKEN'] })
     const path = new URL(e.url).pathname
     const r = replies[path]
     if (r === 'down') return { deny: 'connect ECONNREFUSED' }
@@ -211,7 +211,40 @@ const texts = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.
 
 const FORGEJO: Record<string, Reply> = { '/api/v1/version': { status: 200, body: { version: '12.0.1+gitea-1.22.0' } } }
 
-test('gitlab.com: not supported, asked nothing, its token from GitLab tokens', opts('bare', 'gitlab.example.com=glpat-a gitlab.com=glpat-b'), async ($, on) => {
+const GITLAB: Record<string, Reply> = {
+  '/api/v4/personal_access_tokens/self': { status: 200, body: { scopes: ['read_api'] } },
+  '/api/v4/user': { status: 200, body: { username: 'alice' } },
+  '/api/v4/projects/boats%2Fradar': { status: 200, body: { open_issues_count: 3 } },
+  // The list failing keeps the steps on screen.
+  '/api/v4/projects/boats%2Fradar/issues': { status: 500 },
+}
+
+test('gitlab.com: ready, its token from GitLab tokens, read only for now', opts('bare', 'gitlab.example.com=glpat-a gitlab.com=glpat-b'), async ($, on) => {
+  const asked: Asked = []
+  world(on, 'git@gitlab.com:boats/radar.git', GITLAB, asked)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toEqual(
+    expect.arrayContaining([
+      '✓ Repo    boats/radar',
+      '✓ Forge   GitLab at gitlab.com',
+      '✓ Token   for gitlab.com from GitLab tokens',
+      '✓ Access  3 open issues, as alice',
+      '· Actions read only on GitLab for now',
+    ]),
+  )
+  expect(asked.slice(0, 3).map(a => a.url)).toEqual([
+    'https://gitlab.com/api/v4/personal_access_tokens/self',
+    'https://gitlab.com/api/v4/user',
+    'https://gitlab.com/api/v4/projects/boats%2Fradar',
+  ])
+  expect(asked.every(a => a.auth === 'glpat-b')).toBe(true)
+})
+
+test('gitlab.com with no GitLab token: none found, and how to make one', opts('bare'), async ($, on) => {
   const asked: Asked = []
   world(on, 'git@gitlab.com:boats/radar.git', {}, asked)
 
@@ -219,29 +252,38 @@ test('gitlab.com: not supported, asked nothing, its token from GitLab tokens', o
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(asked).toEqual([])
-  expect(all).toEqual(
-    expect.arrayContaining([
-      '✓ Repo    boats/radar',
-      '✗ Forge   GitLab at gitlab.com, not supported',
-      '✓ Token   for gitlab.com from GitLab tokens',
-      '· Access  needs Forgejo',
-      '· Actions needs Forgejo',
-      'gitlab.com runs GitLab. fj does not show GitLab repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.',
-    ]),
+  expect(all).toContain('✗ Token   none found')
+  expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with read_api.')
+  expect(all).toContain(
+    '2. Run /plugin configure fj@egribnau-mods and paste it as GitLab tokens, alone or as gitlab.com=<token> next to tokens for other hosts.',
   )
-  expect(all).not.toContain('What to do')
+  expect(asked).toEqual([])
 })
 
-test('gitlab.com with no GitLab token: none found', opts('bare'), async ($, on) => {
+test('gitlab.com: a token GitLab refuses is named as GitLab refusing it', opts('', 'glpat-a'), async ($, on) => {
   const asked: Asked = []
-  world(on, 'git@gitlab.com:boats/radar.git', {}, asked)
+  world(on, 'git@gitlab.com:boats/radar.git', { '/api/v4/personal_access_tokens/self': { status: 401 } }, asked)
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
 
-  expect(await texts(ui)).toContain('✗ Token   none found')
-  expect(asked).toEqual([])
+  expect(all).toContain('✗ Access  token refused')
+  expect(all).toContain('GitLab did not accept the token from GitLab tokens: it may be mistyped, expired or revoked.')
+  expect(asked).toHaveLength(1)
+})
+
+test('gitlab.com: a token without read_api says it needs that scope', opts('', 'glpat-a'), async ($, on) => {
+  const asked: Asked = []
+  world(on, 'git@gitlab.com:boats/radar.git', { '/api/v4/personal_access_tokens/self': { status: 200, body: { scopes: ['read_user'] } } }, asked)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('✗ Access  no read_api')
+  expect(all).toContain('The token from GitLab tokens may not read boats/radar: fj needs read_api.')
+  expect(asked).toHaveLength(1)
 })
 
 test('github.com: not supported, asked nothing, the token needs Forgejo', opts('bare'), async ($, on) => {
@@ -259,12 +301,12 @@ test('github.com: not supported, asked nothing, the token needs Forgejo', opts('
       '· Token   needs Forgejo',
       '· Access  needs Forgejo',
       '· Actions needs Forgejo',
-      'github.com runs GitHub. fj does not show GitHub repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.',
+      'github.com runs GitHub. fj does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.',
     ]),
   )
 })
 
-test('self-hosted GitLab: found by probing, with no token sent', opts('bare git.example.org=x', 'glpat-a'), async ($, on) => {
+test('self-hosted GitLab: found by probing with no token, then asked with one', opts('bare git.example.org=x', 'glpat-a'), async ($, on) => {
   const asked: Asked = []
   world(on, 'https://gitlab.example.com/boats/radar.git', { '/api/v4/version': { status: 200, body: { version: '17.2.1' } } }, asked)
 
@@ -272,16 +314,16 @@ test('self-hosted GitLab: found by probing, with no token sent', opts('bare git.
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✗ Forge   GitLab 17.2.1 at gitlab.example.com, not supported')
+  expect(all).toContain('✓ Forge   GitLab 17.2.1 at gitlab.example.com')
   expect(all).toContain('✓ Token   from GitLab tokens')
-  expect(all).toContain(
-    'gitlab.example.com runs GitLab 17.2.1. fj does not show GitLab repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.',
-  )
-  expect(asked.map(a => a.url)).toEqual([
-    'https://gitlab.example.com/api/v1/version',
-    'https://gitlab.example.com/api/v4/version',
+  // An older GitLab without personal_access_tokens/self goes on to /user.
+  expect(all).toContain('GitLab could not be asked: /user: HTTP 404.')
+  expect(asked).toEqual([
+    { url: 'https://gitlab.example.com/api/v1/version', auth: undefined },
+    { url: 'https://gitlab.example.com/api/v4/version', auth: undefined },
+    { url: 'https://gitlab.example.com/api/v4/personal_access_tokens/self', auth: 'glpat-a' },
+    { url: 'https://gitlab.example.com/api/v4/user', auth: 'glpat-a' },
   ])
-  expect(asked.every(a => a.auth === undefined)).toBe(true)
 })
 
 test('GitHub Enterprise: found by probing, with no token sent', opts('bare'), async ($, on) => {
@@ -295,7 +337,7 @@ test('GitHub Enterprise: found by probing, with no token sent', opts('bare'), as
   expect(all).toContain('✗ Forge   GitHub Enterprise 3.12.4 at github.example.com, not supported')
   expect(all).toContain('· Token   needs Forgejo')
   expect(all).toContain(
-    'github.example.com runs GitHub Enterprise 3.12.4. fj does not show GitHub repos yet, only Forgejo and Gitea ones, so it has nothing to show for this repo.',
+    'github.example.com runs GitHub Enterprise 3.12.4. fj does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.',
   )
   expect(asked).toHaveLength(3)
   expect(asked.every(a => a.auth === undefined)).toBe(true)

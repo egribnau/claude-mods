@@ -2,6 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { EpicChild, Features, IssueDetail, IssueRow, Setup } from '../types'
 import type { MilestoneRow } from './epics'
+import type { TokenSetting } from './forge'
 
 // One HTTP request, as the pane sends it: counted, so Debug can say what
 // each action cost.
@@ -23,8 +24,13 @@ export type Checked = { version: string | null; setup: Setup }
 export type Tracker = {
   // The tracker at the repo's host, the token, and what it may read and do.
   check(): Promise<Checked>
-  // Where to create a token, for setup's guide.
+  // The forge's name, for the pane's texts.
+  name: 'Forgejo' | 'GitLab'
+  // Where to create a token, with which scopes, and the setting it goes in,
+  // for setup's guide.
   tokensUrl: string
+  scopes: string
+  setting: TokenSetting
   // The open milestones; none when the list is refused.
   milestones(): Promise<MilestoneRow[]>
   // Your open issues in this repo, and all its open issues.

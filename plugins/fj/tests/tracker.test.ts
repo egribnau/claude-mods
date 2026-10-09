@@ -41,7 +41,10 @@ function fake(f: Fake, calls: string[] = []): Tracker {
     throw new Error(`${what}: HTTP 500`)
   }
   return {
+    name: 'Forgejo',
     tokensUrl: 'fake:tokens',
+    scopes: 'fake scopes',
+    setting: 'Forgejo tokens',
     check: async () => ({ version: 'fake', setup: { kind: 'checking' } }),
     milestones: async () => {
       calls.push('milestones')
