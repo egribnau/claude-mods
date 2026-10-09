@@ -36,6 +36,8 @@ type World = {
   version?: string
   // What /repos/<o>/<r> answers.
   repo?: number
+  // What /user answers: who the token belongs to, with read:user.
+  user?: number
   opened?: { id: string; title?: string }[]
   asked?: { url: string; auth: string | undefined }[]
   envRead?: string[]
@@ -91,6 +93,10 @@ function world(on: On, w: World) {
       return reply(status, status === 200 ? (page === '1' ? (w.issues ?? []) : []) : {})
     }
     if (new URL(e.url).pathname.endsWith('/repos/boats/radar/issues')) return reply(200, [])
+    if (new URL(e.url).pathname.endsWith('/api/v1/user')) {
+      const status = w.user ?? 200
+      return reply(status, status === 200 ? { login: 'alice' } : { message: 'token does not have at least one of required scope(s): [read:user]' })
+    }
     const status = w.repo ?? 200
     return reply(status, status === 200 ? { full_name: 'boats/radar', open_issues_count: 7 } : {})
   })
@@ -114,6 +120,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       { url: 'https://git.example.org/api/v1/version', auth: undefined },
       { url: 'https://git.example.org/api/v1/repos/boats/radar', auth: 'token secret' },
     ])
+    expect(asked[2]).toEqual({ url: 'https://git.example.org/api/v1/user', auth: 'token secret' })
     // With the list failing to load, the ready screen shows, with why.
     expect(all[0]).toBe('Could not load the issues: your issues: HTTP 500.')
     expect(all[1]).toBe('Forgejo for Claude is ready!')
@@ -122,7 +129,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
         '✓ Repo    boats/radar',
         '✓ Forgejo 12.0.1 at git.example.org',
         '✓ Token   from the Token setting',
-        '✓ Access  7 open issues',
+        '✓ Access  7 open issues, as alice',
       ]),
     )
     expect(all).not.toContain('What to do')
@@ -240,7 +247,7 @@ test('a version older than 1.19 is too old', TOKEN, async ($, on) => {
 
   expect(all).toContain('✗ Forgejo Gitea 1.18.5, too old')
   expect(all).toContain(
-    'fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository). git.example.org runs Gitea 1.18.5.',
+    'fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). git.example.org runs Gitea 1.18.5.',
   )
 })
 
@@ -273,7 +280,7 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   expect(all).toContain('✗ Token   none found')
   expect(all).toContain('· Access  ')
   expect(all).toContain(
-    '1. Create a token at https://git.example.org/user/settings/applications with read:issue and read:repository.',
+    '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
   )
   // The address is a link, the command a command; neither keeps punctuation.
   expect(all).toContain('https://git.example.org/user/settings/applications')
@@ -286,18 +293,34 @@ test('no token: links the token page and both ways to set it', async ($, on) => 
   expect(asked.map(a => a.url)).toEqual(['https://git.example.org/api/v1/version'])
 })
 
+test('a token without read:user: says it needs that scope too', TOKEN, async ($, on) => {
+  world(on, { user: 403 })
+  const out = await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('✗ Access  no read:user')
+  expect(all).toContain(
+    'The token from the Token setting reads boats/radar, but not who it belongs to: fj needs read:user too.',
+  )
+  expect(all).toContain(
+    '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
+  )
+  expect(out).toEqual(expect.objectContaining({ text: 'fj needs setting up: see its pane.' }))
+})
+
 for (const [status, label, about, first] of [
   [
     401,
     'token refused',
     'Forgejo did not accept the token from the Token setting: it may be mistyped, expired or revoked.',
-    '1. Create a token at https://git.example.org/user/settings/applications with read:issue and read:repository.',
+    '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
   ],
   [
     403,
     'no permission',
     'The token from the Token setting is valid but may not read this repo.',
-    '1. Create a token at https://git.example.org/user/settings/applications with read:issue and read:repository.',
+    '1. Create a token at https://git.example.org/user/settings/applications with read:issue, read:repository and read:user.',
   ],
   [
     404,

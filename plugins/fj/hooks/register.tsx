@@ -1,7 +1,7 @@
 import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
-import type { Detail, Epic, EpicChild, EpicGroup, Epics, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
+import type { Detail, Epic, EpicChild, EpicGroup, Epics, IssueDetail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
 import { bar, groupsFor, openChildren, pickerOptions, standing, summary, tally } from './epics'
 import { day, dueText, duration, inkOn, loadIssue, wrap } from './issue'
 import { pickNext, waitingText } from './next'
@@ -9,7 +9,7 @@ import { pickNext, waitingText } from './next'
 const PANE = 'fj'
 const EPICS_PANE = 'fj-epics'
 const CONFIGURE = '/plugin configure fj@egribnau-mods'
-const SCOPES = 'read:issue and read:repository'
+const SCOPES = 'read:issue, read:repository and read:user'
 
 const repo = atom({ plugin: 'fj', key: 'repo' } as const, null)
 const version = atom({ plugin: 'fj', key: 'version' } as const, null)
@@ -25,6 +25,23 @@ const unfolded = atom({ plugin: 'fj', key: 'unfolded' } as const, [])
 const panesOpen = atom({ plugin: 'fj', key: 'panesOpen' } as const, [])
 const epicsPick = atom({ plugin: 'fj', key: 'epicsPick' } as const, null)
 const pickerOpen = atom({ plugin: 'fj', key: 'pickerOpen' } as const, false)
+const requests = atom({ plugin: 'fj', key: 'requests' } as const, null)
+
+// Every request fj sends Forgejo, counted, so Debug can say what each action cost.
+let requestsMade = 0
+function forgejo($: EngineInterface, url: string, init: Parameters<EngineInterface['http']['fetch']>[1]) {
+  requestsMade++
+  return $.http.fetch(url, init)
+}
+
+// Runs an action and records how many requests it sent, under `label`.
+async function counted<T>($: EngineInterface, label: string, action: () => Promise<T>): Promise<T> {
+  const before = requestsMade
+  const result = await action()
+  const count = requestsMade - before
+  await update($, requests, last => ({ label, count, total: (last?.total ?? 0) + count }))
+  return result
+}
 
 // The Token setting, read in `register`; a reload reads it again.
 let configToken: string | null = null
@@ -32,6 +49,8 @@ let configToken: string | null = null
 let configIcons = 'ask'
 // The Epic label setting: the label that makes an issue an epic.
 let configLabel = 'epic'
+// The Debug setting: count fj's requests on a line under the repo line.
+let configDebug = false
 
 // Nerd Font icons for the buttons (Material Design set).
 const ICON = { refresh: '\u{F0450}', work: '\u{F0674}', open: '\u{F03CC}', back: '\u{F004D}' } as const
@@ -101,8 +120,7 @@ async function check($: EngineInterface): Promise<Repo | null> {
 
   // Forgejo or Gitea answers /api/v1/version without a token. Forgejo's
   // version carries `+gitea-…`, which is how the two are told apart.
-  const res = await $.http
-    .fetch(`${base(r)}/version`, { method: 'GET', headers: { Accept: 'application/json' } })
+  const res = await forgejo($, `${base(r)}/version`, { method: 'GET', headers: { Accept: 'application/json' } })
     .catch((err: unknown) => message(err))
   if (typeof res === 'string') {
     await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: 'no-answer', detail: res }))
@@ -132,13 +150,24 @@ async function check($: EngineInterface): Promise<Repo | null> {
   }
 
   try {
-    const res = await $.http.fetch(`${base(r)}/repos/${slug(r)}`, {
+    const res = await forgejo($, `${base(r)}/repos/${slug(r)}`, {
       method: 'GET',
       headers: { Authorization: `token ${tok.value}`, Accept: 'application/json' },
     })
-    const next: Setup = res.ok
-      ? { kind: 'ready', openIssues: (JSON.parse(res.text) as { open_issues_count: number }).open_issues_count }
-      : res.status === 401
+    const headers = { Authorization: `token ${tok.value}`, Accept: 'application/json' }
+    // Who the token belongs to, once the repo answers: what makes an issue yours.
+    const user = res.ok ? await forgejo($, `${base(r)}/user`, { method: 'GET', headers }) : null
+    const next: Setup = user?.ok
+      ? {
+          kind: 'ready',
+          openIssues: (JSON.parse(res.text) as { open_issues_count: number }).open_issues_count,
+          login: (JSON.parse(user.text) as { login: string }).login,
+        }
+      : user && (user.status === 401 || user.status === 403)
+        ? { kind: 'no-scope', missing: 'read:user' }
+        : user
+          ? { kind: 'error', message: `/user: HTTP ${user.status}` }
+          : res.status === 401
         ? { kind: 'token-refused' }
         : res.status === 403
           ? { kind: 'no-scope' }
@@ -190,7 +219,7 @@ async function fetchAll<T>($: EngineInterface, url: string, what: string): Promi
   const headers = { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' }
   const found: T[] = []
   for (let page = 1; ; page++) {
-    const res = await $.http.fetch(`${url}&limit=50&page=${page}`, { method: 'GET', headers })
+    const res = await forgejo($, `${url}&limit=50&page=${page}`, { method: 'GET', headers })
     if (!res.ok) throw new Error(`${what}: HTTP ${res.status}`)
     const batch = JSON.parse(res.text) as T[]
     found.push(...batch)
@@ -202,8 +231,10 @@ async function fetchAll<T>($: EngineInterface, url: string, what: string): Promi
 // One request's JSON, or null when it failed.
 async function fetchJson<T>($: EngineInterface, url: string): Promise<T | null> {
   const tok = await readToken($)
-  const res = await $.http
-    .fetch(url, { method: 'GET', headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' } })
+  const res = await forgejo($, url, {
+    method: 'GET',
+    headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' },
+  })
     .catch(() => null)
   if (!res?.ok) return null
   try {
@@ -246,34 +277,58 @@ type RawDep = { number: number; title: string; state: string; assignees?: { logi
 type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string }[] | null }
 type RawMilestone = { title: string; due_on: string | null; open_issues: number; closed_issues: number }
 
+// What fj remembers of the epics until the next Refresh or /fj, so the
+// picker can switch without asking Forgejo again: the epics and open
+// milestones of a repo, and the children of each epic loaded so far.
+type EpicsMemory = {
+  repo: string
+  found: (Omit<RawEpic, 'milestone'> & { milestone: string | null })[]
+  milestones: { title: string; due: string | null; closed: number; total: number }[]
+  children: Map<number, EpicChild[] | null>
+}
+let epicsMemory: EpicsMemory | null = null
+
 // The epics: issues with the Epic label. The pane shows what the picker
 // picked: one open milestone's epics (at first the one due first that has
 // any), those with no milestone, or all of them. For each open epic shown,
 // its children: the issues it depends on, with whether each is yours and,
 // for the others, whether it is blocked. What was shown stays up while this
 // loads, so the picker does not vanish under the person's hand.
-async function loadEpics($: EngineInterface, r: Repo) {
+// `fresh`: forget what was remembered and ask Forgejo for all of it.
+async function loadEpics($: EngineInterface, r: Repo, fresh = true) {
   if ((await read($, epics)).kind !== 'ok') await update($, epics, (): Epics => ({ kind: 'loading' }))
   const api = `${base(r)}/repos/${slug(r)}`
   try {
     const label = configLabel
-    const found = (
-      await fetchAll<RawEpic>($, `${api}/issues?state=all&type=issues&labels=${encodeURIComponent(label)}`, 'epics')
-    )
-      .filter(i => (i.labels ?? []).some(l => l.name === label))
-      .map(i => ({ ...i, milestone: i.milestone?.title ?? null }))
+    let memory: EpicsMemory | null = !fresh && epicsMemory?.repo === `${r.host}/${slug(r)}` ? epicsMemory : null
+    if (!memory) {
+      epicsMemory = null
+      const found = (
+        await fetchAll<RawEpic>($, `${api}/issues?state=all&type=issues&labels=${encodeURIComponent(label)}`, 'epics')
+      )
+        .filter(i => (i.labels ?? []).some(l => l.name === label))
+        .map(i => ({ ...i, milestone: i.milestone?.title ?? null }))
+      const milestones = found.some(i => i.state === 'open')
+        ? (await fetchAll<RawMilestone>($, `${api}/milestones?state=open`, 'milestones')).map(m => ({
+            title: m.title,
+            due: m.due_on,
+            closed: m.closed_issues,
+            total: m.open_issues + m.closed_issues,
+          }))
+        : []
+      memory = { repo: `${r.host}/${slug(r)}`, found, milestones, children: new Map() }
+      epicsMemory = memory
+    }
+    const { found, milestones } = memory
     const openEpics = found.filter(i => i.state === 'open').length
     if (openEpics === 0) {
       await update($, epics, (): Epics => ({ kind: 'ok', options: [], pick: 'all', groups: [], openEpics }))
       return
     }
-    const me = (await fetchJson<{ login: string }>($, `${base(r)}/user`))?.login ?? null
-    const milestones = (await fetchAll<RawMilestone>($, `${api}/milestones?state=open`, 'milestones')).map(m => ({
-      title: m.title,
-      due: m.due_on,
-      closed: m.closed_issues,
-      total: m.open_issues + m.closed_issues,
-    }))
+    // Who you are, from the setup check: the children assigned to you are yours.
+    const s = await read($, setup)
+    const me = s.kind === 'ready' ? s.login : null
+    const known = memory.children
     const options = pickerOptions(milestones, found)
     const wanted = await read($, epicsPick)
     const pick = options.some(o => o.value === wanted) ? (wanted as string) : (options[0]?.value ?? 'all')
@@ -281,6 +336,7 @@ async function loadEpics($: EngineInterface, r: Repo) {
     const load = async (i: (typeof found)[number]): Promise<Epic> => {
       const state = i.state === 'closed' ? 'closed' : 'open'
       if (state === 'closed') return { number: i.number, title: i.title, state, children: null }
+      if (known.has(i.number)) return { number: i.number, title: i.title, state, children: known.get(i.number) ?? null }
       const raw = await deps(i.number)
       const children = raw
         ? await Promise.all(
@@ -294,6 +350,7 @@ async function loadEpics($: EngineInterface, r: Repo) {
             }),
           )
         : null
+      known.set(i.number, children)
       return { number: i.number, title: i.title, state, children }
     }
     const groups: EpicGroup[] = await Promise.all(
@@ -315,16 +372,27 @@ async function pickEpics($: EngineInterface, value: string) {
   await update($, pickerOpen, () => false)
   await update($, epicsPick, () => value)
   const r = await read($, repo)
-  if (r) await loadEpics($, r)
+  const ep = await read($, epics)
+  const label = (ep.kind === 'ok' && ep.options.find(o => o.value === value)?.label) || value
+  if (r) await counted($, label, () => loadEpics($, r, false))
 }
 
-// Reads issue `n` for the detail view of pane `pane`.
+// The issues read for a detail view, by repo and number, kept until the next
+// Refresh or /fj, so opening one again asks Forgejo nothing.
+const issuesRead = new Map<string, IssueDetail>()
+
+// Reads issue `n` for the detail view of pane `pane`, or shows it from memory.
 async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) {
+  const key = `${r.host}/${slug(r)}#${n}`
+  const known = issuesRead.get(key)
+  if (known) {
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue: known }))
+    return
+  }
   await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'loading', number: n }))
   const tok = await readToken($)
   const get = async (path: string) => {
-    const res = await $.http
-      .fetch(`${base(r)}/repos/${slug(r)}${path}`, {
+    const res = await forgejo($, `${base(r)}/repos/${slug(r)}${path}`, {
         method: 'GET',
         headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' },
       })
@@ -340,6 +408,7 @@ async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) 
   }
   try {
     const issue = await loadIssue(get, n)
+    issuesRead.set(key, issue)
     // Another issue opened while this one loaded wins.
     if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
     await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue }))
@@ -357,12 +426,13 @@ async function openIssue($: EngineInterface, pane: string, n: number | null) {
     await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
     return
   }
-  await loadDetail($, r, pane, n)
+  await counted($, `#${n}`, () => loadDetail($, r, pane, n))
 }
 
 // Checks setup and, once it passes, loads What's next and the epics and,
 // where an issue is open, that issue again.
 async function refresh($: EngineInterface): Promise<Repo | null> {
+  issuesRead.clear()
   const r = await check($)
   if (r && (await read($, setup)).kind === 'ready') {
     await loadOverview($, r)
@@ -472,7 +542,9 @@ function intro(s: Setup, r: Repo | null, tokenText: string): string | null {
     case 'token-refused':
       return `Forgejo did not accept the token ${tokenText}: it may be mistyped, expired or revoked.`
     case 'no-scope':
-      return `The token ${tokenText} is valid but may not read this repo.`
+      return s.missing
+        ? `The token ${tokenText} reads ${r ? slug(r) : 'the repo'}, but not who it belongs to: fj needs ${s.missing} too.`
+        : `The token ${tokenText} is valid but may not read this repo.`
     case 'not-found':
       return `${r ? slug(r) : 'The repo'}, from origin, was not found, or the token's owner cannot see it.`
     case 'error':
@@ -482,7 +554,7 @@ function intro(s: Setup, r: Repo | null, tokenText: string): string | null {
       return s.reason === 'no-answer'
         ? `${host} did not answer (${s.detail}). Check that https://${host} opens from this computer.`
         : s.reason === 'too-old'
-          ? `fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository). ${host} runs ${s.detail}.`
+          ? `fj needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). ${host} runs ${s.detail}.`
           : `${host} does not answer as Forgejo or Gitea (${s.detail}). fj works with Forgejo and Gitea only, so it has nothing to show for this repo.`
     }
     default:
@@ -597,7 +669,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     repo: r ? slug(r) : '',
     forgejo: v && r ? `${v} at ${r.host}` : '',
     token: tokenText,
-    access: s.kind === 'ready' ? `${s.openIssues} open issues` : '',
+    access: s.kind === 'ready' ? `${s.openIssues} open issues, as ${s.login}` : '',
   }
   const failText: Record<Step, string> = {
     repo: 'no Forgejo repo here',
@@ -612,7 +684,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       s.kind === 'token-refused'
         ? 'token refused'
         : s.kind === 'no-scope'
-          ? 'no permission'
+          ? s.missing ? `no ${s.missing}` : 'no permission'
           : s.kind === 'not-found'
             ? 'not found'
             : 'no answer',
@@ -653,11 +725,24 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // Checking again is the guide's last step, so its button ends it.
     body.push(
       <Box key="again" height={1} marginTop={1} paddingLeft={3}>
-        <Button key="refresh" label="Check again" hotkey="r" onPress={() => refresh($)} />
+        <Button key="refresh" label="Check again" hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
       </Box>,
     )
   }
 
+  // With Debug on, under the repo line: what the last action and the session
+  // asked Forgejo.
+  const req = configDebug ? await read($, requests) : null
+  const counter = req && (
+    <Box key="requests" height={1} flexShrink={0}>
+      <Text dimColor>{`↯ ${req.label}: `}</Text>
+      <Text>{String(req.count)}</Text>
+      <Text dimColor>{' requests'}</Text>
+      <Box flexGrow={1} />
+      <Text>{String(req.total)}</Text>
+      <Text dimColor>{' this session'}</Text>
+    </Box>
+  )
   // With another fj pane open the engine draws tabs that name both, so a
   // title row leaves its pane's name out.
   const tabbed = (await read($, panesOpen)).some(id => id !== e.requestId)
@@ -670,7 +755,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Text>
       )}
       <Box flexGrow={1} />
-      {action && <Button key="refresh" label={say(ICON.refresh, action.label)} hotkey="r" onPress={() => refresh($)} />}
+      {action && <Button key="refresh" label={say(ICON.refresh, action.label)} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />}
     </Box>
   )
 
@@ -737,7 +822,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           onPress={() => openIssue($, e.requestId, null)}
         />
         <Box flexGrow={1} />
-        <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => refresh($)} />
+        <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
       </Box>
     )
     const body: RenderChildren[] = []
@@ -883,6 +968,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {body}
         </Box>
         {fixedLine('where', `${r.host}/${slug(r)}`)}
+        {counter}
       </Box>
     )
   }
@@ -1021,7 +1107,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Button key="milestone" label={`${picked.label} ▾`} hotkey="m" onPress={() => update($, pickerOpen, o => !o)} />
           )}
           <Box width={2} />
-          <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => refresh($)} />
+          <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
         </Box>
         {listOpen && ep.kind === 'ok' && (
           // The picker's list, under the title at its right: each choice, a
@@ -1048,6 +1134,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {g && <Text dimColor>{`${openShown} ${openShown === 1 ? 'epic' : 'epics'} · `}</Text>}
           {g && <Text color="success">{`${yours} yours`}</Text>}
         </Box>
+        {counter}
       </Box>
     )
   }
@@ -1152,6 +1239,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
         {fixedLine('where-rule', '─'.repeat(columns))}
         {repoLine}
+        {counter}
       </Box>
     )
   }
@@ -1171,10 +1259,56 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   )
 }
 
+// /fj opens both panes; /fj next (n) and /fj epics (e) put that one in front.
+async function runFj($: EngineInterface, word: string) {
+  const lower = word.toLowerCase()
+  const want = lower === '' ? 'both' : lower === 'next' || lower === 'n' ? 'next' : lower === 'epics' || lower === 'e' ? 'epics' : null
+  if (!want) return { text: `fj does not know "${word}". Try /fj next (or n), /fj epics (or e), or /fj for both.` }
+  const openNext = async (title: string, focus?: true) => {
+    await $.ui.open({ id: PANE, title, ...(focus ? { focus } : {}) })
+    await update($, panesOpen, ids => (ids.includes(PANE) ? ids : [...ids, PANE]))
+  }
+  // Epics alone opens nothing until it knows there are epics to show.
+  if (want !== 'epics') await openNext('fj')
+  const r = await refresh($)
+  const s = await read($, setup)
+  const ep = await read($, epics)
+  const hasEpics = ep.kind === 'ok' && ep.openEpics > 0
+  if (want === 'epics' && (s.kind !== 'ready' || !r)) {
+    await openNext('fj')
+    return { text: 'fj needs setting up: see its pane.' }
+  }
+  if (want === 'epics' && r && !hasEpics) {
+    return { text: ep.kind === 'error' ? `Could not load the epics: ${ep.message}.` : `No open epics in ${slug(r)}.` }
+  }
+  if (r) await openNext("What's next")
+  // The Epics pane, a tab next to What's next, only while there are open epics.
+  if (hasEpics) {
+    await $.ui.open({ id: EPICS_PANE, title: 'Epics', ...(want === 'epics' ? { focus: true as const } : {}) })
+    await update($, panesOpen, ids => (ids.includes(EPICS_PANE) ? ids : [...ids, EPICS_PANE]))
+  } else if (ep.kind === 'ok' && (await read($, panesOpen)).includes(EPICS_PANE)) {
+    await $.ui.close({ id: EPICS_PANE })
+  }
+  if (want === 'next' && r) await openNext("What's next", true)
+  const o = await read($, overview)
+  if (s.kind !== 'ready' || !r) return { text: 'fj needs setting up: see its pane.' }
+  if (want === 'epics' && ep.kind === 'ok') {
+    const showing = ep.options.find(x => x.value === ep.pick)?.label ?? 'All'
+    return { text: `fj epics for ${slug(r)}: ${ep.openEpics} open, showing ${showing}.` }
+  }
+  if (o.kind !== 'ok') return { text: `fj is ready for ${slug(r)}, but could not load its issues.` }
+  if (o.inProgress.length + o.queue.length + o.blocked.length === 0 && !o.next) {
+    return { text: `fj is ready for ${slug(r)}: no open issues.` }
+  }
+  const then = o.next ? `next is #${o.next.number}` : o.blocked.length > 0 ? 'nothing ready' : 'nothing else open'
+  return { text: `fj is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}.` }
+}
+
 export const register: Register = (on, options) => {
   configToken = String(options.token ?? '').trim() || null
   configIcons = String(options.icons ?? 'ask')
   configLabel = String(options.label ?? 'epic').trim() || 'epic'
+  configDebug = options.debug === true
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -1185,50 +1319,9 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // /fj opens both panes; /fj next (n) and /fj epics (e) put that one in front.
   on('command.run', { command: 'fj' }, async ($, e) => {
     const word = e.args.trim()
-    const lower = word.toLowerCase()
-    const want = lower === '' ? 'both' : lower === 'next' || lower === 'n' ? 'next' : lower === 'epics' || lower === 'e' ? 'epics' : null
-    if (!want) return { text: `fj does not know "${word}". Try /fj next (or n), /fj epics (or e), or /fj for both.` }
-    const openNext = async (title: string, focus?: true) => {
-      await $.ui.open({ id: PANE, title, ...(focus ? { focus } : {}) })
-      await update($, panesOpen, ids => (ids.includes(PANE) ? ids : [...ids, PANE]))
-    }
-    // Epics alone opens nothing until it knows there are epics to show.
-    if (want !== 'epics') await openNext('fj')
-    const r = await refresh($)
-    const s = await read($, setup)
-    const ep = await read($, epics)
-    const hasEpics = ep.kind === 'ok' && ep.openEpics > 0
-    if (want === 'epics' && (s.kind !== 'ready' || !r)) {
-      await openNext('fj')
-      return { text: 'fj needs setting up: see its pane.' }
-    }
-    if (want === 'epics' && r && !hasEpics) {
-      return { text: ep.kind === 'error' ? `Could not load the epics: ${ep.message}.` : `No open epics in ${slug(r)}.` }
-    }
-    if (r) await openNext("What's next")
-    // The Epics pane, a tab next to What's next, only while there are open epics.
-    if (hasEpics) {
-      await $.ui.open({ id: EPICS_PANE, title: 'Epics', ...(want === 'epics' ? { focus: true as const } : {}) })
-      await update($, panesOpen, ids => (ids.includes(EPICS_PANE) ? ids : [...ids, EPICS_PANE]))
-    } else if (ep.kind === 'ok' && (await read($, panesOpen)).includes(EPICS_PANE)) {
-      await $.ui.close({ id: EPICS_PANE })
-    }
-    if (want === 'next' && r) await openNext("What's next", true)
-    const o = await read($, overview)
-    if (s.kind !== 'ready' || !r) return { text: 'fj needs setting up: see its pane.' }
-    if (want === 'epics' && ep.kind === 'ok') {
-      const showing = ep.options.find(x => x.value === ep.pick)?.label ?? 'All'
-      return { text: `fj epics for ${slug(r)}: ${ep.openEpics} open, showing ${showing}.` }
-    }
-    if (o.kind !== 'ok') return { text: `fj is ready for ${slug(r)}, but could not load its issues.` }
-    if (o.inProgress.length + o.queue.length + o.blocked.length === 0 && !o.next) {
-      return { text: `fj is ready for ${slug(r)}: no open issues.` }
-    }
-    const then = o.next ? `next is #${o.next.number}` : o.blocked.length > 0 ? 'nothing ready' : 'nothing else open'
-    return { text: `fj is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}.` }
+    return counted($, word ? `/fj ${word}` : '/fj', () => runFj($, word))
   })
 
   on('ui.close', { id: PANE }, paneClosed)

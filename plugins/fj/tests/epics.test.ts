@@ -90,6 +90,12 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
     }
     if (url.pathname.endsWith('/repos/boats/radar/milestones')) return reply(200, page === 0 ? (w.milestones ?? []) : [])
     if (dep) return reply(200, w.deps?.[Number(dep[1])] ?? [])
+    // An issue itself, for its detail view; the rest of the detail answers 404.
+    const one = /\/repos\/boats\/radar\/issues\/(\d+)$/.exec(url.pathname)
+    if (one) {
+      const n = Number(one[1])
+      return reply(200, { ...issue(n, `Issue ${n}`), user: { login: 'alice' }, updated_at: '2026-09-01T09:00:00Z', comments: 0 })
+    }
     if (url.pathname.endsWith('/repos/boats/radar')) return reply(200, { full_name: 'boats/radar', open_issues_count: 9 })
     return reply(404, { message: 'not found' })
   })
@@ -470,6 +476,90 @@ test('the pick holds over a Refresh', TOKEN, async ($, on) => {
   await ui.press({ key: 'refresh' })
   expect(await label(ui)).toBe('v1.3 ▾')
   expect((await texts(ui))[1]).toBe('v1.3')
+})
+
+const count = (asked: string[], test: (u: URL) => boolean) => asked.filter(u => test(new URL(u))).length
+const depsOf = (n: number) => (u: URL) => u.pathname.endsWith(`/issues/${n}/dependencies`)
+
+test('switching milestones and back asks Forgejo only for epics not seen yet', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, REPO, asked)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  for (const pick of ['m:v1.3', 'm:v1.2', 'all']) {
+    await ui.press({ key: 'milestone' })
+    await ui.press({ key: `pick-${pick}` })
+  }
+  expect(count(asked, u => u.searchParams.get('labels') === 'epic')).toBe(1)
+  expect(count(asked, u => u.pathname.endsWith('/milestones'))).toBe(1)
+  expect(count(asked, depsOf(12))).toBe(1)
+  expect(count(asked, depsOf(60))).toBe(1)
+  expect(count(asked, depsOf(71))).toBe(1)
+  expect((await texts(ui)).filter(t => t === '── ')).toHaveLength(3)
+})
+
+test('Refresh forgets the epics and asks again', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, REPO, asked)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  expect(count(asked, depsOf(12))).toBe(2)
+  expect(count(asked, u => u.pathname.endsWith('/milestones'))).toBe(2)
+})
+
+test('who you are comes from the setup check, so a picker switch asks Forgejo nothing', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, REPO, asked)
+  await $.command.run(RUN)
+  expect(count(asked, u => u.pathname.endsWith('/user'))).toBe(1)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  for (const pick of ['m:v1.3', 'm:v1.2', 'm:v1.3']) {
+    await ui.press({ key: 'milestone' })
+    await ui.press({ key: `pick-${pick}` })
+  }
+  const before = asked.length
+  await ui.press({ key: 'milestone' })
+  await ui.press({ key: 'pick-m:v1.2' })
+  expect(asked.length).toBe(before)
+})
+
+const DEBUG = { options: { ...TOKEN.options, debug: true } }
+const counter = async (ui: Ui) => (await texts(ui)).slice(-5)
+
+test('with Debug on, a line under the repo line counts the requests of each action and the session', DEBUG, async ($, on) => {
+  const asked: string[] = []
+  world(on, REPO, asked)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  const first = asked.length
+  expect(await counter(ui)).toEqual(['↯ /fj: ', String(first), ' requests', String(first), ' this session'])
+
+  await ui.press({ key: 'fold-20' })
+  await ui.press({ key: 'child-51' })
+  const opened = asked.length - first
+  expect(opened).toBeGreaterThan(0)
+  expect(await counter(ui)).toEqual(['↯ #51: ', String(opened), ' requests', String(asked.length), ' this session'])
+
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'child-51' })
+  expect(await counter(ui)).toEqual(['↯ #51: ', '0', ' requests', String(asked.length), ' this session'])
+
+  await ui.press({ key: 'back' })
+  const before = asked.length
+  await ui.press({ key: 'milestone' })
+  await ui.press({ key: 'pick-m:v1.3' })
+  expect(await counter(ui)).toEqual(['↯ v1.3: ', String(asked.length - before), ' requests', String(asked.length), ' this session'])
+
+  await ui.press({ key: 'refresh' })
+  expect((await counter(ui))[0]).toBe('↯ Refresh: ')
+})
+
+test('with Debug off there is no counter', TOKEN, async ($, on) => {
+  world(on, REPO)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  expect((await texts(ui)).some(t => t.startsWith('↯'))).toBe(false)
 })
 
 const child = (number: number, extra: Partial<EpicChild> = {}): EpicChild => ({

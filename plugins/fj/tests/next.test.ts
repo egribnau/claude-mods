@@ -76,6 +76,7 @@ function world(on: On, w: World, asked: string[] = []) {
     })
     const dep = /\/issues\/(\d+)\/dependencies$/.exec(url.pathname)
     if (url.pathname.endsWith('/version')) return reply(200, { version: '16.0.5+gitea-1.22.0' })
+    if (url.pathname.endsWith('/api/v1/user')) return reply(200, { login: 'alice' })
     if (url.pathname.endsWith('/repos/issues/search')) return reply(200, w.mine?.[page] ?? [])
     if (url.pathname.endsWith('/repos/boats/radar/issues')) {
       const status = w.openStatus ?? 200

@@ -16,10 +16,13 @@ export type Setup =
   | { kind: 'not-forgejo'; reason: 'other' | 'no-answer' | 'too-old'; detail: string }
   | { kind: 'no-token' }
   | { kind: 'token-refused' }
-  | { kind: 'no-scope' }
+  // `missing`: the scope the token lacks, when the repo answered but /user
+  // refused; absent when the repo itself refused.
+  | { kind: 'no-scope'; missing?: 'read:user' }
   | { kind: 'not-found' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; openIssues: number }
+  // `login`: who the token belongs to, from /user.
+  | { kind: 'ready'; openIssues: number; login: string }
 
 // One open issue in this repo, as the overview lists it.
 export type IssueRow = {
@@ -143,6 +146,9 @@ declare module 'claude-code' {
       epicsPick: string | null
       // Whether the picker's list is open.
       pickerOpen: boolean
+      // With Debug on: the last action, the requests it sent Forgejo, and
+      // the requests of the session so far.
+      requests: { label: string; count: number; total: number } | null
       // The epics folded open in the Epics pane, by number.
       unfolded: number[]
       // Icons chosen in this session, before a reload brings the setting.

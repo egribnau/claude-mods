@@ -1,6 +1,6 @@
 {
   "name": "fj",
-  "version": "0.31.0",
+  "version": "0.34.0",
   "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
   "author": {
     "name": "Erwin Gribnau"
@@ -10,7 +10,7 @@
     "token": {
       "type": "string",
       "title": "Token",
-      "description": "A Forgejo access token, kept in secure storage. Needs read:issue and read:repository.",
+      "description": "A Forgejo access token, kept in secure storage. Needs read:issue, read:repository and read:user.",
       "default": "",
       "sensitive": true
     },
@@ -19,6 +19,12 @@
       "title": "Epic label",
       "description": "The label that makes an issue an epic. Its children are the issues it depends on.",
       "default": "epic"
+    },
+    "debug": {
+      "type": "boolean",
+      "title": "Debug",
+      "description": "Count fj's requests to Forgejo, on a line under the repo line: the last action's and the session's.",
+      "default": false
     },
     "icons": {
       "type": "string",

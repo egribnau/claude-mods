@@ -114,6 +114,7 @@ function world(on: On, answers: Answers, asked: string[] = [], opened: string[] 
       value: { status, ok: status === 200, headers: {}, text: JSON.stringify(body) },
     })
     if (url.pathname.endsWith('/version')) return reply(200, { version: '16.0.5' })
+    if (url.pathname.endsWith('/api/v1/user')) return reply(200, { login: 'alice' })
     if (url.pathname.endsWith('/issues/search')) return reply(200, url.searchParams.get('page') === '1' ? [LISTED] : [])
     // The repo's open issues: only #29, which is yours.
     if (url.pathname.endsWith('/repos/boats/radar/issues')) return reply(200, [])
@@ -248,6 +249,23 @@ test('Refresh reads the open issue again', TOKEN, async ($, on) => {
 
   expect(asked.filter(u => u === `${API}/issues/29`).length).toBe(before + 1)
   expect((await texts(ui)).some(t => t.includes('Docs: config keys'))).toBe(true)
+})
+
+test('an issue opened again is shown from memory until Refresh', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, FULL, asked)
+  const ui = await opened($)
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'pick-29' })
+  const issue = () => asked.filter(u => u === `${API}/issues/29` || u === `${API}/issues/29/comments`).length
+  expect(issue()).toBe(2)
+  expect((await texts(ui)).some(t => t.includes('Docs: config keys'))).toBe(true)
+
+  await ui.press({ key: 'refresh' })
+  expect(issue()).toBe(4)
+  // /fj asks again too.
+  await $.command.run(RUN)
+  expect(issue()).toBe(6)
 })
 
 type Filled = { text: string; mode?: string }[]

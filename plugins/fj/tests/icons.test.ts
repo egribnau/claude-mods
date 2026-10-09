@@ -65,6 +65,8 @@ function world(on: On, set: { key: string; value: unknown }[] = [], offered = tr
     const url = new URL(e.url)
     const body = url.pathname.endsWith('/version')
       ? { version: '16.0.5' }
+      : url.pathname.endsWith('/api/v1/user')
+        ? { login: 'alice' }
       : url.pathname.endsWith('/issues/search')
         ? url.searchParams.get('page') === '1'
           ? [ISSUE]
