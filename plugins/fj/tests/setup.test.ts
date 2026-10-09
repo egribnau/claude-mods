@@ -111,6 +111,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
         'Ready.',
       ]),
     )
+    expect(all[0]).toBe('Forgejo for Claude'
+    )
     expect(all).not.toContain('What to do')
     expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar.' }))
   })

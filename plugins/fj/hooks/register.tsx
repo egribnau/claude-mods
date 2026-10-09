@@ -292,7 +292,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
-        {line('title', s.kind === 'ready' ? 'fj' : 'Set up Forgejo for Claude', { bold: true })}
+        {line('title', s.kind === 'ready' ? 'Forgejo for Claude' : 'Set up Forgejo for Claude', { bold: true })}
         {steps}
         <Box key="gap" height={1} />
         {body}
