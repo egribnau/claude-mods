@@ -19,6 +19,22 @@ export type Setup =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; openIssues: number }
 
+// One open issue in this repo assigned to the token's owner.
+export type MyIssue = {
+  number: number
+  title: string
+  milestone: string | null
+  labels: string[]
+  created: string
+}
+
+// The list of your issues, once setup passes.
+export type Mine =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'ok'; issues: MyIssue[] }
+  | { kind: 'error'; message: string }
+
 declare module 'claude-code' {
   interface PluginState {
     fj: {
@@ -26,6 +42,7 @@ declare module 'claude-code' {
       version: string | null
       token: TokenSource
       setup: Setup
+      mine: Mine
     }
   }
 }

@@ -30,7 +30,7 @@ plugins/fj/                          a mod: a hooks module, no skills
 
 | Mod | What it does | Requires |
 | --- | --- | --- |
-| `fj` | `/fj` opens a docked pane on the Forgejo repo behind the current directory's `origin`. Until setup is complete, the pane guides it step by step: the repo, Forgejo at its host, a token, and the token reading the repo. The prototype is tagged `fj-prototype`. | a Forgejo access token; Forgejo or Gitea |
+| `fj` | `/fj` opens a docked pane on the Forgejo repo behind the current directory's `origin`. Until setup is complete, the pane guides it step by step: the repo, Forgejo at its host, a token, and the token reading the repo. Then it lists your open issues in the repo, oldest first. The prototype is tagged `fj-prototype`. | a Forgejo access token; Forgejo or Gitea |
 
 `fj` has one setting, **Token**: a Forgejo access token, kept in secure storage. `/config` does not
 list it: set it with `/plugin configure fj@egribnau-mods`. The token needs `read:issue` and

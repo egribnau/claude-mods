@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 const PANE = {
@@ -37,9 +37,13 @@ type World = {
   opened?: { id: string; title?: string }[]
   asked?: { url: string; auth: string | undefined }[]
   envRead?: string[]
+  // What the issue search answers: its status, and the issues on page 1.
+  search?: number
+  issues?: unknown[]
 }
 
 function world(on: On, w: World) {
+  mock.clock(on)
   on('process.run', (_$, e) => {
     const remote = w.remote === undefined ? 'ssh://git@git.example.org:2222/boats/radar.git' : w.remote
     const ok = (stdout: string) => ({ exitCode: 0, stdout: `${stdout}\n`, stderr: '' })
@@ -79,6 +83,11 @@ function world(on: On, w: World) {
       const status = w.forge ?? 200
       return reply(status, status === 200 ? { version: '12.0.1+gitea-1.22.0' } : { message: 'Not Found' })
     }
+    if (e.url.includes('/repos/issues/search')) {
+      const page = new URL(e.url).searchParams.get('page')
+      const status = w.search ?? 200
+      return reply(status, status === 200 ? (page === '1' ? (w.issues ?? []) : []) : {})
+    }
     const status = w.repo ?? 200
     return reply(status, status === 200 ? { full_name: 'boats/radar', open_issues_count: 7 } : {})
   })
@@ -91,17 +100,20 @@ for (const surface of ['terminal', 'desktop'] as const) {
   test(`all four steps pass and the pane says ready on ${surface}`, TOKEN, async ($, on) => {
     const opened: World['opened'] = []
     const asked: World['asked'] = []
-    world(on, { opened, asked })
+    world(on, { opened, asked, search: 500 })
 
     const out = await $.command.run(RUN)
     const ui = await $.ui.mount({ ...PANE, surface })
     const all = await texts(ui)
 
     expect(opened.at(-1)).toEqual(expect.objectContaining({ id: 'fj', title: 'fj · boats/radar' }))
-    expect(asked).toEqual([
+    expect(asked.slice(0, 2)).toEqual([
       { url: 'https://git.example.org/api/v1/version', auth: undefined },
       { url: 'https://git.example.org/api/v1/repos/boats/radar', auth: 'token secret' },
     ])
+    // With the list failing to load, the ready screen shows, with why.
+    expect(all[0]).toBe('Could not load your issues: your issues: HTTP 500.')
+    expect(all[1]).toBe('Forgejo for Claude is ready!')
     expect(all).toEqual(
       expect.arrayContaining([
         '✓ Repo    boats/radar',
@@ -110,10 +122,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
         '✓ Access  7 open issues',
       ]),
     )
-    expect(all[0]).toBe('Forgejo for Claude is ready!'
-    )
     expect(all).not.toContain('What to do')
-    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar.' }))
+    expect(out).toEqual(expect.objectContaining({ text: 'fj is ready for boats/radar, but could not load your issues.' }))
   })
 }
 
@@ -287,6 +297,7 @@ test('r checks again and the guide goes once it passes', TOKEN, async ($, on) =>
   await ui.press({ key: 'refresh' })
 
   const all = await texts(ui)
-  expect(all[0]).toBe('Forgejo for Claude is ready!')
+  expect(all[0]).toBe('My issues (0)')
+  expect(all).toContain('No open issues assigned to you in boats/radar.')
   expect(all).not.toContain('What to do')
 })

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Repo, Setup, TokenSource } from '../types'
+import type { Mine, MyIssue, Repo, Setup, TokenSource } from '../types'
 
 const PANE = 'fj'
 const CONFIGURE = '/plugin configure fj@egribnau-mods'
@@ -11,6 +11,7 @@ const repo = atom({ plugin: 'fj', key: 'repo' } as const, null)
 const version = atom({ plugin: 'fj', key: 'version' } as const, null)
 const token = atom({ plugin: 'fj', key: 'token' } as const, 'none')
 const setup = atom({ plugin: 'fj', key: 'setup' } as const, { kind: 'checking' })
+const mine = atom({ plugin: 'fj', key: 'mine' } as const, { kind: 'idle' })
 
 // The Token setting, read in `register`; a reload reads it again.
 let configToken: string | null = null
@@ -103,6 +104,68 @@ async function check($: EngineInterface): Promise<Repo | null> {
   return r
 }
 
+type RawFound = {
+  number: number
+  title: string
+  created_at: string
+  milestone: { title: string } | null
+  labels: { name: string }[] | null
+  repository: { full_name: string }
+}
+
+// Your open issues in this repo, oldest first. Forgejo's search covers every
+// repo the token sees, so it is narrowed to this one here.
+async function loadMine($: EngineInterface, r: Repo) {
+  await update($, mine, (): Mine => ({ kind: 'loading' }))
+  const tok = await readToken($)
+  try {
+    const found: RawFound[] = []
+    for (let page = 1; ; page++) {
+      const res = await $.http.fetch(
+        `${base(r)}/repos/issues/search?assigned=true&state=open&type=issues&limit=50&page=${page}`,
+        { method: 'GET', headers: { Authorization: `token ${tok.value ?? ''}`, Accept: 'application/json' } },
+      )
+      if (!res.ok) throw new Error(`your issues: HTTP ${res.status}`)
+      const batch = JSON.parse(res.text) as RawFound[]
+      found.push(...batch)
+      if (batch.length < 50) break
+    }
+    const issues: MyIssue[] = found
+      .filter(i => i.repository.full_name === slug(r))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map(i => ({
+        number: i.number,
+        title: i.title,
+        milestone: i.milestone?.title ?? null,
+        labels: (i.labels ?? []).map(l => l.name),
+        created: i.created_at,
+      }))
+    await update($, mine, (): Mine => ({ kind: 'ok', issues }))
+  } catch (err) {
+    await update($, mine, (): Mine => ({ kind: 'error', message: message(err) }))
+  }
+}
+
+// Checks setup and, once it passes, loads your issues.
+async function refresh($: EngineInterface): Promise<Repo | null> {
+  const r = await check($)
+  if (r && (await read($, setup)).kind === 'ready') await loadMine($, r)
+  else await update($, mine, (): Mine => ({ kind: 'idle' }))
+  return r
+}
+
+// How long ago `iso` was, as a short age: 5m, 3h, 6d, 3w, 4mo, 2y.
+function age(iso: string, now: number): string {
+  const s = Math.max(0, (now - Date.parse(iso)) / 1000)
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  const d = Math.floor(s / 86400)
+  if (d < 14) return `${d}d`
+  if (d < 60) return `${Math.floor(d / 7)}w`
+  if (d < 730) return `${Math.floor(d / 30)}mo`
+  return `${Math.floor(d / 365)}y`
+}
+
 type Step = 'repo' | 'forgejo' | 'token' | 'access'
 const STEPS: readonly Step[] = ['repo', 'forgejo', 'token', 'access']
 const LABEL: Record<Step, string> = { repo: 'Repo', forgejo: 'Forgejo', token: 'Token', access: 'Access' }
@@ -192,10 +255,14 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'fj' }, async ($, e) => {
     await $.ui.open({ id: PANE, title: 'fj' })
-    const r = await check($)
+    const r = await refresh($)
     if (r) await $.ui.open({ id: PANE, title: `fj · ${slug(r)}` })
     const s = await read($, setup)
-    return { text: s.kind === 'ready' && r ? `fj is ready for ${slug(r)}.` : 'fj needs setting up: see its pane.' }
+    const m = await read($, mine)
+    if (s.kind !== 'ready' || !r) return { text: 'fj needs setting up: see its pane.' }
+    if (m.kind !== 'ok') return { text: `fj is ready for ${slug(r)}, but could not load your issues.` }
+    const n = m.issues.length
+    return { text: `fj is ready for ${slug(r)}: ${n} ${n === 1 ? 'issue' : 'issues'} assigned to you.` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -204,6 +271,7 @@ export const register: Register = (on, options) => {
     const v = await read($, version)
     const from = await read($, token)
     const s = await read($, setup)
+    const m = await read($, mine)
 
     const line = (key: string, text: string, props: Record<string, unknown> = {}) => (
       <Text key={key} wrap="truncate-end" {...props}>
@@ -288,8 +356,52 @@ export const register: Register = (on, options) => {
       if (!noRepo) body.push(para('again', `${actions.length + 1}. Press r to check again.`, { dimColor: true }))
     }
 
+    // Once setup passes and the list has loaded or is loading, the list.
+    if (s.kind === 'ready' && r && m.kind !== 'idle' && m.kind !== 'error') {
+      const now = await $.clock.now()
+      const rows: RenderChildren[] = []
+      if (m.kind === 'loading') rows.push(line('loading', 'Loading your issues…', { dimColor: true }))
+      if (m.kind === 'ok' && m.issues.length === 0) {
+        rows.push(para('none', `No open issues assigned to you in ${slug(r)}.`, { dimColor: true }))
+      }
+      if (m.kind === 'ok') {
+        for (const i of m.issues) {
+          const facts = [i.milestone ?? 'no milestone', i.labels.join(', '), `opened ${age(i.created, now)} ago`]
+            .filter(Boolean)
+            .join(' · ')
+          rows.push(
+            <Box key={`issue-${i.number}`} flexDirection="column" marginBottom={1}>
+              <Box>
+                <Text color="suggestion">{`#${i.number}`.padEnd(5)}</Text>
+                <Text wrap="truncate-end">{i.title}</Text>
+              </Box>
+              <Box>
+                <Text>{'     '}</Text>
+                <Text wrap="truncate-end" dimColor>
+                  {facts}
+                </Text>
+              </Box>
+            </Box>,
+          )
+        }
+      }
+      const count = m.kind === 'ok' ? ` (${m.issues.length})` : ''
+      return (
+        <Box flexDirection="column">
+          {line('title', `My issues${count}`, { bold: true })}
+          <Box key="gap" height={1} />
+          {rows}
+          {line('where', `${slug(r)} · Forgejo ${v ?? ''} at ${r.host}`, { dimColor: true })}
+          <Box key="buttons" height={1}>
+            <Button key="refresh" label="Refresh" hotkey="r" onPress={() => refresh($)} />
+          </Box>
+        </Box>
+      )
+    }
+
     return (
       <Box flexDirection="column">
+        {m.kind === 'error' && para('mine-error', `Could not load your issues: ${m.message}.`, { color: 'error' })}
         {s.kind === 'ready'
           ? line('title', 'Forgejo for Claude is ready!', { bold: true })
           : line('title', 'Set up Forgejo for Claude', { bold: true })}
@@ -297,7 +409,7 @@ export const register: Register = (on, options) => {
         <Box key="gap" height={1} />
         {body}
         <Box key="buttons" height={1} marginTop={1}>
-          <Button key="refresh" label="Check again" hotkey="r" onPress={() => check($)} />
+          <Button key="refresh" label="Check again" hotkey="r" onPress={() => refresh($)} />
         </Box>
       </Box>
     )
