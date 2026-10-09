@@ -1,11 +1,11 @@
 import type { Actions, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
-import { forgeName } from './forge'
+import { forgeName, gitlabSetting } from './forge'
 import { message, type Checked, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // GitLab behind the tracker the pane asks: every GitLab URL lives here.
-// `token` is from the GitLab tokens setting, null when it has none for the
-// host; `known`: the version detection found, null when it would not say;
+// `token` is from the GitLab.com token setting for gitlab.com, else from the
+// Private GitLab token setting, null when it has none for the host; `known`: the version detection found, null when it would not say;
 // `label` is the Epic label setting.
 // An epic is an issue with the Epic label; its children are the issues it
 // links as related. Blocking links exist only on GitLab EE.
@@ -181,7 +181,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
     tokensUrl: `https://${r.host}/-/user_settings/personal_access_tokens`,
     scopes: 'api, or read_api for read only',
     writeScope: 'api',
-    setting: 'GitLab tokens',
+    setting: gitlabSetting(r.host),
 
     async milestones(): Promise<MilestoneRow[]> {
       const raw = await fetchAll<RawMilestone>(`${project}/milestones?state=active&include_ancestors=true`, 'milestones').catch(() => [])

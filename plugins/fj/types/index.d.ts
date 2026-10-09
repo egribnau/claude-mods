@@ -3,7 +3,7 @@ export type Repo = { host: string; owner: string; name: string }
 
 // Where a request's token comes from, never the token itself: the setting,
 // and the host when a `host=token` pair gave it. null: none found.
-export type TokenSource = { setting: 'Forgejo tokens' | 'GitLab tokens'; host: string | null } | null
+export type TokenSource = { setting: 'Forgejo tokens' | 'GitLab.com token' | 'Private GitLab token'; host: string | null } | null
 
 // How far setting up got: each kind but `ready` names the first step that
 // failed, which the pane explains. Steps: repo, forge, token, access.

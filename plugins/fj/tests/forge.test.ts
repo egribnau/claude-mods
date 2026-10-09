@@ -163,7 +163,11 @@ const RUN = {
   presentation: { isFullscreen: true, columns: 170 },
 } as const
 
-const opts = (token: string, gitlabTokens = '') => ({ options: { token, gitlabTokens, icons: 'text', compact: 'off' } })
+// `gitlabTokens` is the Private GitLab token setting, `gitlabComToken` the
+// GitLab.com token setting.
+const opts = (token: string, gitlabTokens = '', gitlabComToken = '') => ({
+  options: { token, gitlabTokens, gitlabComToken, icons: 'text', compact: 'off' },
+})
 
 type Asked = { url: string; auth: string | undefined }[]
 
@@ -219,7 +223,7 @@ const GITLAB: Record<string, Reply> = {
   '/api/v4/projects/boats%2Fradar/issues': { status: 500 },
 }
 
-test('gitlab.com: ready, its token from GitLab tokens, read only with read_api', opts('bare', 'gitlab.example.com=glpat-a gitlab.com=glpat-b'), async ($, on) => {
+test('gitlab.com: ready, its token from an old gitlab.com= pair in Private GitLab token, read only with read_api', opts('bare', 'gitlab.example.com=glpat-a gitlab.com=glpat-b'), async ($, on) => {
   const asked: Asked = []
   world(on, 'git@gitlab.com:boats/radar.git', GITLAB, asked)
 
@@ -231,7 +235,7 @@ test('gitlab.com: ready, its token from GitLab tokens, read only with read_api',
     expect.arrayContaining([
       '✓ Repo    boats/radar',
       '✓ Forge   GitLab at gitlab.com',
-      '✓ Token   for gitlab.com from GitLab tokens',
+      '✓ Token   for gitlab.com from Private GitLab token',
       '✓ Access  3 open issues, as alice',
       '· Actions read only, token lacks api',
     ]),
@@ -255,12 +259,38 @@ test('gitlab.com with no GitLab token: none found, and how to make one', opts('b
   expect(all).toContain('✗ Token   none found')
   expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
   expect(all).toContain(
-    '2. Run /plugin configure fj@egribnau-mods and paste it as GitLab tokens, alone or as gitlab.com=<token> next to tokens for other hosts.',
+    '2. Run /plugin configure fj@egribnau-mods and paste it as GitLab.com token.',
   )
   expect(asked).toEqual([])
 })
 
-test('gitlab.com: a token GitLab refuses is named as GitLab refusing it', opts('', 'glpat-a'), async ($, on) => {
+test('gitlab.com: its token from GitLab.com token, which wins over an old gitlab.com= pair', opts('bare', 'glpat-p gitlab.com=glpat-old', 'glpat-com'), async ($, on) => {
+  const asked: Asked = []
+  world(on, 'git@gitlab.com:boats/radar.git', GITLAB, asked)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('✓ Token   from GitLab.com token')
+  expect(asked.length).toBeGreaterThan(0)
+  expect(asked.every(a => a.auth === 'glpat-com')).toBe(true)
+})
+
+test('gitlab.com: the bare token in Private GitLab token is not for gitlab.com', opts('bare', 'glpat-p gitlab.example.com=glpat-b'), async ($, on) => {
+  const asked: Asked = []
+  world(on, 'git@gitlab.com:boats/radar.git', GITLAB, asked)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('✗ Token   none found')
+  expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as GitLab.com token.')
+  expect(asked).toEqual([])
+})
+
+test('gitlab.com: a token GitLab refuses is named as GitLab refusing it', opts('', '', 'glpat-a'), async ($, on) => {
   const asked: Asked = []
   world(on, 'git@gitlab.com:boats/radar.git', { '/api/v4/personal_access_tokens/self': { status: 401 } }, asked)
 
@@ -269,11 +299,11 @@ test('gitlab.com: a token GitLab refuses is named as GitLab refusing it', opts('
   const all = await texts(ui)
 
   expect(all).toContain('✗ Access  token refused')
-  expect(all).toContain('GitLab did not accept the token from GitLab tokens: it may be mistyped, expired or revoked.')
+  expect(all).toContain('GitLab did not accept the token from GitLab.com token: it may be mistyped, expired or revoked.')
   expect(asked).toHaveLength(1)
 })
 
-test('gitlab.com: a token without read_api says it needs that scope', opts('', 'glpat-a'), async ($, on) => {
+test('gitlab.com: a token without read_api says it needs that scope', opts('', '', 'glpat-a'), async ($, on) => {
   const asked: Asked = []
   world(on, 'git@gitlab.com:boats/radar.git', { '/api/v4/personal_access_tokens/self': { status: 200, body: { scopes: ['read_user'] } } }, asked)
 
@@ -282,7 +312,7 @@ test('gitlab.com: a token without read_api says it needs that scope', opts('', '
   const all = await texts(ui)
 
   expect(all).toContain('✗ Access  no read_api')
-  expect(all).toContain('The token from GitLab tokens may not read boats/radar: fj needs read_api.')
+  expect(all).toContain('The token from GitLab.com token may not read boats/radar: fj needs read_api.')
   expect(asked).toHaveLength(1)
 })
 
@@ -306,7 +336,7 @@ test('github.com: not supported, asked nothing, the token needs Forgejo', opts('
   )
 })
 
-test('self-hosted GitLab: found by probing with no token, then asked with one', opts('bare git.example.org=x', 'glpat-a'), async ($, on) => {
+test('self-hosted GitLab: found by probing with no token, then asked with the bare Private GitLab token', opts('bare git.example.org=x', 'glpat-a', 'glpat-com'), async ($, on) => {
   const asked: Asked = []
   world(on, 'https://gitlab.example.com/boats/radar.git', { '/api/v4/version': { status: 200, body: { version: '17.2.1' } } }, asked)
 
@@ -315,7 +345,7 @@ test('self-hosted GitLab: found by probing with no token, then asked with one', 
   const all = await texts(ui)
 
   expect(all).toContain('✓ Forge   GitLab 17.2.1 at gitlab.example.com')
-  expect(all).toContain('✓ Token   from GitLab tokens')
+  expect(all).toContain('✓ Token   from Private GitLab token')
   // An older GitLab without personal_access_tokens/self goes on to /user.
   expect(all).toContain('GitLab could not be asked: /user: HTTP 404.')
   expect(asked).toEqual([
@@ -323,6 +353,35 @@ test('self-hosted GitLab: found by probing with no token, then asked with one', 
     { url: 'https://gitlab.example.com/api/v4/version', auth: undefined },
     { url: 'https://gitlab.example.com/api/v4/personal_access_tokens/self', auth: 'glpat-a' },
     { url: 'https://gitlab.example.com/api/v4/user', auth: 'glpat-a' },
+  ])
+})
+
+test('self-hosted GitLab: a host=token pair in Private GitLab token wins over its bare token', opts('', 'glpat-a gitlab.example.com=glpat-b'), async ($, on) => {
+  const asked: Asked = []
+  world(on, 'https://gitlab.example.com/boats/radar.git', { '/api/v4/version': { status: 200, body: { version: '17.2.1' } } }, asked)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('✓ Token   for gitlab.example.com from Private GitLab token')
+  expect(asked.slice(2).every(a => a.auth === 'glpat-b')).toBe(true)
+})
+
+test('self-hosted GitLab with no token: GitLab.com token is not used, and the guide names Private GitLab token', opts('bare', '', 'glpat-com'), async ($, on) => {
+  const asked: Asked = []
+  world(on, 'https://gitlab.example.com/boats/radar.git', { '/api/v4/version': { status: 200, body: { version: '17.2.1' } } }, asked)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('✗ Token   none found')
+  expect(all).toContain('1. Create a token at https://gitlab.example.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
+  expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as Private GitLab token.')
+  expect(asked.map(a => a.url)).toEqual([
+    'https://gitlab.example.com/api/v1/version',
+    'https://gitlab.example.com/api/v4/version',
   ])
 })
 

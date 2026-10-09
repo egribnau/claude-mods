@@ -3,7 +3,7 @@ import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } fro
 
 import type { Detail, Epic, Epics, IssueDetail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
 import { bar, openChildren, pickerOptions, standing, summary, tally } from './epics'
-import { detect, forgeName, tokenFor, type Forge, type TokenSetting } from './forge'
+import { detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { gitlab } from './gitlab'
 import { day, dueText, duration, readable, wrap } from './issue'
@@ -49,7 +49,7 @@ const forges = new Map<string, Forge>()
 const tracker = ($: EngineInterface, r: Repo): Tracker => {
   const forge = forges.get(r.host)
   return forge?.kind === 'gitlab'
-    ? gitlab(send($), r, tokenFor(configTokens['GitLab tokens'], r.host)?.value ?? null, forge.version, configLabel)
+    ? gitlab(send($), r, gitlabToken(r.host).value, forge.version, configLabel)
     : forgejo(send($), r, tokenFor(configTokens['Forgejo tokens'], r.host)?.value ?? null, configLabel)
 }
 
@@ -63,7 +63,7 @@ async function counted<T>($: EngineInterface, label: string, action: () => Promi
 }
 
 // The token settings' text, read in `register`; a reload reads them again.
-const configTokens: Record<TokenSetting, string> = { 'Forgejo tokens': '', 'GitLab tokens': '' }
+const configTokens: Record<TokenSetting, string> = { 'Forgejo tokens': '', 'GitLab.com token': '', 'Private GitLab token': '' }
 // The Icons setting: ask, icons or text.
 let configIcons = 'ask'
 // The Compact setting: ask, on or off.
@@ -126,6 +126,18 @@ function readToken(setting: TokenSetting, host: string | null): { value: string 
   return t ? { value: t.value, from: { setting, host: t.host ? host : null } } : { value: null, from: null }
 }
 
+// The GitLab token for `host`. gitlab.com's comes from GitLab.com token, else
+// from a `gitlab.com=` pair in Private GitLab token, as older setups have it,
+// never from that setting's bare token. Any other host's comes from Private
+// GitLab token.
+function gitlabToken(host: string): { value: string | null; from: TokenSource } {
+  if (gitlabSetting(host) === 'Private GitLab token') return readToken('Private GitLab token', host)
+  const com = readToken('GitLab.com token', host)
+  if (com.value !== null) return com
+  const old = tokenFor(configTokens['Private GitLab token'], host)
+  return old?.host ? { value: old.value, from: { setting: 'Private GitLab token', host } } : { value: null, from: null }
+}
+
 // Each step in turn, stopping at the first that fails: the repo behind
 // origin, the forge at its host, then the tracker's own steps: a token, and
 // the token reading the repo.
@@ -168,7 +180,7 @@ async function check($: EngineInterface): Promise<Repo | null> {
     await update($, setup, (): Setup => ({ kind: 'unsupported', forge: 'github' }))
     return r
   }
-  const tok = readToken(forge.kind === 'gitlab' ? 'GitLab tokens' : 'Forgejo tokens', r.host)
+  const tok = forge.kind === 'gitlab' ? gitlabToken(r.host) : readToken('Forgejo tokens', r.host)
   await update($, token, () => tok.from)
   const c =
     forge.kind === 'gitlab'
@@ -496,8 +508,11 @@ function todo(s: Setup, r: Repo | null, t: Tracker | null): string[] {
   const page = t?.tokensUrl ?? 'Settings › Applications in Forgejo'
   const create = `Create a token at ${page} with ${t?.scopes ?? 'read:issue, read:repository and read:user'}.`
   const host = r?.host ?? 'your-forgejo'
+  // GitLab has a setting per kind of host, so no host=token hint there.
   const set = [
-    `Run \`${CONFIGURE}\` and paste it as ${t?.setting ?? 'Forgejo tokens'}, alone or as \`${host}=<token>\` next to tokens for other hosts.`,
+    t?.name === 'GitLab'
+      ? `Run \`${CONFIGURE}\` and paste it as ${t.setting}.`
+      : `Run \`${CONFIGURE}\` and paste it as ${t?.setting ?? 'Forgejo tokens'}, alone or as \`${host}=<token>\` next to tokens for other hosts.`,
   ]
   switch (s.kind) {
     case 'no-repo': {
@@ -1457,7 +1472,8 @@ async function runFj($: EngineInterface, word: string) {
 
 export const register: Register = (on, options) => {
   configTokens['Forgejo tokens'] = String(options.token ?? '').trim()
-  configTokens['GitLab tokens'] = String(options.gitlabTokens ?? '').trim()
+  configTokens['GitLab.com token'] = String(options.gitlabComToken ?? '').trim()
+  configTokens['Private GitLab token'] = String(options.gitlabTokens ?? '').trim()
   configIcons = String(options.icons ?? 'ask')
   configCompact = String(options.compact ?? 'ask')
   configLabel = String(options.label ?? 'epic').trim() || 'epic'

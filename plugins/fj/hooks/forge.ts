@@ -77,8 +77,14 @@ function field(text: string, name: string): unknown {
   }
 }
 
-// The token settings, one per forge, each kept in secure storage.
-export type TokenSetting = 'Forgejo tokens' | 'GitLab tokens'
+// The token settings, each kept in secure storage: one for Forgejo, and
+// for GitLab one for gitlab.com and one for a private GitLab.
+export type TokenSetting = 'Forgejo tokens' | 'GitLab.com token' | 'Private GitLab token'
+
+// The GitLab token setting for `host`: gitlab.com has its own.
+export function gitlabSetting(host: string): TokenSetting {
+  return host.toLowerCase() === 'gitlab.com' ? 'GitLab.com token' : 'Private GitLab token'
+}
 
 // A token from one setting's text: a bare token is for every host, more
 // hosts take `host=token` pairs, separated by spaces, and a pair wins over a

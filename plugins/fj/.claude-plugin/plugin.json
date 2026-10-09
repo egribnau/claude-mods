@@ -1,6 +1,6 @@
 {
   "name": "fj",
-  "version": "0.43.0",
+  "version": "0.44.0",
   "description": "Forgejo in a docked pane, for the repo behind the current directory's origin",
   "author": {
     "name": "Erwin Gribnau"
@@ -14,10 +14,17 @@
       "default": "",
       "sensitive": true
     },
+    "gitlabComToken": {
+      "type": "string",
+      "title": "GitLab.com token",
+      "description": "A gitlab.com access token, kept in secure storage. api lets fj assign and close; read_api is read only.",
+      "default": "",
+      "sensitive": true
+    },
     "gitlabTokens": {
       "type": "string",
-      "title": "GitLab tokens",
-      "description": "GitLab access tokens, kept in secure storage, in the same form as Forgejo tokens. Needs api to assign and close, or read_api for read only.",
+      "title": "Private GitLab token",
+      "description": "An access token for your own GitLab, any host but gitlab.com, kept in secure storage. api lets fj assign and close; read_api is read only. host=token pairs separated by spaces still work for more than one host.",
       "default": "",
       "sensitive": true
     },

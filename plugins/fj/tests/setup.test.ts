@@ -262,7 +262,7 @@ test('github.com: known without asking, and not supported', TOKEN, async ($, on)
   expect(asked).toEqual([])
 })
 
-test('gitlab.com: the token step reads GitLab tokens, and GitLab is asked with it', {
+test('gitlab.com: the token step reads an old gitlab.com= pair in Private GitLab token, and GitLab is asked with it', {
   options: { token: 'secret', gitlabTokens: 'gitlab.com=glpat-1', icons: 'text', compact: 'off' },
 }, async ($, on) => {
   const asked: World['asked'] = []
@@ -273,7 +273,7 @@ test('gitlab.com: the token step reads GitLab tokens, and GitLab is asked with i
   const all = await texts(ui)
 
   expect(all).toContain('✓ Forge   GitLab at gitlab.com')
-  expect(all).toContain('✓ Token   for gitlab.com from GitLab tokens')
+  expect(all).toContain('✓ Token   for gitlab.com from Private GitLab token')
   expect(all).toContain('✗ Access  no answer')
   expect(all).toContain('GitLab could not be asked: /user: HTTP 404.')
   expect(all).not.toContain('What to do')

@@ -363,8 +363,14 @@ test('the tracker names GitLab, its scope, its setting and where to make a token
   expect(t.name).toBe('GitLab')
   expect(t.scopes).toBe('api, or read_api for read only')
   expect(t.writeScope).toBe('api')
-  expect(t.setting).toBe('GitLab tokens')
+  expect(t.setting).toBe('GitLab.com token')
   expect(t.tokensUrl).toBe('https://gitlab.com/-/user_settings/personal_access_tokens')
+})
+
+test('the tracker for a private GitLab names Private GitLab token', () => {
+  const t = gitlab(fakeSend(checkRoute()), { ...R, host: 'gitlab.example.com' }, 'glpat-x', null)
+  expect(t.setting).toBe('Private GitLab token')
+  expect(gitlab(fakeSend(checkRoute()), { ...R, host: 'GitLab.com' }, 'glpat-x', null).setting).toBe('GitLab.com token')
 })
 
 // Lists
@@ -934,7 +940,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       expect.arrayContaining([
         '✓ Repo    boats/radar',
         '✓ Forge   GitLab at gitlab.com',
-        '✓ Token   for gitlab.com from GitLab tokens',
+        '✓ Token   for gitlab.com from Private GitLab token',
         '✓ Access  7 open issues, as alice',
         '· Actions read only, token lacks api',
       ]),
@@ -1009,9 +1015,7 @@ test('gitlab.com without a token: how to make one for GitLab, and nothing asked'
   expect(all).toContain('✗ Token   none found')
   expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
   expect(all).toContain('https://gitlab.com/-/user_settings/personal_access_tokens')
-  expect(all).toContain(
-    '2. Run /plugin configure fj@egribnau-mods and paste it as GitLab tokens, alone or as gitlab.com=<token> next to tokens for other hosts.',
-  )
+  expect(all).toContain('2. Run /plugin configure fj@egribnau-mods and paste it as GitLab.com token.')
   expect(all.some(t => t.includes('Forgejo tokens') || t.includes('read:issue'))).toBe(false)
   expect(asked).toEqual([])
 })
@@ -1023,10 +1027,10 @@ test('gitlab.com refusing the token: says GitLab did not accept it', GL, async (
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✓ Token   for gitlab.com from GitLab tokens')
+  expect(all).toContain('✓ Token   for gitlab.com from Private GitLab token')
   expect(all).toContain('✗ Access  token refused')
   expect(all).toContain(
-    'GitLab did not accept the token for gitlab.com from GitLab tokens: it may be mistyped, expired or revoked.',
+    'GitLab did not accept the token for gitlab.com from Private GitLab token: it may be mistyped, expired or revoked.',
   )
   expect(all).toContain('1. Create a token at https://gitlab.com/-/user_settings/personal_access_tokens with api, or read_api for read only.')
 })
