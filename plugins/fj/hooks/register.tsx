@@ -169,6 +169,13 @@ async function openUrl($: EngineInterface, url: string) {
   $.ui.toast(`Could not open a browser for ${url}`)
 }
 
+// `text` cut to `width` characters, ending in … when it was longer. A Text
+// inside a Button wraps rather than truncates, so titles are cut here.
+function fit(text: string, width: number): string {
+  if (width <= 0) return ''
+  return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`
+}
+
 // How long ago `iso` was, as a short age: 5m, 3h, 6d, 3w, 4mo, 2y.
 function age(iso: string, now: number): string {
   const s = Math.max(0, (now - Date.parse(iso)) / 1000)
@@ -289,6 +296,7 @@ export const register: Register = (on, options) => {
     const m = await read($, mine)
     // The pane's full height, so the last rows sit at its bottom.
     const height = e.props.scroll.bodyRows
+    const columns = e.props.bodyColumns
 
     const line = (key: string, text: string, props: Record<string, unknown> = {}) => (
       <Text key={key} wrap="truncate-end" {...props}>
@@ -398,6 +406,10 @@ export const register: Register = (on, options) => {
       }
       if (m.kind === 'ok') {
         const sel = await read($, picked)
+        // The number column: the longest number and a space, so titles and
+        // the lines under them line up whatever the numbers.
+        const numWidth = Math.max(...m.issues.map(i => `#${i.number}`.length), 0) + 1
+        const indent = ' '.repeat(numWidth)
         for (const i of m.issues) {
           const isPicked = sel === i.number
           const facts = [i.milestone ?? 'no milestone', i.labels.join(', '), `opened ${age(i.created, now)} ago`]
@@ -411,18 +423,18 @@ export const register: Register = (on, options) => {
                 onPress={() => update($, picked, n => (n === i.number ? null : i.number))}
               >
                 <Text wrap="truncate-end" bold={isPicked} inverse={isPicked}>
-                  <Text color="suggestion">{`#${i.number}`.padEnd(5)}</Text>
-                  {i.title}
+                  <Text color="suggestion">{`#${i.number}`.padEnd(numWidth)}</Text>
+                  {fit(i.title, columns - numWidth)}
                 </Text>
               </Button>
               <Box>
-                <Text>{'     '}</Text>
+                <Text>{indent}</Text>
                 <Text wrap="truncate-end" dimColor>
                   {facts}
                 </Text>
               </Box>
               {isPicked && (
-                <Box key="actions" height={1} marginTop={1} paddingLeft={5}>
+                <Box key="actions" height={1} marginTop={1} paddingLeft={numWidth}>
                   <Button key="open" label="Open in browser" hotkey="o" onPress={() => openUrl($, i.url)} />
                 </Box>
               )}

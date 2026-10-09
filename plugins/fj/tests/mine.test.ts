@@ -85,17 +85,17 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     expect(await texts(ui)).toEqual([
       'My issues (3)',
-      '#29  Issue 29',
-      '#29  ',
-      '     ',
+      '#29 Issue 29',
+      '#29 ',
+      '    ',
       'no milestone · docs · opened 3w ago',
-      '#37  Issue 37',
-      '#37  ',
-      '     ',
+      '#37 Issue 37',
+      '#37 ',
+      '    ',
       'v1.2 · prio/high, auth · opened 7d ago',
-      '#51  Issue 51',
-      '#51  ',
-      '     ',
+      '#51 Issue 51',
+      '#51 ',
+      '    ',
       'v1.2 · opened 3h ago',
       'git.example.org/boats/radar',
     ])
@@ -231,4 +231,18 @@ test('a refresh keeps the selection while the issue is still yours', TOKEN, asyn
   pages[0] = [issue(29, 'boats/radar', '2026-09-18T09:00:00Z')]
   await ui.press({ key: 'refresh' })
   await expect(ui.find({ key: 'open' })).resolves.toBeUndefined()
+})
+
+test('long titles are cut to one line, and numbers of any width line up', TOKEN, async ($, on) => {
+  const long = { ...issue(1000, 'boats/radar', '2026-09-02T00:00:00Z'), title: 'A title far too long to fit on one line of a narrow pane' }
+  world(on, [[issue(7, 'boats/radar', '2026-09-01T00:00:00Z'), long]])
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 30 }, surface: 'terminal' })
+  const all = await texts(ui)
+
+  // '#1000 ' is the widest number, so the column is six wide.
+  expect(all).toContain('#7    Issue 7')
+  expect(all).toContain('#1000 A title far too long to…')
+  expect(all.find(t => t.startsWith('#1000 '))?.length).toBe(30)
 })
