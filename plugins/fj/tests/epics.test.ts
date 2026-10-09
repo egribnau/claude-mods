@@ -154,6 +154,27 @@ test("the Epics pane opens next to What's next when the repo has an open epic", 
   expect(opened.filter(p => p.id === 'fj').at(-1)?.title).toBe("What's next")
 })
 
+test('with both panes open, the tabs name them and neither title row repeats the name', TOKEN, async ($, on) => {
+  world(on, REPO)
+  await $.command.run(RUN)
+  const epics = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  expect(await texts(epics)).not.toContain('Epics')
+  await expect(epics.find({ key: 'refresh' })).resolves.toBeDefined()
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  expect(await texts(next)).not.toContain("What's next")
+})
+
+test('once the other pane is closed, the title row names its pane again', TOKEN, async ($, on) => {
+  const w: World = { ...REPO }
+  world(on, w)
+  await $.command.run(RUN)
+  // The last epic closes, so /fj closes the Epics pane.
+  w.epics = [epic(3, 'Project setup', { state: 'closed' })]
+  await $.command.run(RUN)
+  const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
+  expect((await texts(next))[0]).toBe("What's next")
+})
+
 test('with no open epic there is no Epics pane', TOKEN, async ($, on) => {
   const opened: { id: string; title?: string }[] = []
   world(on, { epics: [epic(3, 'Project setup', { state: 'closed' })] }, [], opened)
@@ -185,7 +206,6 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
 
   expect(await texts(ui)).toEqual([
-    'Epics',
     '── ',
     'v1.2',
     ' · due 31 Oct · 9/17 closed ',
@@ -273,7 +293,7 @@ test('clicking an epic opens its detail, closed ones too, and back returns to Ep
   const back = (await ui.find({ key: 'back' })) as unknown as { props: Record<string, unknown> }
   expect(back.props.label).toBe('← Epics')
   await ui.press({ key: 'back' })
-  expect((await texts(ui))[0]).toBe('Epics')
+  await expect(ui.find({ key: 'milestone' })).resolves.toBeDefined()
   await ui.press({ key: 'epic-3' })
   await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 })
@@ -298,7 +318,7 @@ test('clicking a child opens its detail, and back returns to Epics', TOKEN, asyn
   const back = (await ui.find({ key: 'back' })) as unknown as { props: Record<string, unknown> }
   expect(back.props.label).toBe('← Epics')
   await ui.press({ key: 'back' })
-  expect((await texts(ui))[0]).toBe('Epics')
+  await expect(ui.find({ key: 'milestone' })).resolves.toBeDefined()
 })
 
 test("an issue opened in Epics leaves What's next as it was", TOKEN, async ($, on) => {
@@ -309,7 +329,8 @@ test("an issue opened in Epics leaves What's next as it was", TOKEN, async ($, o
   await epics.press({ key: 'child-51' })
 
   const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'fj', surface: 'terminal' })
-  expect((await texts(next))[0]).toBe("What's next")
+  expect(await texts(next)).toContain('No open issues in boats/radar.')
+  await expect(next.find({ key: 'back' })).resolves.toBeUndefined()
 })
 
 test('no open milestone with epics: the epics without a milestone', TOKEN, async ($, on) => {
@@ -317,7 +338,7 @@ test('no open milestone with epics: the epics without a milestone', TOKEN, async
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   const all = await texts(ui)
-  expect(all.slice(1, 5)).toEqual(['── ', 'No milestone', ' ', '─'.repeat(50 - '── No milestone '.length)])
+  expect(all.slice(0, 4)).toEqual(['── ', 'No milestone', ' ', '─'.repeat(50 - '── No milestone '.length)])
   expect(all).toContain('no children')
 })
 
@@ -374,7 +395,7 @@ test('picking another milestone shows its epics', TOKEN, async ($, on) => {
   expect(await choices(ui)).toEqual([])
   expect(await label(ui)).toBe('v1.3 ▾')
   const all = await texts(ui)
-  expect(all.slice(1, 4)).toEqual(['── ', 'v1.3', ' · due 30 Nov · 0/6 closed '])
+  expect(all.slice(0, 3)).toEqual(['── ', 'v1.3', ' · due 30 Nov · 0/6 closed '])
   expect(all.some(t => t.startsWith('#60 Scripting'))).toBe(true)
   expect(all.some(t => t.includes('#12'))).toBe(false)
 })
@@ -404,7 +425,7 @@ test('the pick holds over a Refresh', TOKEN, async ($, on) => {
   await ui.press({ key: 'pick-m:v1.3' })
   await ui.press({ key: 'refresh' })
   expect(await label(ui)).toBe('v1.3 ▾')
-  expect((await texts(ui))[2]).toBe('v1.3')
+  expect((await texts(ui))[1]).toBe('v1.3')
 })
 
 const child = (number: number, extra: Partial<EpicChild> = {}): EpicChild => ({

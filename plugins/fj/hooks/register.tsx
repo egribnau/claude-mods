@@ -1,5 +1,5 @@
 import { atom, memberOf, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderChildren, RenderInput } from 'claude-code'
+import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
 import type { Detail, Epic, EpicChild, EpicGroup, Epics, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
 import { bar, groupsFor, openChildren, pickerOptions, standing, summary, tally } from './epics'
@@ -22,7 +22,7 @@ const detail = atom({ plugin: 'fj', key: 'detail' } as const, { kind: 'idle' })
 const iconsChosen = atom({ plugin: 'fj', key: 'icons' } as const, null)
 const epics = atom({ plugin: 'fj', key: 'epics' } as const, { kind: 'idle' })
 const unfolded = atom({ plugin: 'fj', key: 'unfolded' } as const, [])
-const epicsShown = atom({ plugin: 'fj', key: 'epicsShown' } as const, false)
+const panesOpen = atom({ plugin: 'fj', key: 'panesOpen' } as const, [])
 const epicsPick = atom({ plugin: 'fj', key: 'epicsPick' } as const, null)
 const pickerOpen = atom({ plugin: 'fj', key: 'pickerOpen' } as const, false)
 
@@ -526,6 +526,13 @@ function todo(s: Setup, r: Repo | null, tokenText: string): string[] {
   }
 }
 
+// A pane closing, by fj or by the person: the other one, now without a tab,
+// names itself in its title row again.
+const paneClosed: Hook<'ui.close'> = async ($, e, next) => {
+  await update($, panesOpen, ids => ids.filter(id => id !== e.id))
+  return next(e)
+}
+
 // Both panes draw here: they share setup, the detail view and the repo line.
 async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
@@ -651,12 +658,17 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
   }
 
+  // With another fj pane open the engine draws tabs that name both, so a
+  // title row leaves its pane's name out.
+  const tabbed = (await read($, panesOpen)).some(id => id !== e.requestId)
   // A heading with, on its right, the pane's own action when it has one.
   const heading = (text: string, action?: { label: string }) => (
     <Box key="title" height={1} flexShrink={0}>
-      <Text bold wrap="truncate-end">
-        {text}
-      </Text>
+      {text && (
+        <Text bold wrap="truncate-end">
+          {text}
+        </Text>
+      )}
       <Box flexGrow={1} />
       {action && <Button key="refresh" label={say(ICON.refresh, action.label)} hotkey="r" onPress={() => refresh($)} />}
     </Box>
@@ -999,9 +1011,11 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     return (
       <Box flexDirection="column" height={height}>
         <Box key="title" height={1} flexShrink={0}>
-          <Text bold wrap="truncate-end">
-            Epics
-          </Text>
+          {!tabbed && (
+            <Text bold wrap="truncate-end">
+              Epics
+            </Text>
+          )}
           <Box flexGrow={1} />
           {picked && (
             <Button key="milestone" label={`${picked.label} ▾`} hotkey="m" onPress={() => update($, pickerOpen, o => !o)} />
@@ -1131,7 +1145,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
     return (
       <Box flexDirection="column" height={height}>
-        {heading("What's next", { label: 'Refresh' })}
+        {heading(tabbed ? '' : "What's next", { label: 'Refresh' })}
         <Box key="gap" height={1} flexShrink={0} />
         <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
           {rows}
@@ -1169,16 +1183,16 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'fj' }, async ($, e) => {
     await $.ui.open({ id: PANE, title: 'fj' })
+    await update($, panesOpen, ids => (ids.includes(PANE) ? ids : [...ids, PANE]))
     const r = await refresh($)
     if (r) await $.ui.open({ id: PANE, title: "What's next" })
     // The Epics pane, a tab next to What's next, only while there are open epics.
     const ep = await read($, epics)
     if (ep.kind === 'ok' && ep.openEpics > 0) {
       await $.ui.open({ id: EPICS_PANE, title: 'Epics' })
-      await update($, epicsShown, () => true)
-    } else if (ep.kind === 'ok' && (await read($, epicsShown))) {
+      await update($, panesOpen, ids => (ids.includes(EPICS_PANE) ? ids : [...ids, EPICS_PANE]))
+    } else if (ep.kind === 'ok' && (await read($, panesOpen)).includes(EPICS_PANE)) {
       await $.ui.close({ id: EPICS_PANE })
-      await update($, epicsShown, () => false)
     }
     const s = await read($, setup)
     const o = await read($, overview)
@@ -1191,6 +1205,8 @@ export const register: Register = (on, options) => {
     return { text: `fj is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}.` }
   })
 
+  on('ui.close', { id: PANE }, paneClosed)
+  on('ui.close', { id: EPICS_PANE }, paneClosed)
   on('ui.render', { component: 'Pane', requestId: PANE }, renderPane)
   on('ui.render', { component: 'Pane', requestId: EPICS_PANE }, renderPane)
 }

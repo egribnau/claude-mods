@@ -136,8 +136,9 @@ declare module 'claude-code' {
       picked: StateFamily<number | null>
       detail: StateFamily<Detail>
       epics: Epics
-      // Whether /fj opened the Epics pane, so it closes once no epic is open.
-      epicsShown: boolean
+      // fj's panes that are open, by id: with more than one the engine draws
+      // tabs naming them, so the title rows leave the names out.
+      panesOpen: string[]
       // The picker's choice in the Epics pane; null starts on its first option.
       epicsPick: string | null
       // Whether the picker's list is open.
