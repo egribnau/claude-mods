@@ -219,13 +219,48 @@ test('with no Next, the focus starts on nothing', TOKEN, async ($, on) => {
   expect(await focused(ui)).toEqual([])
 })
 
-test('dependencies are checked oldest first, only until Next is found', TOKEN, async ($, on) => {
+test('dependencies are checked oldest first, past Next through the Queue', TOKEN, async ($, on) => {
   const asked: string[] = []
   world(on, REPO, asked)
   await $.command.run(RUN)
 
   const checked = asked.map(u => /\/issues\/(\d+)\/dependencies$/.exec(new URL(u).pathname)?.[1]).filter(Boolean)
-  expect(checked).toEqual(['33', '29'])
+  expect(checked).toEqual(['33', '29', '37', '51'])
+})
+
+test('the Queue holds 10 checked issues, a blocked one at the bottom, the rest counted', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  const day = (k: number) => `2026-09-${String(k).padStart(2, '0')}T09:00:00Z`
+  // #1 to #25, oldest first; #3, after Next, waits on #99.
+  world(on, { open: [Array.from({ length: 25 }, (_, k) => issue(k + 1, day(k + 1)))], deps: { 3: [99] } }, asked)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('▸  #1 Issue 1')
+  expect(all).toContain(rule('Queue (11 of 24)'))
+  const free = all.filter(t => /^ {2} ?#\d+ Issue \d+$/.test(t)).map(t => Number(/#(\d+)/.exec(t)?.[1]))
+  expect(free).toEqual([2, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+  expect(all).toContain('  and 13 more')
+  expect(all.indexOf('⊘  #3 Issue 3')).toBeGreaterThan(all.indexOf('  and 13 more'))
+  expect(all).toContain('25 open · ')
+  // Next and the 11 issues past it are checked; #13 to #25 are not.
+  const checked = asked.map(u => /\/issues\/(\d+)\/dependencies$/.exec(new URL(u).pathname)?.[1]).filter(Boolean)
+  expect(checked).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'])
+})
+
+test('a second line too long for the pane is cut at its end, its indent kept', TOKEN, async ($, on) => {
+  world(on, {
+    open: [[issue(15, '2026-09-01T09:00:00Z'), issue(26, '2026-09-02T09:00:00Z')]],
+    deps: { 26: [20, 21, 22, 23, 24, 25] },
+  })
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await texts(ui)).toContain('blocked by #20, #21, #22, #23, #24, #25')
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
+  const indents = boxes.filter(b => b.key === 'indent')
+  expect(indents.length).toBeGreaterThan(0)
+  for (const b of indents) expect(b.props.flexShrink).toBe(0)
 })
 
 test('everything blocked: Nothing ready, and what it waits on', TOKEN, async ($, on) => {
@@ -277,7 +312,7 @@ test('no open issues at all: says so, without sections', TOKEN, async ($, on) =>
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: no open issues." }))
 })
 
-test('dependencies turned off: the oldest unassigned issue is Next', TOKEN, async ($, on) => {
+test('dependencies that answer nothing: the oldest unassigned issue is Next, and no other is asked', TOKEN, async ($, on) => {
   const asked: string[] = []
   world(on, { ...REPO, deps: 'off' }, asked)
   const out = await $.command.run(RUN)
@@ -525,7 +560,7 @@ test('switching milestones asks Forgejo only for dependencies it has not checked
     await ui.press({ key: `milestone-${pick}` })
   }
   const deps = asked.map(u => /\/issues\/(\d+)\/dependencies$/.exec(new URL(u).pathname)?.[1]).filter(Boolean)
-  expect(deps).toEqual(['37', '33', '29'])
+  expect(deps).toEqual(['37', '51', '33', '29'])
   expect(asked.filter(u => new URL(u).pathname.endsWith('/milestones'))).toHaveLength(1)
 })
 
@@ -560,20 +595,58 @@ const row = (number: number): IssueRow => ({
   body: '',
 })
 
-test('pickNext: the first unblocked issue, the rest unchecked', async () => {
+test('pickNext: the first unblocked issue, then the Queue checked too', async () => {
   const checked: number[] = []
-  const got = await pickNext([row(1), row(2), row(3), row(4)], async n => {
+  const got = await pickNext([row(1), row(2), row(3), row(4), row(5)], async n => {
     checked.push(n)
-    return n === 1 ? [9] : []
+    return n === 1 ? [9] : n === 4 ? [7] : []
   })
   expect(got.next?.number).toBe(2)
-  expect(got.queue.map(i => i.number)).toEqual([3, 4])
-  expect(got.blocked).toEqual([{ issue: row(1), by: [9] }])
-  expect(checked).toEqual([1, 2])
+  expect(got.queue.map(i => i.number)).toEqual([3, 5])
+  expect(got.blocked).toEqual([
+    { issue: row(1), by: [9] },
+    { issue: row(4), by: [7] },
+  ])
+  expect(got.more).toBe(0)
+  expect(checked).toEqual([1, 2, 3, 4, 5])
+})
+
+test('pickNext: the Queue stops at its limit, the rest counted and not checked', async () => {
+  const checked: number[] = []
+  const free = Array.from({ length: 30 }, (_, k) => row(k + 1))
+  const got = await pickNext(free, async n => {
+    checked.push(n)
+    return []
+  })
+  expect(got.next?.number).toBe(1)
+  expect(got.queue.map(i => i.number)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+  expect(got.more).toBe(19)
+  expect(checked).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+})
+
+test('pickNext: a blocked one past Next makes room for the next free one; at most twice the limit are checked', async () => {
+  const checked: number[] = []
+  const free = Array.from({ length: 40 }, (_, k) => row(k + 1))
+  const got = await pickNext(free, async n => {
+    checked.push(n)
+    return n % 4 === 0 ? [99] : []
+  })
+  // #4, #8 and #12 are blocked, so the tenth free one is #14.
+  expect(got.queue.map(i => i.number)).toEqual([2, 3, 5, 6, 7, 9, 10, 11, 13, 14])
+  expect(got.blocked.map(b => b.issue.number)).toEqual([4, 8, 12])
+  expect(checked).toHaveLength(14)
+  expect(got.more).toBe(26)
+
+  // All blocked past Next: #2 to #21 are checked, the rest counted.
+
+  const stuck = await pickNext(free, async n => (n === 1 ? [] : [99]))
+  expect(stuck.queue).toEqual([])
+  expect(stuck.blocked).toHaveLength(20)
+  expect(stuck.more).toBe(19)
 })
 
 test('pickNext: nothing to pick from', async () => {
-  expect(await pickNext([], async () => [])).toEqual({ next: null, queue: [], blocked: [] })
+  expect(await pickNext([], async () => [])).toEqual({ next: null, queue: [], blocked: [], more: 0 })
 })
 
 test('waitingText: one issue waits, several wait', () => {

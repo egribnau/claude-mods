@@ -102,10 +102,10 @@ test("What's next: yours, then the oldest free issue with no open blockers, the 
   expect(next.next?.number).toBe(29)
   expect(next.queue.map(i => i.number)).toEqual([37])
   expect(next.blocked).toEqual([{ issue: row(33, '2026-09-11T00:00:00Z'), by: [37] }])
-  // Walked until Next, and remembered: a second look asks nothing.
-  expect(calls.filter(c => c.startsWith('blockers'))).toEqual(['blockers 33', 'blockers 29'])
+  // Walked through Next and the Queue, and remembered: a second look asks nothing.
+  expect(calls.filter(c => c.startsWith('blockers'))).toEqual(['blockers 33', 'blockers 29', 'blockers 37'])
   await whatsNext(t, memory, 'all', true)
-  expect(calls.filter(c => c.startsWith('blockers'))).toHaveLength(2)
+  expect(calls.filter(c => c.startsWith('blockers'))).toHaveLength(3)
 })
 
 test("What's next within a milestone, and without dependencies no blockers are asked", async () => {
@@ -117,6 +117,19 @@ test("What's next within a milestone, and without dependencies no blockers are a
   const { memory } = await loadRepo(t, true)
   const next = await whatsNext(t, memory, 'm:v1', false)
   expect(next.next?.number).toBe(6)
+  expect(next.blocked).toEqual([])
+  expect(calls.some(c => c.startsWith('blockers'))).toBe(false)
+})
+
+test('without dependencies the Queue is only limited: 10, the rest counted, nothing asked', async () => {
+  const calls: string[] = []
+  const day = (k: number) => `2026-09-${String(k).padStart(2, '0')}T00:00:00Z`
+  const t = fake({ open: Array.from({ length: 15 }, (_, k) => free(row(k + 1, day(k + 1)))), blockers: { 3: [1] } }, calls)
+  const { memory } = await loadRepo(t, true)
+  const next = await whatsNext(t, memory, 'all', false)
+  expect(next.next?.number).toBe(1)
+  expect(next.queue.map(i => i.number)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+  expect(next.more).toBe(4)
   expect(next.blocked).toEqual([])
   expect(calls.some(c => c.startsWith('blockers'))).toBe(false)
 })

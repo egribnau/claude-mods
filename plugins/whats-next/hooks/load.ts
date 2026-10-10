@@ -103,19 +103,23 @@ export const inPick = (pick: string, milestone: string | null) =>
   pick === 'all' || (pick === 'none' ? milestone === null : pick === `m:${milestone}`)
 
 // What's next within the pick: yours in it are In progress; of the free ones
-// in it, walked oldest first, the first with no open blockers is Next. A
-// tracker without dependencies is not asked for blockers.
+// in it, walked oldest first, the first with no open blockers is Next, and
+// the Queue after it is checked too, up to its limit. A tracker without
+// dependencies is not asked for blockers, so its Queue is only limited; nor
+// is one that would not say for an issue (dependencies off without the
+// setup check knowing, an error), until the next Refresh.
 export async function whatsNext(t: Tracker, known: Memory, pick: string, deps: boolean) {
   const inProgress = known.mine.filter(i => inPick(pick, i.milestone))
   const free = known.free.filter(i => inPick(pick, i.milestone))
-  const { next, queue, blocked } = await pickNext(free, async n => {
+  const { next, queue, blocked, more } = await pickNext(free, async n => {
     if (!deps) return null
     if (known.blockers.has(n)) return known.blockers.get(n) ?? null
+    if ([...known.blockers.values()].includes(null)) return null
     const open = await t.blockers(n)
     known.blockers.set(n, open)
     return open
   })
-  return { inProgress, next, queue, blocked }
+  return { inProgress, next, queue, blocked, more }
 }
 
 // The epics within the pick, by milestone, each open one with its children,

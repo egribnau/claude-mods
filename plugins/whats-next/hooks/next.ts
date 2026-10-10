@@ -4,22 +4,38 @@ import type { BlockedRow, IssueRow } from '../types'
 // say (dependencies off, an error), which counts as not blocked.
 export type Blockers = (n: number) => Promise<number[] | null>
 
+// How many issues the Queue shows after Next, and how many past Next are
+// checked for blockers at most, so a load asks a bounded number of times.
+export const QUEUE_LIMIT = 10
+export const CHECK_LIMIT = 2 * QUEUE_LIMIT
+
 // Next among the unassigned issues, oldest first: the first with no open
-// dependencies. Each issue is checked in turn and the walk stops there, so
-// the issues after Next are not checked and only the skipped ones are known
-// to be blocked.
+// dependencies; the ones skipped on the way are blocked. Past Next the walk
+// goes on: each issue is checked, a free one joins the Queue and a blocked
+// one the blocked rows, until the Queue holds QUEUE_LIMIT or CHECK_LIMIT
+// issues past Next were checked. `more` counts the issues not reached.
 export async function pickNext(
   free: readonly IssueRow[],
   blockers: Blockers,
-): Promise<{ next: IssueRow | null; queue: IssueRow[]; blocked: BlockedRow[] }> {
+): Promise<{ next: IssueRow | null; queue: IssueRow[]; blocked: BlockedRow[]; more: number }> {
   const blocked: BlockedRow[] = []
-  for (let k = 0; k < free.length; k++) {
+  const isFree = (by: number[] | null) => by === null || by.length === 0
+  let k = 0
+  let next: IssueRow | null = null
+  for (; k < free.length && !next; k++) {
     const issue = free[k] as IssueRow
     const by = await blockers(issue.number)
-    if (by === null || by.length === 0) return { next: issue, queue: free.slice(k + 1), blocked }
-    blocked.push({ issue, by })
+    if (isFree(by)) next = issue
+    else blocked.push({ issue, by: by as number[] })
   }
-  return { next: null, queue: [], blocked }
+  const queue: IssueRow[] = []
+  for (let checked = 0; next && k < free.length && queue.length < QUEUE_LIMIT && checked < CHECK_LIMIT; k++, checked++) {
+    const issue = free[k] as IssueRow
+    const by = await blockers(issue.number)
+    if (isFree(by)) queue.push(issue)
+    else blocked.push({ issue, by: by as number[] })
+  }
+  return { next, queue, blocked, more: free.length - k }
 }
 
 // Issues as a list for a sentence: #33, #34.

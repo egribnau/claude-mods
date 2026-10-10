@@ -65,7 +65,8 @@ export type BlockedRow = { issue: IssueRow; by: number[] }
 export type Overview =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'ok'; inProgress: IssueRow[]; next: IssueRow | null; queue: IssueRow[]; blocked: BlockedRow[] }
+  // `more`: the free issues past the Queue's limit, not checked or shown.
+  | { kind: 'ok'; inProgress: IssueRow[]; next: IssueRow | null; queue: IssueRow[]; blocked: BlockedRow[]; more: number }
   | { kind: 'error'; message: string }
 
 // An issue or pull request another one points at, with its state: open,

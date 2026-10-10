@@ -858,10 +858,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Text>
         </Button>
         {/* One row: a line too long for the pane is cut, but would still
-            take the height of its overflow. */}
+            take the height of its overflow. The indent keeps its width, so
+            a cut line starts under the title like the others. */}
         {facts.length > 0 && (
           <Box height={1}>
-            <Text>{`${lead}${' '.repeat(2 + o.numWidth)}`}</Text>
+            <Box key="indent" flexShrink={0}>
+              <Text>{`${lead}${' '.repeat(2 + o.numWidth)}`}</Text>
+            </Box>
             <Text wrap="truncate-end">{facts}</Text>
           </Box>
         )}
@@ -1461,16 +1464,26 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             </Box>,
           )
         }
+        // The Queue shows up to its limit; the issues past it are counted,
+        // in the heading and on one line under the free ones.
         if (later.length > 0) {
-          rows.push(rule('queue', `Queue${within} (${later.length})`))
+          const count = m.more > 0 ? `${later.length} of ${later.length + m.more}` : `${later.length}`
+          rows.push(rule('queue', `Queue${within} (${count})`))
           for (const i of m.queue) rows.push(row(i, 'queue'))
+          if (m.more > 0) {
+            rows.push(
+              <Box key="more" flexDirection="column" marginBottom={gap} flexShrink={0}>
+                {line('more-text', `${' '.repeat(2)}and ${m.more} more`, { dimColor: true })}
+              </Box>,
+            )
+          }
           for (const b of m.blocked) rows.push(row(b.issue, 'blocked', b.by))
         }
       }
     }
     // Once loaded, how many open issues What's Next counted and how many are
     // yours, in In progress green; the version at the right.
-    const open = m.kind === 'ok' ? m.inProgress.length + (m.next ? 1 : 0) + m.queue.length + m.blocked.length : null
+    const open = m.kind === 'ok' ? m.inProgress.length + (m.next ? 1 : 0) + m.queue.length + m.more + m.blocked.length : null
     const bottomLine = (
       <Box key="where" height={1} flexShrink={0}>
         {m.kind === 'ok' && <Text dimColor>{`${open} open · `}</Text>}

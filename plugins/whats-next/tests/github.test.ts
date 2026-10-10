@@ -681,7 +681,7 @@ test('issue: with dependencies on, what blocks it and what it blocks, this repo 
   expect(asked.some(a => a.url.includes('/dependencies/'))).toBe(false)
 })
 
-test('github.com: an issue with an open blocker waits, the next free one is Next, and only it is asked about', GH, async ($, on) => {
+test('github.com: an issue with an open blocker waits, the next free one is Next, and only the blocked ones are asked about', GH, async ($, on) => {
   const asked: World['asked'] = []
   const clock = world(on, {
     mine: [],
@@ -691,7 +691,7 @@ test('github.com: an issue with an open blocker waits, the next free one is Next
       issue(22, '2026-10-03T09:00:00Z'),
       issue(23, '2026-10-04T09:00:00Z', { blockedBy: 2 }),
     ],
-    deps: { 14: [dep(9, 'open'), dep(8, 'closed')] },
+    deps: { 14: [dep(9, 'open'), dep(8, 'closed')], 23: [dep(14, 'open'), dep(9, 'open')] },
     asked,
   })
   await clock.set(NOW)
@@ -703,10 +703,14 @@ test('github.com: an issue with an open blocker waits, the next free one is Next
   expect(all).toContain('▸ #21 Issue 21')
   expect(all).toContain('⊘ #14 Issue 14')
   expect(all.some(t => t.includes('#9'))).toBe(true)
-  // Only #14, walked past on the way to Next, cost a request: #21 had none
-  // open, and the queue after Next is not checked.
+  // #23, after Next, waits too, at the bottom of the Queue.
+  expect(all).toContain('⊘ #23 Issue 23')
+  expect(all.indexOf('⊘ #23 Issue 23')).toBeGreaterThan(all.indexOf('  #22 Issue 22'))
+  // Only #14 and #23, which GitHub says are blocked, cost a request: #21 and
+  // #22 had none open.
   expect(asked?.filter(a => a.url.includes('/dependencies/')).map(a => new URL(a.url).pathname)).toEqual([
     '/repos/boats/radar/issues/14/dependencies/blocked_by',
+    '/repos/boats/radar/issues/23/dependencies/blocked_by',
   ])
 })
 
