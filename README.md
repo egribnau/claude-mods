@@ -59,3 +59,11 @@ working folder.
 To edit What's Next and see each change without a push, add this working copy as a marketplace
 (`claude plugin marketplace add ~/dev/personal/claude-mods`) and install from it; Claude Code then
 reads the folder itself, and `/reload-plugins` picks up an edit.
+
+## Licence
+
+Copyright (C) 2026 Erwin Gribnau.
+
+The mods in this repo are free software under the GNU Affero General
+Public License, version 3 only (`AGPL-3.0-only`): see [LICENSE](LICENSE).
+They come with no warranty.
