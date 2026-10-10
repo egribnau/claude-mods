@@ -155,6 +155,15 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       return raw.map(m => ({ title: m.title, due: m.due_on ?? null, closed: m.closed_issues, total: m.open_issues + m.closed_issues }))
     },
 
+    // GitHub does not sort milestones by when they closed: all are read.
+    async closedMilestones(n: number): Promise<MilestoneRow[]> {
+      const raw = await fetchAll<RawMilestone>(`${api}/milestones?state=closed`, 'closed milestones').catch(() => [])
+      return raw
+        .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))
+        .slice(0, n)
+        .map(m => ({ title: m.title, due: m.due_on ?? null, closed: m.closed_issues, total: m.open_issues + m.closed_issues }))
+    },
+
     async mine(): Promise<IssueRow[]> {
       const me = await login()
       const found = await fetchAll<RawIssue>(`${api}/issues?state=open&assignee=${encodeURIComponent(me)}`, 'your issues')
@@ -345,7 +354,7 @@ const loginByToken = new Map<string, string>()
 // The repo as check reads it. `open_issues_count` counts pull requests too.
 type RawRepo = { has_issues?: boolean; open_issues_count?: number; private?: boolean; permissions?: { push?: boolean } }
 
-type RawMilestone = { title: string; due_on?: string | null; open_issues: number; closed_issues: number }
+type RawMilestone = { title: string; due_on?: string | null; open_issues: number; closed_issues: number; closed_at?: string | null }
 
 // An issue as GitHub lists it. Pull requests are in the same lists, marked
 // by `pull_request`.

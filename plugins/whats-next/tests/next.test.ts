@@ -570,7 +570,7 @@ test('switching milestones asks Forgejo only for dependencies it has not checked
   }
   const deps = asked.map(u => /\/issues\/(\d+)\/dependencies$/.exec(new URL(u).pathname)?.[1]).filter(Boolean)
   expect(deps).toEqual(['37', '51', '33', '29'])
-  expect(asked.filter(u => new URL(u).pathname.endsWith('/milestones'))).toHaveLength(1)
+  expect(asked.filter(u => new URL(u).pathname.endsWith('/milestones') && new URL(u).searchParams.get('state') === 'open')).toHaveLength(1)
 })
 
 test('labels under an issue are text in their own colour, the rest of the line dim', TOKEN, async ($, on) => {

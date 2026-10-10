@@ -194,6 +194,9 @@ declare module 'claude-code' {
       milestones: Milestone[] | null
       // The milestones folded open in the Milestones pane, by title.
       milestonesUnfolded: string[]
+      // The last milestones closed, newest first, and whether Closed is folded open.
+      closedMilestones: Milestone[]
+      closedShown: boolean
       // The open issues of each milestone folded open, by title, once asked;
       // null when they could not be listed.
       milestoneIssues: Record<string, MilestoneIssue[] | null>

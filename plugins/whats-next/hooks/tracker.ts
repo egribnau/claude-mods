@@ -35,6 +35,8 @@ export type Tracker = {
   writeScope: string
   // The open milestones; none when the list is refused.
   milestones(): Promise<MilestoneRow[]>
+  // The last `n` milestones closed, newest first; none when the list is refused.
+  closedMilestones(n: number): Promise<MilestoneRow[]>
   // Your open issues in this repo, and all its open issues.
   mine(): Promise<IssueRow[]>
   open(): Promise<OpenIssue[]>

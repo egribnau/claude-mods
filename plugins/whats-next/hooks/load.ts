@@ -10,6 +10,7 @@ import { message, type EpicRow, type OpenIssue, type Tracker } from './tracker'
 // children of each epic loaded so far.
 export type Memory = {
   milestones: MilestoneRow[]
+  closedMilestones: MilestoneRow[]
   mine: IssueRow[]
   free: IssueRow[]
   taken: OpenIssue[]
@@ -65,6 +66,7 @@ export async function loadRepo(
   me: string | null = null,
 ): Promise<{ memory: Memory; issuesError: string | null; epicsError: string | null }> {
   const milestones = await t.milestones()
+  const closedMilestones = await t.closedMilestones(3)
   let mine: IssueRow[] = []
   let free: IssueRow[] = []
   let taken: OpenIssue[] = []
@@ -103,6 +105,7 @@ export async function loadRepo(
   return {
     memory: {
       milestones,
+      closedMilestones,
       mine,
       free,
       taken,
@@ -148,7 +151,8 @@ const blockersOf = (t: Tracker, known: Memory, deps: boolean) => async (n: numbe
 // and someone else's, each not yours checked for blockers as What's next
 // checks its own, by number. An open epic among them carries its children,
 // asked once and shared with Epics, which never count as its blockers.
-// null when the issues could not be listed.
+// Its closed epics come last, for a closed milestone to show. null when the
+// issues could not be listed.
 export async function milestoneIssues(
   t: Tracker,
   known: Memory,
@@ -185,6 +189,21 @@ export async function milestoneIssues(
       milestone: i.milestone,
       created: i.created,
       blockedBy,
+    })
+  }
+  for (const e of known.epics.filter(e => e.state === 'closed' && e.milestone === title).sort((a, b) => a.number - b.number)) {
+    out.push({
+      number: e.number,
+      title: e.title,
+      state: 'closed',
+      assignees: [],
+      mine: false,
+      blocked: false,
+      labels: [],
+      milestone: title,
+      created: '',
+      blockedBy: [],
+      children: null,
     })
   }
   return out

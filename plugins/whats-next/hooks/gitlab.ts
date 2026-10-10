@@ -35,6 +35,14 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
     }
   }
 
+  // A milestone with how many of its issues are closed, of all: 0 of 0 when
+  // GitLab would not say.
+  async function counted(m: RawMilestone): Promise<MilestoneRow> {
+    const s = await fetchJson<RawStatistics>(`${project}/issues_statistics?milestone=${encodeURIComponent(m.title)}`)
+    const counts = s?.statistics?.counts
+    return { title: m.title, due: m.due_date ?? null, closed: counts?.closed ?? 0, total: counts?.all ?? 0 }
+  }
+
   // A change to issue `n`: null when GitLab took it, else why not.
   async function put(n: number, body: object): Promise<string | null> {
     const res = await send(`${project}/issues/${n}`, {
@@ -185,14 +193,13 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
 
     async milestones(): Promise<MilestoneRow[]> {
       const raw = await fetchAll<RawMilestone>(`${project}/milestones?state=active&include_ancestors=true`, 'milestones').catch(() => [])
-      // How many of each one's issues are closed, of all: 0 of 0 when GitLab would not say.
-      return Promise.all(
-        raw.map(async m => {
-          const s = await fetchJson<RawStatistics>(`${project}/issues_statistics?milestone=${encodeURIComponent(m.title)}`)
-          const counts = s?.statistics?.counts
-          return { title: m.title, due: m.due_date ?? null, closed: counts?.closed ?? 0, total: counts?.all ?? 0 }
-        }),
-      )
+      return Promise.all(raw.map(counted))
+    },
+
+    // GitLab does not say when a milestone closed: its last change stands in.
+    async closedMilestones(n: number): Promise<MilestoneRow[]> {
+      const raw = await fetchAll<RawMilestone>(`${project}/milestones?state=closed&include_ancestors=true`, 'closed milestones').catch(() => [])
+      return Promise.all(raw.sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? '')).slice(0, n).map(counted))
     },
 
     async mine(): Promise<IssueRow[]> {
@@ -349,7 +356,7 @@ type RawIssue = {
   // Both in seconds.
   time_stats?: { time_estimate?: number | null; total_time_spent?: number | null } | null
 }
-type RawMilestone = { title: string; due_date?: string | null }
+type RawMilestone = { title: string; due_date?: string | null; updated_at?: string }
 type RawStatistics = { statistics?: { counts?: { all?: number; closed?: number } | null } | null }
 
 // An issue linked to another, as GitLab lists the links: labels as plain

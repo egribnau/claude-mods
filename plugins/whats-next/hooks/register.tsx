@@ -1,7 +1,7 @@
 import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
-import type { Detail, Epic, Epics, IssueDetail, IssueRow, Overview, Ref, Repo, Setup, TokenSource } from '../types'
+import type { Detail, Epic, Epics, IssueDetail, IssueRow, Milestone, Overview, Ref, Repo, Setup, TokenSource } from '../types'
 import { bar, dueFirst, forYou, openChildren, pickerOptions, standing, summary, tally } from './epics'
 import { detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
@@ -36,6 +36,8 @@ const unfolded = atom({ plugin: 'whats-next', key: 'unfolded' } as const, [])
 const milestones = atom({ plugin: 'whats-next', key: 'milestones' } as const, null)
 const milestonesUnfolded = atom({ plugin: 'whats-next', key: 'milestonesUnfolded' } as const, [])
 const msIssues = atom({ plugin: 'whats-next', key: 'milestoneIssues' } as const, {})
+const closedMilestones = atom({ plugin: 'whats-next', key: 'closedMilestones' } as const, [])
+const closedShown = atom({ plugin: 'whats-next', key: 'closedShown' } as const, false)
 const panesOpen = atom({ plugin: 'whats-next', key: 'panesOpen' } as const, [])
 const milestonePick = atom({ plugin: 'whats-next', key: 'milestonePick' } as const, null)
 const picker = atom({ plugin: 'whats-next', key: 'picker' } as const, null)
@@ -229,6 +231,7 @@ async function load($: EngineInterface, r: Repo) {
   if (epicsError !== null) await update($, epics, (): Epics => ({ kind: 'error', message: epicsError }))
   memory = loaded.memory
   await update($, milestones, () => loaded.memory.milestones)
+  await update($, closedMilestones, () => loaded.memory.closedMilestones)
   await showPicker($)
   if (issuesError === null) await showNext($, r)
   if (epicsError === null) await showEpics($, r)
@@ -1377,7 +1380,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   }
 
   // The Milestones pane, once setup passes: each open milestone folded, due
-  // first, with how far it is from its own counts.
+  // first, with how far it is from its own counts; then the last closed.
   if (e.requestId === MILESTONES_PANE && s.kind === 'ready' && r) {
     const now = await $.clock.now()
     const known = await read($, milestones)
@@ -1386,49 +1389,66 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     if (known === null) rows.push(line('loading', 'Loading the milestones…', { dimColor: true }))
     if (known !== null && known.length === 0) rows.push(para('none', `No open milestones in ${slug(r)}.`, { dimColor: true }))
     const issuesOf = await read($, msIssues)
+    const closedOnes = await read($, closedMilestones)
+    const showClosed = await read($, closedShown)
     // Bar and count at the right of a row: 15 columns.
     const titleWidth = Math.max(0, columns - 2 - 15)
     // One number column for every milestone folded open, so all titles line up.
     const numbers = [...folds].flatMap(t => (issuesOf[t] ?? []).map(c => c.number))
     const numWidth = Math.max(0, ...numbers.map(n => `#${n}`.length)) + 1
-    for (const ms of dueFirst(known ?? [])) {
+    // A milestone's row and, folded open, its issues. A closed one is a grey
+    // row ending in ✓, its closed epics grey under its open issues.
+    const draw = (ms: Milestone, isClosed: boolean) => {
       const b = bar(ms.closed, ms.total)
       const open = folds.has(ms.title)
       const due = ms.due ? `due ${dueText(ms.due, now).text}` : 'no due date'
       // Once asked: its open issues, its epics first, and what there is for
       // you among the issues that are not epics.
       const issues = issuesOf[ms.title]
-      const epicRows = (issues ?? []).filter(c => c.children !== undefined)
+      const epicRows = (issues ?? []).filter(c => c.children !== undefined && c.state === 'open')
+      const closedEpics = isClosed ? (issues ?? []).filter(c => c.children !== undefined && c.state === 'closed') : []
       const plain = (issues ?? []).filter(c => c.children === undefined)
       const parts = issues ? forYou(tally(plain)) : []
-      rows.push(
-        <Box key={`ms-${ms.title}`} flexDirection="column" flexShrink={0} marginBottom={open ? 0 : gap}>
-          {/* A milestone has no detail: the whole row folds. */}
-          <Button key={`milestone-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
-            <Text wrap="truncate-end">
-              <Text>{open ? '− ' : '+ '}</Text>
-              <Text bold>{`${fit(ms.title, titleWidth).padEnd(titleWidth)} `}</Text>
-              {b.filled && <Text color="success">{b.filled}</Text>}
-              {b.empty && <Text dimColor>{b.empty}</Text>}
-              <Text dimColor>{`${ms.closed}/${ms.total}`.padStart(6)}</Text>
-            </Text>
-          </Button>
-          <Box>
-            <Text>{'  '}</Text>
-            <Text {...(ms.due ? dueLook(ms.due, now) : { dimColor: true })}>{due}</Text>
-            <Text dimColor wrap="truncate-end">{` · ${ms.total - ms.closed} open`}</Text>
-            {parts.flatMap((part, k) => [
-              <Text key={`sep-${k}`} dimColor>
-                {' · '}
-              </Text>,
-              <Text key={`part-${k}`} color={part.color} dimColor={!part.color} wrap="truncate-end">
-                {part.text}
-              </Text>,
-            ])}
-          </Box>
-        </Box>,
-      )
-      if (!open) continue
+      if (isClosed) {
+        rows.push(
+          <Box key={`ms-${ms.title}`} flexShrink={0}>
+            <Button key={`milestone-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
+              <Text wrap="truncate-end" color="inactive">
+                {`${open ? '− ' : '+ '}${fit(ms.title, titleWidth).padEnd(titleWidth)} ${'✓'.padStart(14)}`}
+              </Text>
+            </Button>
+          </Box>,
+        )
+      } else {
+        rows.push(
+          <Box key={`ms-${ms.title}`} flexDirection="column" flexShrink={0} marginBottom={open ? 0 : gap}>
+            {/* A milestone has no detail: the whole row folds. */}
+            <Button key={`milestone-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
+              <Text wrap="truncate-end">
+                <Text>{open ? '− ' : '+ '}</Text>
+                <Text bold>{`${fit(ms.title, titleWidth).padEnd(titleWidth)} `}</Text>
+                {b.filled && <Text color="success">{b.filled}</Text>}
+                {b.empty && <Text dimColor>{b.empty}</Text>}
+                <Text dimColor>{`${ms.closed}/${ms.total}`.padStart(6)}</Text>
+              </Text>
+            </Button>
+            <Box>
+              <Text>{'  '}</Text>
+              <Text {...(ms.due ? dueLook(ms.due, now) : { dimColor: true })}>{due}</Text>
+              <Text dimColor wrap="truncate-end">{` · ${ms.total - ms.closed} open`}</Text>
+              {parts.flatMap((part, k) => [
+                <Text key={`sep-${k}`} dimColor>
+                  {' · '}
+                </Text>,
+                <Text key={`part-${k}`} color={part.color} dimColor={!part.color} wrap="truncate-end">
+                  {part.text}
+                </Text>,
+              ])}
+            </Box>
+          </Box>,
+        )
+      }
+      if (!open) return
       // Folded open: its open issues as epic children are, then how many are closed.
       const kids: RenderChildren[] = []
       if (issues === undefined) kids.push(line(`loading-${ms.title}`, '  Loading the issues…', { dimColor: true }))
@@ -1485,6 +1505,18 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           }),
         )
       }
+      const width = Math.max(0, columns - 4 - numWidth - 15)
+      for (const c of closedEpics) {
+        kids.push(
+          <Box key={`ms-epic-${c.number}`} flexShrink={0}>
+            <Button key={`ms-issue-${c.number}`} plain onPress={() => openIssue($, MILESTONES_PANE, c.number)}>
+              <Text wrap="truncate-end" color="inactive">
+                {`    ${`#${c.number}`.padStart(numWidth - 1)} ${fit(c.title, width).padEnd(width)} ${'✓'.padStart(14)}`}
+              </Text>
+            </Button>
+          </Box>,
+        )
+      }
       if (ms.closed > 0) kids.push(line(`closed-${ms.title}`, `  ✓ ${ms.closed} closed`, { color: 'inactive' }))
       // The last issue row brings its own empty line; a closing line needs one.
       const endsInRow = ms.closed === 0 && issues !== undefined && issues !== null && issues.length > 0
@@ -1493,6 +1525,21 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {kids}
         </Box>,
       )
+    }
+    for (const ms of dueFirst(known ?? [])) draw(ms, false)
+    if (closedOnes.length > 0) {
+      const head = `${showClosed ? '−' : '+'} Closed · ${closedOnes.length} `
+      rows.push(
+        <Box key="closed-rule" flexShrink={0} marginBottom={showClosed ? 0 : gap}>
+          <Button key="closed-section" plain onPress={() => update($, closedShown, o => !o)}>
+            <Text wrap="truncate-end">
+              <Text bold>{head}</Text>
+              <Text dimColor>{'─'.repeat(Math.max(0, columns - head.length))}</Text>
+            </Text>
+          </Button>
+        </Box>,
+      )
+      if (showClosed) for (const ms of closedOnes) draw(ms, true)
     }
     const count = known?.length ?? 0
     const openIssues = (known ?? []).reduce((n, ms) => n + ms.total - ms.closed, 0)

@@ -624,7 +624,7 @@ test('switching milestones and back asks Forgejo only for epics not seen yet', T
     await ui.press({ key: `milestone-${pick}` })
   }
   expect(count(asked, u => u.searchParams.get('labels') === 'epic')).toBe(1)
-  expect(count(asked, u => u.pathname.endsWith('/milestones'))).toBe(1)
+  expect(count(asked, u => u.pathname.endsWith('/milestones') && u.searchParams.get('state') === 'open')).toBe(1)
   expect(count(asked, depsOf(12))).toBe(1)
   expect(count(asked, depsOf(60))).toBe(1)
   expect(count(asked, depsOf(71))).toBe(1)
@@ -638,7 +638,7 @@ test('Refresh forgets the epics and asks again', TOKEN, async ($, on) => {
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   await ui.press({ key: 'refresh' })
   expect(count(asked, depsOf(12))).toBe(2)
-  expect(count(asked, u => u.pathname.endsWith('/milestones'))).toBe(2)
+  expect(count(asked, u => u.pathname.endsWith('/milestones') && u.searchParams.get('state') === 'open')).toBe(2)
 })
 
 test('who you are comes from the setup check, so a picker switch asks Forgejo nothing', TOKEN, async ($, on) => {

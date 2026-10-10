@@ -29,6 +29,8 @@ const NOW = Date.parse('2026-10-09T12:00:00Z')
 
 type World = {
   milestones?: unknown[]
+  // The closed milestones, as Forgejo lists them.
+  closedMilestones?: unknown[]
   // The repo's open issues, and each issue's dependencies, as Forgejo lists them.
   issues?: unknown[]
   // The issues with the Epic label.
@@ -81,7 +83,10 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
       const n = Number(one[1])
       return reply(200, { ...issue(n, `Issue ${n}`), user: { login: 'alice' }, updated_at: '2026-09-01T09:00:00Z', comments: 0 })
     }
-    if (url.pathname.endsWith('/repos/boats/radar/milestones')) return reply(200, page === 0 ? (w.milestones ?? []) : [])
+    if (url.pathname.endsWith('/repos/boats/radar/milestones')) {
+      const shown = url.searchParams.get('state') === 'closed' ? w.closedMilestones : w.milestones
+      return reply(200, page === 0 ? (shown ?? []) : [])
+    }
     if (url.pathname.endsWith('/repos/boats/radar')) {
       return reply(200, { full_name: 'boats/radar', open_issues_count: 9, permissions: { push: false } })
     }
@@ -411,4 +416,71 @@ test('epics are left out of what there is for you in a milestone', TOKEN, async 
   const t = await texts(pane)
   const at = t.indexOf(' · 8 open')
   expect(t.slice(at + 1, at + 7)).toEqual([' · ', '1 yours', ' · ', '1 blocked', ' · ', '1 up for grabs'])
+})
+
+const shut = (title: string, at: string, open: number, closed: number) => ({ ...milestone(title, null, open, closed), state: 'closed', closed_at: at })
+
+// Four closed milestones; GitLab, closed last, holds the closed epic #12 and
+// one issue still open, #44.
+const CLOSED: World = {
+  ...REPO,
+  closedMilestones: [
+    shut('Forgejo dependencies', '2026-10-02T10:00:00Z', 0, 6),
+    shut('GitLab', '2026-10-09T10:00:00Z', 1, 11),
+    shut('Old', '2026-09-01T10:00:00Z', 0, 2),
+    shut("Rename to What's Next", '2026-10-08T10:00:00Z', 0, 3),
+  ],
+  issues: [issue(44, 'GitLab leftovers', { milestone: 'GitLab' })],
+  epics: [issue(12, 'GitLab support', { milestone: 'GitLab', labels: ['epic'], state: 'closed' })],
+}
+
+test('a Closed rule after the open milestones, folded, with how many', TOKEN, async ($, on) => {
+  const clock = world(on, CLOSED)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  const t = await texts(pane)
+  expect(t).toContain('+ Closed · 3 ')
+  expect(t.some(x => x.startsWith('+ GitLab'))).toBe(false)
+})
+
+test('unfolded, Closed lists the last three closed, newest first, each a grey row ending in ✓', TOKEN, async ($, on) => {
+  const clock = world(on, CLOSED)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'closed-section' })
+  const n = await nodes(pane)
+  const rows = n.filter(x => /^\+ \S.* ✓$/.test(x.text))
+  expect(rows.map(x => x.text)).toEqual([
+    `+ ${'GitLab'.padEnd(33)} ${'✓'.padStart(14)}`,
+    `+ ${"Rename to What's Next".padEnd(33)} ${'✓'.padStart(14)}`,
+    `+ ${'Forgejo dependencies'.padEnd(33)} ${'✓'.padStart(14)}`,
+  ])
+  expect(rows.every(x => x.props.color === 'inactive')).toBe(true)
+})
+
+test('a closed milestone unfolded: its epics grey, how many are closed, and issues still open', TOKEN, async ($, on) => {
+  const clock = world(on, CLOSED)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'closed-section' })
+  await pane.press({ key: 'milestone-GitLab' })
+  const n = await nodes(pane)
+  const epic = n.find(x => x.text.startsWith('    #12 GitLab support'))
+  expect(epic?.text.endsWith('✓')).toBe(true)
+  expect(epic?.props.color).toBe('inactive')
+  expect(n.map(x => x.text)).toContain('  ✓ 11 closed')
+  expect(n.some(x => x.text.startsWith('    #44 GitLab leftovers'))).toBe(true)
+  await pane.press({ key: 'ms-issue-12' })
+  expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
+})
+
+test('without a closed milestone there is no Closed rule', TOKEN, async ($, on) => {
+  const clock = world(on, REPO)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  expect((await texts(pane)).some(x => x.includes('Closed'))).toBe(false)
 })

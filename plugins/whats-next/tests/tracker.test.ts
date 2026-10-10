@@ -51,6 +51,10 @@ function fake(f: Fake, calls: string[] = []): Tracker {
       calls.push('milestones')
       return [{ title: 'v1', due: '2026-11-01T00:00:00Z', closed: 1, total: 4 }]
     },
+    closedMilestones: async () => {
+      calls.push('closed milestones')
+      return []
+    },
     mine: async () => {
       calls.push('mine')
       return f.failing === 'mine' ? fail('your issues') : (f.mine ?? [])

@@ -148,6 +148,14 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
       return raw.map(m => ({ title: m.title, due: m.due_on, closed: m.closed_issues, total: m.open_issues + m.closed_issues }))
     },
 
+    async closedMilestones(n: number): Promise<MilestoneRow[]> {
+      const raw = await fetchAll<RawMilestone>(`${api}/milestones?state=closed`, 'closed milestones').catch(() => [])
+      return raw
+        .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))
+        .slice(0, n)
+        .map(m => ({ title: m.title, due: m.due_on, closed: m.closed_issues, total: m.open_issues + m.closed_issues }))
+    },
+
     // Forgejo's search covers every repo the token sees, so it is narrowed
     // to this one.
     async mine(): Promise<IssueRow[]> {
@@ -267,7 +275,7 @@ type RawDep = {
   created_at?: string
 }
 type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string }[] | null }
-type RawMilestone = { title: string; due_on: string | null; open_issues: number; closed_issues: number }
+type RawMilestone = { title: string; due_on: string | null; open_issues: number; closed_issues: number; closed_at?: string | null }
 
 // What one GET answered: its status and, when it was ok, its parsed body.
 export type Got = { ok: boolean; status: number; json: unknown }

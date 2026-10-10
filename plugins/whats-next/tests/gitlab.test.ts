@@ -1077,3 +1077,28 @@ test('gitlab.com Free: an epic with its related issues in the Epics pane, no blo
   // Only the epic's links: no child is asked what blocks it.
   expect(asked?.filter(a => a.url.endsWith('/links')).map(a => a.url)).toEqual([`${PROJECT}/issues/20/links`])
 })
+
+test('closedMilestones: the last changed first, at most n, counts asked for those only', async () => {
+  const asked: Asked[] = []
+  const path = '/api/v4/projects/boats%2Fradar/milestones'
+  const shut = (title: string, at: string, id: number) => ({ ...milestone(title, null, id), state: 'closed', updated_at: at })
+  const list = listRoute(path, [[shut('v1.0', '2026-08-01T10:00:00.000Z', 4410104), shut('v1.1', '2026-09-01T10:00:00.000Z', 4410105), shut('v0.9', '2026-07-01T10:00:00.000Z', 4410106)]])
+  const stats = (all: number, closed: number) => ({ statistics: { counts: { all, closed, opened: all - closed } } })
+  const t = gitlab(
+    fakeSend(u => (u.pathname === '/api/v4/projects/boats%2Fradar/issues_statistics' ? { status: 200, body: stats(6, 5) } : list(u)), asked),
+    R,
+    'glpat-x',
+    null,
+  )
+  expect(await t.closedMilestones(2)).toEqual([
+    { title: 'v1.1', due: null, closed: 5, total: 6 },
+    { title: 'v1.0', due: null, closed: 5, total: 6 },
+  ])
+  const u = new URL(asked[0]?.url ?? '')
+  expect(u.searchParams.get('state')).toBe('closed')
+  expect(u.searchParams.get('include_ancestors')).toBe('true')
+  expect(asked.slice(1).map(a => a.url).sort()).toEqual([
+    `${PROJECT}/issues_statistics?milestone=v1.0`,
+    `${PROJECT}/issues_statistics?milestone=v1.1`,
+  ])
+})

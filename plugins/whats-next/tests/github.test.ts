@@ -849,3 +849,17 @@ test('github.com: an epic with its sub-issues in the Epics pane, with the bar an
   // The closed epic's sub-issues are never asked.
   expect(asked?.filter(a => a.url.includes('/sub_issues')).map(a => new URL(a.url).pathname)).toEqual(['/repos/boats/radar/issues/20/sub_issues'])
 })
+
+test('closedMilestones: the last closed first, at most n; none when refused', async () => {
+  const asked: Asked[] = []
+  const shut = (title: string, at: string, number: number) => ({ ...milestone(title, null, number, 0, 5), state: 'closed', closed_at: at })
+  const pages = [[shut('v1.0', '2026-08-01T10:00:00Z', 4), shut('v1.1', '2026-09-01T10:00:00Z', 5), shut('v0.9', '2026-07-01T10:00:00Z', 6), shut('v1.1.1', '2026-09-20T10:00:00Z', 7)]]
+  const t = github(fakeSend(listRoute('/repos/boats/radar/milestones', pages), asked), R, 't', null)
+  expect(await t.closedMilestones(3)).toEqual([
+    { title: 'v1.1.1', due: null, closed: 5, total: 5 },
+    { title: 'v1.1', due: null, closed: 5, total: 5 },
+    { title: 'v1.0', due: null, closed: 5, total: 5 },
+  ])
+  expect(asked.map(a => a.url)).toEqual([`${API}/milestones?state=closed&per_page=100`])
+  expect(await github(fakeSend(() => NOT_FOUND), R, 't', null).closedMilestones(3)).toEqual([])
+})
