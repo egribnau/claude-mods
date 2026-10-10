@@ -1395,9 +1395,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const b = bar(ms.closed, ms.total)
       const open = folds.has(ms.title)
       const due = ms.due ? `due ${dueText(ms.due, now).text}` : 'no due date'
-      // Once asked: its open issues, and what there is for you among them.
+      // Once asked: its open issues, its epics first, and what there is for
+      // you among the issues that are not epics.
       const issues = issuesOf[ms.title]
-      const parts = issues ? forYou(tally(issues)) : []
+      const epicRows = (issues ?? []).filter(c => c.children !== undefined)
+      const plain = (issues ?? []).filter(c => c.children === undefined)
+      const parts = issues ? forYou(tally(plain)) : []
       rows.push(
         <Box key={`ms-${ms.title}`} flexDirection="column" flexShrink={0} marginBottom={open ? 0 : gap}>
           {/* A milestone has no detail: the whole row folds. */}
@@ -1430,7 +1433,41 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const kids: RenderChildren[] = []
       if (issues === undefined) kids.push(line(`loading-${ms.title}`, '  Loading the issues…', { dimColor: true }))
       if (issues === null) kids.push(line(`unknown-${ms.title}`, '  issues unknown', { dimColor: true }))
-      for (const c of openChildren(issues ?? [])) {
+      // An epic: its bar of closed children at the right, and under it what
+      // there is for you in it, as on the Epics pane. Its own children never
+      // make it blocked.
+      for (const c of epicRows) {
+        const st = standing(c)
+        const t = tally(c.children ?? [])
+        const eb = bar(t.closed, t.total)
+        const width = Math.max(0, columns - 4 - numWidth - 15)
+        kids.push(
+          <Box key={`ms-epic-${c.number}`} flexDirection="column" flexShrink={0} marginBottom={gap}>
+            <Button key={`ms-issue-${c.number}`} plain onPress={() => openIssue($, MILESTONES_PANE, c.number)}>
+              <Text wrap="truncate-end">
+                <Text color={st === 'mine' ? 'success' : undefined} dimColor={st === 'blocked'}>
+                  {`  ${st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : st === 'taken' ? '○ ' : '  '}`}
+                </Text>
+                <Text color="suggestion">{`${`#${c.number}`.padStart(numWidth - 1)} `}</Text>
+                <Text bold>{`${fit(c.title, width).padEnd(width)} `}</Text>
+                {eb.filled && <Text color="success">{eb.filled}</Text>}
+                {eb.empty && <Text dimColor>{eb.empty}</Text>}
+                <Text dimColor>{`${t.closed}/${t.total}`.padStart(6)}</Text>
+              </Text>
+            </Button>
+            <Box>
+              <Text>{' '.repeat(4 + numWidth)}</Text>
+              {summary({ number: c.number, title: c.title, state: 'open', children: c.children ?? null }).flatMap((part, k) => [
+                ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
+                <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
+                  {part.text}
+                </Text>,
+              ])}
+            </Box>
+          </Box>,
+        )
+      }
+      for (const c of openChildren(plain)) {
         const st = standing(c)
         kids.push(
           issueRow(c, {

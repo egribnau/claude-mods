@@ -31,6 +31,8 @@ type World = {
   milestones?: unknown[]
   // The repo's open issues, and each issue's dependencies, as Forgejo lists them.
   issues?: unknown[]
+  // The issues with the Epic label.
+  epics?: unknown[]
   deps?: Record<number, unknown[]>
   // Whether the list of open issues answers 500.
   failIssues?: boolean
@@ -68,7 +70,7 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
     const mine = (w.issues ?? []).filter(i => (i as { assignees: { login: string }[] }).assignees.some(a => a.login === 'alice'))
     if (url.pathname.endsWith('/repos/issues/search')) return reply(200, page === 0 ? mine : [])
     if (url.pathname.endsWith('/repos/boats/radar/issues')) {
-      if (url.searchParams.get('labels')) return reply(200, [])
+      if (url.searchParams.get('labels')) return reply(200, page === 0 ? (w.epics ?? []) : [])
       if (w.failIssues) return reply(500, { message: 'boom' })
       return reply(200, page === 0 ? (w.issues ?? []) : [])
     }
@@ -88,18 +90,18 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
   return clock
 }
 
-type Extra = { milestone?: string; assignees?: string[] }
+type Extra = { milestone?: string; assignees?: string[]; labels?: string[]; state?: 'open' | 'closed' }
 
 function issue(number: number, title: string, extra: Extra = {}) {
   return {
     number,
     title,
-    state: 'open',
+    state: extra.state ?? 'open',
     created_at: '2026-10-08T09:00:00Z',
     html_url: `https://git.example.org/boats/radar/issues/${number}`,
     body: '',
     milestone: extra.milestone ? { title: extra.milestone } : null,
-    labels: [],
+    labels: (extra.labels ?? []).map(name => ({ name })),
     assignees: (extra.assignees ?? []).map(login => ({ login })),
     repository: { full_name: 'boats/radar' },
   }
@@ -342,4 +344,71 @@ test("when the open issues could not be listed, an unfolded milestone's issues a
   await pane.press({ key: 'milestone-GitHub' })
   const n = await nodes(pane)
   expect(n.find(x => x.text === '  issues unknown')?.props.dimColor).toBe(true)
+})
+
+// GitHub support (#29) is an epic in GitHub: its children #30, #33 and #36
+// are open there, #31 is closed. On Forgejo they are its dependencies.
+const GITHUB_EPIC = issue(29, 'GitHub support', { milestone: 'GitHub', labels: ['epic'] })
+const EPIC_WORK: World = {
+  ...WORK,
+  issues: [GITHUB_EPIC, ...(WORK.issues ?? [])],
+  epics: [GITHUB_EPIC],
+  deps: {
+    ...WORK.deps,
+    29: [
+      issue(30, 'GitHub token setting', { milestone: 'GitHub', assignees: ['alice'] }),
+      issue(33, 'Detect GitHub from the remote', { milestone: 'GitHub' }),
+      issue(36, 'GitHub rate limits', { milestone: 'GitHub', assignees: ['jdoe'] }),
+      issue(31, 'GitHub detail', { milestone: 'GitHub', state: 'closed' }),
+    ],
+  },
+}
+
+test('epics in a milestone come first, with their bar and what there is for you in them', TOKEN, async ($, on) => {
+  const clock = world(on, EPIC_WORK)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-GitHub' })
+  const t = await texts(pane)
+  const rows = t.filter(x => /^ {2}[●○⊘ ] #\d/.test(x))
+  expect(rows[0]).toBe(`    #29 ${'GitHub support'.padEnd(27)} ▰▰▱▱▱▱▱▱   1/4`)
+  expect(rows.slice(1).map(x => x.slice(2, 7))).toEqual(['● #30', '  #33', '○ #36', '⊘ #40'])
+  const at = t.indexOf('▱▱▱▱▱▱')
+  expect(t.slice(at + 1, at + 6)).toEqual(['   1/4', '        ', '1 yours', ' · ', '1 up for grabs'])
+})
+
+test("an epic is not blocked by its own children, and opens its detail", TOKEN, async ($, on) => {
+  const clock = world(on, EPIC_WORK)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-GitHub' })
+  expect((await texts(pane)).some(x => x.startsWith('  ⊘ #29'))).toBe(false)
+  await pane.press({ key: 'ms-issue-29' })
+  expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
+})
+
+test("an epic's children are asked once, for Milestones and Epics both", TOKEN, async ($, on) => {
+  const asked: string[] = []
+  const clock = world(on, EPIC_WORK, asked)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  // The load asked for them already, for Epics, which starts on GitHub.
+  const before = asked.filter(u => u.endsWith('/issues/29/dependencies')).length
+  expect(before).toBeGreaterThan(0)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-GitHub' })
+  expect(asked.filter(u => u.endsWith('/issues/29/dependencies'))).toHaveLength(before)
+})
+
+test('epics are left out of what there is for you in a milestone', TOKEN, async ($, on) => {
+  const clock = world(on, EPIC_WORK)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-GitHub' })
+  const t = await texts(pane)
+  const at = t.indexOf(' · 8 open')
+  expect(t.slice(at + 1, at + 7)).toEqual([' · ', '1 yours', ' · ', '1 blocked', ' · ', '1 up for grabs'])
 })

@@ -133,6 +133,10 @@ export type EpicChild = {
 
 // An issue with the Epic label. Its children are the issues it depends on;
 // null when Forgejo would not say, or for a closed epic, which shows none.
+// An open issue of a milestone, as the Milestones pane lists it; an epic
+// carries its children (null when the tracker would not say).
+export type MilestoneIssue = EpicChild & { children?: EpicChild[] | null }
+
 export type Epic = { number: number; title: string; state: 'open' | 'closed'; children: EpicChild[] | null }
 
 // The epics of one milestone, or of none (`title` null), with the
@@ -192,7 +196,7 @@ declare module 'claude-code' {
       milestonesUnfolded: string[]
       // The open issues of each milestone folded open, by title, once asked;
       // null when they could not be listed.
-      milestoneIssues: Record<string, EpicChild[] | null>
+      milestoneIssues: Record<string, MilestoneIssue[] | null>
       // Compact chosen in this session, before a reload brings the setting.
       compact: 'on' | 'off' | null
       // Icons chosen in this session, before a reload brings the setting.

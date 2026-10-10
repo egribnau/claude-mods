@@ -288,3 +288,37 @@ test("when the issues could not be listed, a milestone's issues are unknown", as
   const { memory } = await loadRepo(t, false)
   expect(await milestoneIssues(t, memory, 'v1', null, true)).toBe(null)
 })
+
+test("a milestone's epic carries its children, asked once, and is not blocked by them", async () => {
+  const calls: string[] = []
+  const t = fake(
+    {
+      open: [free(row(29, '2026-10-01T00:00:00Z', 'v1')), free(row(33, '2026-10-02T00:00:00Z', 'v1'))],
+      epics: [{ number: 29, title: 'Issue 29', state: 'open', milestone: 'v1' }],
+      blockers: { 29: [33] },
+      children: { 29: [child(33), child(34, { state: 'closed' })] },
+    },
+    calls,
+  )
+  const { memory } = await loadRepo(t, true, [], 'alice')
+  const issues = await milestoneIssues(t, memory, 'v1', 'alice', true)
+  const epic = issues?.find(c => c.number === 29)
+  expect(epic?.children?.map(c => c.number)).toEqual([33, 34])
+  expect(epic?.blocked).toBe(false)
+  expect(issues?.find(c => c.number === 33)?.children).toBeUndefined()
+  // Shared with the Epics pane: its children are not asked again.
+  await epicGroups(t, memory, 'all', 'alice')
+  expect(calls.filter(c => c.startsWith('children'))).toEqual(['children 29 alice'])
+})
+
+test('an epic blocked by an issue outside it is blocked by that one only', async () => {
+  const t = fake({
+    open: [free(row(29, '2026-10-01T00:00:00Z', 'v1'))],
+    epics: [{ number: 29, title: 'Issue 29', state: 'open', milestone: 'v1' }],
+    blockers: { 29: [33, 99] },
+    children: { 29: [child(33)] },
+  })
+  const { memory } = await loadRepo(t, true)
+  const issues = await milestoneIssues(t, memory, 'v1', null, true)
+  expect(issues?.map(c => [c.blocked, c.blockedBy])).toEqual([[true, [99]]])
+})

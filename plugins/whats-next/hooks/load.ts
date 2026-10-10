@@ -1,4 +1,4 @@
-import type { Epic, EpicChild, EpicGroup, IssueDetail, IssueRow } from '../types'
+import type { Epic, EpicChild, EpicGroup, IssueDetail, IssueRow, MilestoneIssue } from '../types'
 import { groupsFor, type MilestoneRow } from './epics'
 import { pickNext } from './next'
 import { message, type EpicRow, type OpenIssue, type Tracker } from './tracker'
@@ -146,15 +146,18 @@ const blockersOf = (t: Tracker, known: Memory, deps: boolean) => async (n: numbe
 
 // The open issues of milestone `title`, as epic children are: yours, free
 // and someone else's, each not yours checked for blockers as What's next
-// checks its own, by number. null when the issues could not be listed.
+// checks its own, by number. An open epic among them carries its children,
+// asked once and shared with Epics, which never count as its blockers.
+// null when the issues could not be listed.
 export async function milestoneIssues(
   t: Tracker,
   known: Memory,
   title: string,
   me: string | null,
   deps: boolean,
-): Promise<EpicChild[] | null> {
+): Promise<MilestoneIssue[] | null> {
   if (!known.listed) return null
+  const epics = new Set(known.epics.filter(e => e.state === 'open').map(e => e.number))
   const ask = blockersOf(t, known, deps)
   const all = [
     ...known.mine.map(i => ({ i, assignees: me !== null ? [me] : [], mine: true })),
@@ -163,10 +166,15 @@ export async function milestoneIssues(
   ]
     .filter(x => x.i.milestone === title)
     .sort((a, b) => a.i.number - b.i.number)
-  const out: EpicChild[] = []
+  const out: MilestoneIssue[] = []
   for (const { i, assignees, mine } of all) {
-    const blockedBy = mine ? [] : ((await ask(i.number)) ?? [])
+    const epic = epics.has(i.number)
+    if (epic && !known.children.has(i.number)) known.children.set(i.number, await t.children(i.number, me))
+    const children = epic ? (known.children.get(i.number) ?? null) : undefined
+    const own = new Set((children ?? []).map(c => c.number))
+    const blockedBy = mine ? [] : ((await ask(i.number)) ?? []).filter(n => !own.has(n))
     out.push({
+      ...(epic ? { children } : {}),
       number: i.number,
       title: i.title,
       state: 'open',
