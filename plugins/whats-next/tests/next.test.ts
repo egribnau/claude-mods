@@ -180,8 +180,6 @@ for (const surface of ['terminal', 'desktop'] as const) {
       ' · ',
       'opened 4w ago',
       '─'.repeat(50),
-      'git.example.org/',
-      'boats/radar',
       '5 open · ',
       '1 yours',
     ])
@@ -327,7 +325,7 @@ test('clicking an issue in the queue opens its detail, and back returns', TOKEN,
   expect((await texts(ui))[0]).toBe("What's next")
 })
 
-test('the repo line sits at the bottom of the pane, however long the list', TOKEN, async ($, on) => {
+test('the bottom line sits at the bottom of the pane, however long the list', TOKEN, async ($, on) => {
   world(on, { open: [Array.from({ length: 30 }, (_, k) => issue(200 + k, '2026-09-01T00:00:00Z'))] })
 
   await $.command.run(RUN)
@@ -337,23 +335,22 @@ test('the repo line sits at the bottom of the pane, however long the list', TOKE
   expect((boxes[0] as unknown as { props: { height?: number } }).props.height).toBe(rows)
   const list = boxes.find(b => b.key === 'list') as unknown as { props: Record<string, unknown> }
   expect(list.props).toEqual(expect.objectContaining({ flexGrow: 1, flexShrink: 1, overflow: 'hidden' }))
-  expect((await texts(ui)).slice(-4)).toEqual(['git.example.org/', 'boats/radar', '30 open · ', '0 yours'])
+  expect((await texts(ui)).slice(-2)).toEqual(['30 open · ', '0 yours'])
 })
 
 // A list taller than the pane is cut at its bottom; the section rules and the
 // repo line keep their row instead of being squeezed out.
-test('the repo line names the repo and counts the open issues, yours in green', TOKEN, async ($, on) => {
+test('the bottom line counts the open issues, yours in green, and leaves the repo out', TOKEN, async ($, on) => {
   world(on, REPO)
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
-  expect(all.find(t => t.text === 'git.example.org/')?.props.dimColor).toBe(true)
-  expect(all.find(t => t.text === 'boats/radar')?.props.bold).toBe(true)
+  expect(all.some(t => t.text.includes('git.example.org') || t.text === 'boats/radar')).toBe(false)
   expect(all.find(t => t.text === '5 open · ')?.props.dimColor).toBe(true)
   expect(all.find(t => t.text === '1 yours')?.props.color).toBe('success')
 })
 
-test('the section rules and the repo line keep their row when the list is too long', TOKEN, async ($, on) => {
+test('the section rules and the bottom line keep their row when the list is too long', TOKEN, async ($, on) => {
   const mine = Array.from({ length: 5 }, (_, k) => issue(100 + k, '2026-09-01T00:00:00Z', { assignees: ['alice'] }))
   const free = Array.from({ length: 30 }, (_, k) => issue(200 + k, '2026-09-02T00:00:00Z'))
   world(on, { mine: [mine], open: [[...mine, ...free]] })
@@ -364,6 +361,52 @@ test('the section rules and the repo line keep their row when the list is too lo
   for (const key of ['in-progress', 'next', 'queue', 'where-rule', 'where']) {
     expect(boxes.find(b => b.key === key)?.props.flexShrink).toBe(0)
   }
+})
+
+// The manifest as $.fs.read finds it under the plugin's folder; `read`
+// collects the paths asked for.
+function manifest(on: On, version: string, read: string[] = []) {
+  on('fs.read', (_$, e) => {
+    read.push(e.path)
+    return e.path.endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ name: 'whats-next', version }) } : { deny: 'not here' }
+  })
+}
+
+type Node = { key: string; type: string; text?: string; props: Record<string, unknown>; children?: Node[] }
+
+test("the bottom line ends in What's Next's version from its manifest, dim, read once", TOKEN, async ($, on) => {
+  const read: string[] = []
+  world(on, REPO)
+  manifest(on, '9.8.7', read)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+
+  const found = (await ui.findAll({ type: 'Text' })) as unknown as Node[]
+  const v = found.find(t => t.text === '  v9.8.7')
+  expect(v?.props.dimColor).toBe(true)
+  const all = found.map(t => t.text)
+  expect(all.indexOf('  v9.8.7')).toBeGreaterThan(all.findIndex(t => t?.endsWith(' yours')))
+  expect(read.filter(p => p.endsWith('plugin.json'))).toHaveLength(1)
+})
+
+test('on a narrow pane the counts are cut and the version keeps its place', TOKEN, async ($, on) => {
+  world(on, REPO)
+  manifest(on, '9.8.7')
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 20 }, surface: 'terminal' })
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Node[]
+  expect(boxes.find(b => b.key === 'ours')?.props.flexShrink).toBe(0)
+  const texts = (await ui.findAll({ type: 'Text' })) as unknown as Node[]
+  expect(texts.find(t => t.text === '1 yours')?.props.wrap).toBe('truncate-end')
+})
+
+test('a manifest that cannot be read leaves the version out', TOKEN, async ($, on) => {
+  world(on, REPO)
+  on('fs.read', () => ({ deny: 'no such file' }))
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await expect(ui.find({ key: 'ours' })).resolves.toBeUndefined()
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {

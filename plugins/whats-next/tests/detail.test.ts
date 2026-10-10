@@ -212,7 +212,6 @@ for (const surface of ['terminal', 'desktop'] as const) {
       'Document the Token.',
       'Also mention the desktop app.',
       '1 earlier comment',
-      'git.example.org/boats/radar',
     ]) {
       expect(all.some(t => t === want || t.includes(want))).toBe(true)
     }
@@ -287,6 +286,27 @@ test("What's next goes back to the overview", TOKEN, async ($, on) => {
   const all = await texts(ui)
   expect(all[0]).toBe("What's next")
   await expect(ui.find({ key: 'work' })).resolves.toBeUndefined()
+})
+
+test("the issue detail's bottom line is What's Next's version alone, no repo", TOKEN, async ($, on) => {
+  world(on, FULL)
+  on('fs.read', (_$, e) => (e.path.endsWith('/.claude-plugin/plugin.json') ? { value: '{"version":"9.8.7"}' } : { deny: 'not here' }))
+  const ui = await opened($)
+  const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
+  expect(found.some(t => t.text.includes('git.example.org'))).toBe(false)
+  expect(found.find(t => t.text === '  v9.8.7')?.props.dimColor).toBe(true)
+  const ours = (await ui.find({ key: 'ours' })) as unknown as { props: Record<string, unknown> }
+  expect(ours.props.flexShrink).toBe(0)
+})
+
+test('a rule closes the detail off above the bottom line, as in the lists', TOKEN, async ($, on) => {
+  world(on, FULL)
+  const ui = await opened($)
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
+  const keys = boxes.map(b => b.key)
+  expect(boxes.find(b => b.key === 'where-rule')?.props.flexShrink).toBe(0)
+  expect(keys.indexOf('where-rule')).toBe(keys.indexOf('where') - 1)
+  expect(await texts(ui)).toContain('─'.repeat(60))
 })
 
 test('says so when the issue cannot be read', TOKEN, async ($, on) => {

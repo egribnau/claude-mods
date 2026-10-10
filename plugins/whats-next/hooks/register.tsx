@@ -81,7 +81,7 @@ let configIcons = 'ask'
 let configCompact = 'ask'
 // The Epic label setting: the label that makes an issue an epic.
 let configLabel = 'epic'
-// The Debug setting: count What's Next's requests on a line under the repo line.
+// The Debug setting: count What's Next's requests on a line under the bottom line.
 let configDebug = false
 
 // Nerd Font icons for the buttons (Material Design set).
@@ -626,7 +626,25 @@ const settingChanged: Hook<'config.set'> = async ($, e, next) => {
   return done
 }
 
-// Both panes draw here: they share setup, the detail view and the repo line.
+// What's Next's own version, from its manifest, read once by the code that
+// runs: a session keeps the version it loaded until /reload-plugins, even
+// when the folder on disk has moved on. null: the manifest could not be read.
+let ownVersion: Promise<string | null> | null = null
+function builtVersion($: EngineInterface): Promise<string | null> {
+  const from = (path: string) =>
+    $.fs.read(path).then(text => {
+      const v = (JSON.parse(text) as { version?: unknown }).version
+      return typeof v === 'string' && v !== '' ? v : null
+    })
+  // The plugin's folder, or the .claude-plugin folder in it.
+  const root = $.plugin.root
+  ownVersion ??= from(`${root}/.claude-plugin/plugin.json`)
+    .catch(() => from(`${root}/plugin.json`))
+    .catch(() => null)
+  return ownVersion
+}
+
+// Both panes draw here: they share setup, the detail view and the bottom line.
 async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
   const inEpics = e.requestId === EPICS_PANE
@@ -850,7 +868,15 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       </Box>
     )
   }
-  // With Debug on, under the repo line: what the last action and the session
+  // The right of the bottom line: What's Next's version, dim, kept whole on
+  // a narrow pane.
+  const built = await builtVersion($)
+  const ours = built && (
+    <Box key="ours" flexShrink={0}>
+      <Text dimColor>{`  v${built}`}</Text>
+    </Box>
+  )
+  // With Debug on, under the bottom line: what the last action and the session
   // asked the forge.
   const req = configDebug ? await read($, requests) : null
   const counter = req && (
@@ -1108,7 +1134,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         : 'no milestone'
       const comments = `${i.comments} ${i.comments === 1 ? 'comment' : 'comments'}`
 
-      // What is left for the description and the last comment.
+      // What is left for the description and the last comment; the rule
+      // above the bottom line is one of the rows kept.
       // Assign and close, when What's Next may: setup's Actions step says so.
       const acts = s.kind === 'ready' ? s.actions : ({ kind: 'read-only', reason: 'scope' } as const)
       const canAct = acts.kind !== 'read-only'
@@ -1116,7 +1143,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const closed = i.state === 'closed'
       const error = d.kind === 'ok' ? d.error : undefined
       const actionRows = 2 + (canAct ? 0 : 2) + (error ? 2 : 0)
-      const fixed = 1 + titleLines.length + 2 + actionRows + (facts.length > 0 ? facts.length + 1 : 0) + 1 + 1 + 1 + 1
+      const fixed = 1 + titleLines.length + 2 + actionRows + (facts.length > 0 ? facts.length + 1 : 0) + 1 + 1 + 1 + 1 + 1
       const last = i.lastComment
       const lastLines = last ? wrap(last.body.trim(), columns) : []
       const lastShown = Math.min(3, lastLines.length)
@@ -1223,7 +1250,11 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Box key="detail" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
           {body}
         </Box>
-        {fixedLine('where', `${r.host}/${slug(r)}`)}
+        {fixedLine('where-rule', '─'.repeat(columns))}
+        <Box key="where" height={1} flexShrink={0}>
+          <Box flexGrow={1} />
+          {ours}
+        </Box>
         {counter}
       </Box>
     )
@@ -1359,11 +1390,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
         {fixedLine('where-rule', '─'.repeat(columns))}
         <Box key="where" height={1} flexShrink={0}>
-          <Text dimColor>{`${r.host}/`}</Text>
-          <Text bold wrap="truncate-end">{slug(r)}</Text>
-          <Box flexGrow={1} />
           {g && <Text dimColor>{`${openShown} ${openShown === 1 ? 'epic' : 'epics'} · `}</Text>}
-          {g && <Text color="success">{`${yours} yours`}</Text>}
+          {g && <Text color="success" wrap="truncate-end">{`${yours} yours`}</Text>}
+          <Box flexGrow={1} />
+          {ours}
         </Box>
         {counter}
       </Box>
@@ -1438,16 +1468,15 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         }
       }
     }
-    // The repo, and once loaded how many open issues What's Next counted and how
-    // many are yours, in In progress green.
+    // Once loaded, how many open issues What's Next counted and how many are
+    // yours, in In progress green; the version at the right.
     const open = m.kind === 'ok' ? m.inProgress.length + (m.next ? 1 : 0) + m.queue.length + m.blocked.length : null
-    const repoLine = (
+    const bottomLine = (
       <Box key="where" height={1} flexShrink={0}>
-        <Text dimColor>{`${r.host}/`}</Text>
-        <Text bold wrap="truncate-end">{slug(r)}</Text>
-        <Box flexGrow={1} />
         {m.kind === 'ok' && <Text dimColor>{`${open} open · `}</Text>}
-        {m.kind === 'ok' && <Text color="success">{`${m.inProgress.length} yours`}</Text>}
+        {m.kind === 'ok' && <Text color="success" wrap="truncate-end">{`${m.inProgress.length} yours`}</Text>}
+        <Box flexGrow={1} />
+        {ours}
       </Box>
     )
     return (
@@ -1458,7 +1487,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {rows}
         </Box>
         {fixedLine('where-rule', '─'.repeat(columns))}
-        {repoLine}
+        {bottomLine}
         {counter}
       </Box>
     )

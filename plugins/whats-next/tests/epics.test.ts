@@ -326,8 +326,6 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     'all children closed',
     `   #3 ${'Project setup'.padEnd(29)} ${'✓ closed'.padStart(14)}`,
     '─'.repeat(50),
-    'git.example.org/',
-    'boats/radar',
     '3 epics · ',
     '3 yours',
   ])
@@ -444,6 +442,16 @@ test('Close on a child goes back to Epics, the child counted closed there', TOKE
   expect(await texts(ui)).toContain('  ✓ 2 closed')
 })
 
+test("the bottom line in Epics ends in What's Next's version from its manifest", TOKEN, async ($, on) => {
+  world(on, REPO)
+  on('fs.read', (_$, e) => (e.path.endsWith('/.claude-plugin/plugin.json') ? { value: '{"version":"9.8.7"}' } : { deny: 'not here' }))
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  const all = await nodes(ui)
+  expect(all.find(t => t.text === '  v9.8.7')?.props.dimColor).toBe(true)
+  expect(all.map(t => t.text).indexOf('  v9.8.7')).toBeGreaterThan(all.map(t => t.text).findIndex(t => t.endsWith(' yours')))
+})
+
 test("an issue opened in Epics leaves What's next as it was", TOKEN, async ($, on) => {
   world(on, REPO)
   await $.command.run(RUN)
@@ -465,7 +473,7 @@ test('no open milestone with epics: the epics without a milestone', TOKEN, async
   expect(all).toContain('no children')
 })
 
-test('the rule and the repo line keep their row when the epics are too many', TOKEN, async ($, on) => {
+test('the rule and the bottom line keep their row when the epics are too many', TOKEN, async ($, on) => {
   const many = Array.from({ length: 30 }, (_, k) => epic(100 + k, `Epic ${k}`, { milestone: 'v1.2' }))
   world(on, { milestones: REPO.milestones, epics: many })
   await $.command.run(RUN)
@@ -611,7 +619,7 @@ test('who you are comes from the setup check, so a picker switch asks Forgejo no
 const DEBUG = { options: { ...TOKEN.options, debug: true } }
 const counter = async (ui: Ui) => (await texts(ui)).slice(-5)
 
-test('with Debug on, a line under the repo line counts the requests of each action and the session', DEBUG, async ($, on) => {
+test('with Debug on, a line under the bottom line counts the requests of each action and the session', DEBUG, async ($, on) => {
   const asked: string[] = []
   world(on, REPO, asked)
   await $.command.run(RUN)
