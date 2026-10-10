@@ -373,17 +373,33 @@ test('the fold mark folds an epic open: its children with their marks, the close
   expect(rows).toEqual([
     '  ● #37 Token refresh on 401',
     '    #51 Rate limit settings page',
-    `    #44 ${'Session store migration'.padEnd(37)} jdoe`,
+    `  ○ #44 ${'Session store migration'.padEnd(37)} jdoe`,
     '  ⊘ #33 Retry on 502',
     '  ✓ 1 closed',
   ])
   const found = await nodes(ui)
   expect(found.find(t => t.text === '● ')?.props.color).toBe('success')
   expect(found.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
+  // Someone else's: ○ plain, their name dim at the right.
+  expect(found.find(t => t.text === '○ ')?.props.color).toBeUndefined()
+  expect(found.find(t => t.text === 'jdoe')?.props.dimColor).toBe(true)
   expect(found.find(t => t.text === '#33 ')?.props.color).toBe('suggestion')
 
   await ui.press({ key: 'fold-20' })
   expect((await texts(ui)).some(t => t.includes('#37'))).toBe(false)
+})
+
+test("blocked wins over someone else's: a blocked child assigned to another shows ⊘, their name at the right", TOKEN, async ($, on) => {
+  world(on, {
+    ...REPO,
+    deps: { ...REPO.deps, 20: [issue(33, 'Retry on 502', { assignees: ['jdoe'] })] },
+  })
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'fold-20' })
+  const all = await texts(ui)
+  expect(all.some(t => t.startsWith('  ⊘ #33 Retry on 502') && t.endsWith('jdoe'))).toBe(true)
+  expect(all.some(t => t.startsWith('  ○ #33'))).toBe(false)
 })
 
 test("children read like What's next: a second line with labels and age, or what blocks it", TOKEN, async ($, on) => {

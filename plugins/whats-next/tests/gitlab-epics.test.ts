@@ -736,7 +736,7 @@ test('GitLab Free: the Epics pane shows the epic in its milestone, x/y closed, i
   await epics.press({ key: 'fold-20' })
   all = await texts(epics)
   const rows = all.filter(t => /^ {2}. #\d+ /.test(t) || t.startsWith('  ✓'))
-  expect(rows).toEqual(['  ● #37 Issue 37', '    #33 Issue 33', `    #44 ${'Issue 44'.padEnd(37)} jdoe`, '  ✓ 1 closed'])
+  expect(rows).toEqual(['  ● #37 Issue 37', '    #33 Issue 33', `  ○ #44 ${'Issue 44'.padEnd(37)} jdoe`, '  ✓ 1 closed'])
   // Another project's issue and the peer epic are no children.
   expect(all.some(t => t.includes('#5 ') || t.includes('#25'))).toBe(false)
   const bug = ((await epics.findAll({ type: 'Text' })) as Found[]).find(t => t.text === 'bug')

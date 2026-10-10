@@ -1442,7 +1442,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               buttonKey: `child-${c.number}`,
               numWidth,
               lead: 2,
-              mark: st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : '  ',
+              // Hollow beside the filled ● for yours: someone else's.
+              mark: st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : st === 'taken' ? '○ ' : '  ',
               markColor: st === 'mine' ? 'success' : undefined,
               dim: st === 'blocked',
               who: st === 'taken' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : '',
