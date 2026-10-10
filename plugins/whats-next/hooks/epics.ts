@@ -44,18 +44,24 @@ export function summary(e: Epic): { text: string; color?: string }[] {
   const t = tally(e.children)
   if (t.total === 0) return [{ text: 'no children' }]
   if (t.closed === t.total) return [{ text: 'all children closed', color: 'warning' }]
+  return forYou(t)
+}
+
+// What there is for you among open issues: yours, blocked, up for grabs, or
+// when none of those, how many are someone else's. Each part has its colour.
+export function forYou(t: Tally): { text: string; color?: string }[] {
   const parts: { text: string; color?: string }[] = []
   if (t.mine > 0) parts.push({ text: `${t.mine} yours`, color: 'success' })
   if (t.blocked > 0) parts.push({ text: `${t.blocked} blocked` })
   if (t.free > 0) parts.push({ text: `${t.free} up for grabs` })
-  if (parts.length === 0) parts.push({ text: `${t.taken} with others` })
+  if (parts.length === 0 && t.taken > 0) parts.push({ text: `${t.taken} with others` })
   return parts
 }
 
 export type MilestoneRow = { title: string; due: string | null; closed: number; total: number }
 
 // Open milestones, due first; one without a due date after those with one.
-const dueFirst = (milestones: readonly MilestoneRow[]) =>
+export const dueFirst = (milestones: readonly MilestoneRow[]) =>
   [...milestones].sort(
     (a, b) => (a.due === null ? 1 : 0) - (b.due === null ? 1 : 0) || (a.due ?? '').localeCompare(b.due ?? '') || a.title.localeCompare(b.title),
   )

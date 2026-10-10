@@ -186,12 +186,13 @@ test('with both panes open, the tabs name them and neither title row repeats the
   expect(await texts(next)).not.toContain("What's next")
 })
 
-test('once the other pane is closed, the title row names its pane again', TOKEN, async ($, on) => {
+test('once the other panes are closed, the title row names its pane again', TOKEN, async ($, on) => {
   const w: World = { ...REPO }
   world(on, w)
   await $.command.run(RUN)
-  // The last epic closes, so /next closes the Epics pane.
+  // The last epic and the milestones close, so /next closes Epics and Milestones.
   w.epics = [epic(3, 'Project setup', { state: 'closed' })]
+  w.milestones = []
   await $.command.run(RUN)
   const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   expect((await texts(next))[0]).toBe("What's next")
@@ -821,12 +822,13 @@ test('a drawn Epics pane is not opened again by Refresh', TOKEN, async ($, on) =
   expect(opened.filter(o => o.id === 'next-epics').length).toBe(count)
 })
 
-test('once Refresh closes the Epics pane, the title row names What\'s next again', TOKEN, async ($, on) => {
+test('once Refresh closes the Epics and Milestones panes, the title row names What\'s next again', TOKEN, async ($, on) => {
   const w: World = { ...REPO }
   world(on, w)
   await $.command.run(RUN)
   const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   w.epics = [epic(3, 'Project setup', { state: 'closed' })]
+  w.milestones = []
   await next.press({ key: 'refresh' })
   expect(await texts(next)).toContain("What's next")
 })

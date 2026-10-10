@@ -1,16 +1,19 @@
 import type { Epic, EpicChild, EpicGroup, IssueDetail, IssueRow } from '../types'
 import { groupsFor, type MilestoneRow } from './epics'
 import { pickNext } from './next'
-import { message, type EpicRow, type Tracker } from './tracker'
+import { message, type EpicRow, type OpenIssue, type Tracker } from './tracker'
 
 // What is remembered of a repo until the next Refresh or /next, so the picker
 // can switch without asking the tracker again: its open milestones, your
-// open issues and the free ones, the blockers checked so far, the epics,
-// and the children of each epic loaded so far.
+// open issues, the free ones and those assigned to others (`listed`: whether
+// the lists answered), the blockers checked so far, the epics, and the
+// children of each epic loaded so far.
 export type Memory = {
   milestones: MilestoneRow[]
   mine: IssueRow[]
   free: IssueRow[]
+  taken: OpenIssue[]
+  listed: boolean
   blockers: Map<number, number[] | null>
   epics: EpicRow[]
   children: Map<number, EpicChild[] | null>
@@ -64,6 +67,7 @@ export async function loadRepo(
   const milestones = await t.milestones()
   let mine: IssueRow[] = []
   let free: IssueRow[] = []
+  let taken: OpenIssue[] = []
   let issuesError: string | null = null
   try {
     const changed = new Set(changes.map(i => i.number))
@@ -73,12 +77,17 @@ export async function loadRepo(
       ...open.filter(i => me !== null && i.assignees.includes(me)).map(toRow),
     ].sort(oldestFirst)
     const yours = new Set(mine.map(i => i.number))
+    const listed = (await t.open()).filter(i => !changed.has(i.number) && !yours.has(i.number))
     free = [
-      ...(await t.open())
-        .filter(i => !changed.has(i.number) && !yours.has(i.number) && i.assignees.length === 0)
-        .map(({ assignees: _, ...row }) => row),
+      ...listed.filter(i => i.assignees.length === 0).map(({ assignees: _, ...row }) => row),
       ...open.filter(i => i.assignees.length === 0).map(toRow),
     ].sort(oldestFirst)
+    taken = [
+      ...listed.filter(i => i.assignees.length > 0),
+      ...open
+        .filter(i => i.assignees.length > 0 && !(me !== null && i.assignees.includes(me)))
+        .map(i => ({ ...toRow(i), assignees: i.assignees })),
+    ]
   } catch (err) {
     issuesError = message(err)
   }
@@ -92,7 +101,16 @@ export async function loadRepo(
     }
   }
   return {
-    memory: { milestones, mine, free, blockers: new Map(), epics: found, children: new Map() },
+    memory: {
+      milestones,
+      mine,
+      free,
+      taken,
+      listed: issuesError === null,
+      blockers: new Map(),
+      epics: found,
+      children: new Map(),
+    },
     issuesError,
     epicsError,
   }
@@ -111,15 +129,57 @@ export const inPick = (pick: string, milestone: string | null) =>
 export async function whatsNext(t: Tracker, known: Memory, pick: string, deps: boolean) {
   const inProgress = known.mine.filter(i => inPick(pick, i.milestone))
   const free = known.free.filter(i => inPick(pick, i.milestone))
-  const { next, queue, blocked, more } = await pickNext(free, async n => {
-    if (!deps) return null
-    if (known.blockers.has(n)) return known.blockers.get(n) ?? null
-    if ([...known.blockers.values()].includes(null)) return null
-    const open = await t.blockers(n)
-    known.blockers.set(n, open)
-    return open
-  })
+  const { next, queue, blocked, more } = await pickNext(free, blockersOf(t, known, deps))
   return { inProgress, next, queue, blocked, more }
+}
+
+// The open issues issue `n` waits on, asked of the tracker once and
+// remembered; null without dependencies, or once the tracker would not say.
+const blockersOf = (t: Tracker, known: Memory, deps: boolean) => async (n: number) => {
+  if (!deps) return null
+  if (known.blockers.has(n)) return known.blockers.get(n) ?? null
+  if ([...known.blockers.values()].includes(null)) return null
+  const open = await t.blockers(n)
+  known.blockers.set(n, open)
+  return open
+}
+
+// The open issues of milestone `title`, as epic children are: yours, free
+// and someone else's, each not yours checked for blockers as What's next
+// checks its own, by number. null when the issues could not be listed.
+export async function milestoneIssues(
+  t: Tracker,
+  known: Memory,
+  title: string,
+  me: string | null,
+  deps: boolean,
+): Promise<EpicChild[] | null> {
+  if (!known.listed) return null
+  const ask = blockersOf(t, known, deps)
+  const all = [
+    ...known.mine.map(i => ({ i, assignees: me !== null ? [me] : [], mine: true })),
+    ...known.free.map(i => ({ i, assignees: [] as string[], mine: false })),
+    ...known.taken.map(i => ({ i, assignees: i.assignees, mine: false })),
+  ]
+    .filter(x => x.i.milestone === title)
+    .sort((a, b) => a.i.number - b.i.number)
+  const out: EpicChild[] = []
+  for (const { i, assignees, mine } of all) {
+    const blockedBy = mine ? [] : ((await ask(i.number)) ?? [])
+    out.push({
+      number: i.number,
+      title: i.title,
+      state: 'open',
+      assignees,
+      mine,
+      blocked: blockedBy.length > 0,
+      labels: i.labels,
+      milestone: i.milestone,
+      created: i.created,
+      blockedBy,
+    })
+  }
+  return out
 }
 
 // The epics within the pick, by milestone, each open one with its children,

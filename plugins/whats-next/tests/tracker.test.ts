@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { changesSince, epicGroups, loadRepo, noteChange, whatsNext } from '../hooks/load'
+import { changesSince, epicGroups, loadRepo, milestoneIssues, noteChange, whatsNext } from '../hooks/load'
 import type { EpicRow, OpenIssue, Tracker } from '../hooks/tracker'
 import type { EpicChild, IssueDetail, IssueRow } from '../types'
 
@@ -240,4 +240,51 @@ test('a change counts for 30 seconds, then the lists are trusted again', () => {
   expect(changesSince('fake/boats/radar', at)).toEqual([])
   expect(changesSince('fake/boats/other', at).map(i => i.number)).toEqual([11])
   expect(changesSince('fake/nothing', at)).toEqual([])
+})
+
+test("a milestone's open issues: yours, free and someone else's, those not yours checked for blockers once", async () => {
+  const calls: string[] = []
+  const t = fake(
+    {
+      mine: [row(30, '2026-10-01T00:00:00Z', 'v1')],
+      open: [
+        free(row(30, '2026-10-01T00:00:00Z', 'v1'), ['alice']),
+        free(row(33, '2026-10-02T00:00:00Z', 'v1')),
+        free(row(36, '2026-10-03T00:00:00Z', 'v1'), ['jdoe']),
+        free(row(40, '2026-10-04T00:00:00Z', 'v1')),
+        free(row(50, '2026-10-05T00:00:00Z', 'v2')),
+      ],
+      blockers: { 40: [33] },
+    },
+    calls,
+  )
+  const { memory } = await loadRepo(t, false, [], 'alice')
+  const issues = await milestoneIssues(t, memory, 'v1', 'alice', true)
+  expect(issues?.map(c => [c.number, c.mine, c.assignees, c.blocked, c.blockedBy])).toEqual([
+    [30, true, ['alice'], false, []],
+    [33, false, [], false, []],
+    [36, false, ['jdoe'], false, []],
+    [40, false, [], true, [33]],
+  ])
+  expect(issues?.every(c => c.state === 'open' && c.milestone === 'v1')).toBe(true)
+  expect(calls.filter(c => c.startsWith('blockers'))).toEqual(['blockers 33', 'blockers 36', 'blockers 40'])
+  // Remembered with What's next's: asked again, nothing more is sent.
+  await milestoneIssues(t, memory, 'v1', 'alice', true)
+  await whatsNext(t, memory, 'm:v1', true)
+  expect(calls.filter(c => c.startsWith('blockers'))).toHaveLength(3)
+})
+
+test("without dependencies a milestone's issues are not checked for blockers", async () => {
+  const calls: string[] = []
+  const t = fake({ open: [free(row(40, '2026-10-04T00:00:00Z', 'v1'))], blockers: { 40: [33] } }, calls)
+  const { memory } = await loadRepo(t, false)
+  const issues = await milestoneIssues(t, memory, 'v1', null, false)
+  expect(issues?.map(c => c.blocked)).toEqual([false])
+  expect(calls.some(c => c.startsWith('blockers'))).toBe(false)
+})
+
+test("when the issues could not be listed, a milestone's issues are unknown", async () => {
+  const t = fake({ failing: 'mine' })
+  const { memory } = await loadRepo(t, false)
+  expect(await milestoneIssues(t, memory, 'v1', null, true)).toBe(null)
 })

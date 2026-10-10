@@ -147,6 +147,10 @@ export type Epics =
   | { kind: 'ok'; groups: EpicGroup[]; openEpics: number }
   | { kind: 'error'; message: string }
 
+// An open milestone as the Milestones pane shows it: its due date and how
+// many of its issues are closed, of all.
+export type Milestone = { title: string; due: string | null; closed: number; total: number }
+
 // The milestone picker both panes share: what it offers (a milestone's option
 // carries its due date) and which is picked: `m:<title>`, `none` or `all`.
 export type Picker = { options: { value: string; label: string; due?: string | null }[]; pick: string }
@@ -182,6 +186,13 @@ declare module 'claude-code' {
       requests: { label: string; count: number; total: number } | null
       // The epics folded open in the Epics pane, by number.
       unfolded: number[]
+      // The repo's open milestones, once loaded; null before.
+      milestones: Milestone[] | null
+      // The milestones folded open in the Milestones pane, by title.
+      milestonesUnfolded: string[]
+      // The open issues of each milestone folded open, by title, once asked;
+      // null when they could not be listed.
+      milestoneIssues: Record<string, EpicChild[] | null>
       // Compact chosen in this session, before a reload brings the setting.
       compact: 'on' | 'off' | null
       // Icons chosen in this session, before a reload brings the setting.

@@ -2,18 +2,19 @@ import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
 import type { Detail, Epic, Epics, IssueDetail, IssueRow, Overview, Ref, Repo, Setup, TokenSource } from '../types'
-import { bar, openChildren, pickerOptions, standing, summary, tally } from './epics'
+import { bar, dueFirst, forYou, openChildren, pickerOptions, standing, summary, tally } from './epics'
 import { detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
 import { day, dueSoon, dueText, duration, readable, wrap } from './issue'
-import { changesSince, epicGroups, loadRepo, noteChange, whatsNext, type Memory } from './load'
+import { changesSince, epicGroups, loadRepo, milestoneIssues, noteChange, whatsNext, type Memory } from './load'
 import { waitingText } from './next'
 import { message, type Send, type Tracker } from './tracker'
 
 const PANE = 'next'
 const EPICS_PANE = 'next-epics'
+const MILESTONES_PANE = 'next-milestones'
 const CONFIGURE = '/plugin configure whats-next@egribnau-mods'
 // The command, and the one it falls back to when another has /next.
 const COMMAND = 'next'
@@ -32,6 +33,9 @@ const iconsChosen = atom({ plugin: 'whats-next', key: 'icons' } as const, null)
 const compactChosen = atom({ plugin: 'whats-next', key: 'compact' } as const, null)
 const epics = atom({ plugin: 'whats-next', key: 'epics' } as const, { kind: 'idle' })
 const unfolded = atom({ plugin: 'whats-next', key: 'unfolded' } as const, [])
+const milestones = atom({ plugin: 'whats-next', key: 'milestones' } as const, null)
+const milestonesUnfolded = atom({ plugin: 'whats-next', key: 'milestonesUnfolded' } as const, [])
+const msIssues = atom({ plugin: 'whats-next', key: 'milestoneIssues' } as const, {})
 const panesOpen = atom({ plugin: 'whats-next', key: 'panesOpen' } as const, [])
 const milestonePick = atom({ plugin: 'whats-next', key: 'milestonePick' } as const, null)
 const picker = atom({ plugin: 'whats-next', key: 'picker' } as const, null)
@@ -210,8 +214,8 @@ async function off($: EngineInterface, feature: 'deps' | 'epics'): Promise<boole
 }
 
 // Asks the tracker for what the panes show: the open milestones, your open
-// issues, the repo's open issues, and the epics. Then the picker, What's
-// next and the epics follow.
+// issues, the repo's open issues, and the epics. Then the milestones, the
+// picker, What's next and the epics follow.
 async function load($: EngineInterface, r: Repo) {
   memory = null
   if ((await read($, overview)).kind !== 'ok') await update($, overview, (): Overview => ({ kind: 'loading' }))
@@ -224,9 +228,31 @@ async function load($: EngineInterface, r: Repo) {
   if (issuesError !== null) await update($, overview, (): Overview => ({ kind: 'error', message: issuesError }))
   if (epicsError !== null) await update($, epics, (): Epics => ({ kind: 'error', message: epicsError }))
   memory = loaded.memory
+  await update($, milestones, () => loaded.memory.milestones)
   await showPicker($)
   if (issuesError === null) await showNext($, r)
   if (epicsError === null) await showEpics($, r)
+  // The milestones folded open are asked again; folded ones cost nothing.
+  await update($, msIssues, () => ({}))
+  for (const title of await read($, milestonesUnfolded)) await showMilestone($, r, title)
+}
+
+// The open issues of milestone `title`, for the Milestones pane.
+async function showMilestone($: EngineInterface, r: Repo, title: string) {
+  if (!memory) return
+  const s = await read($, setup)
+  const me = s.kind === 'ready' ? s.login : null
+  const issues = await milestoneIssues(tracker($, r), memory, title, me, !(await off($, 'deps'))).catch(() => null)
+  await update($, msIssues, known => ({ ...known, [title]: issues }))
+}
+
+// Folds milestone `title` open or shut; open the first time, its issues are asked.
+async function foldMilestone($: EngineInterface, title: string) {
+  const was = await read($, milestonesUnfolded)
+  await update($, milestonesUnfolded, () => (was.includes(title) ? was.filter(t => t !== title) : [...was, title]))
+  const r = await read($, repo)
+  if (!r || was.includes(title) || title in (await read($, msIssues))) return
+  await counted($, title, () => showMilestone($, r, title))
 }
 
 // The picker's options from what is open, and the pick: the person's when it
@@ -364,9 +390,14 @@ async function refresh($: EngineInterface): Promise<Repo | null> {
   const r = await check($)
   if (r && (await read($, setup)).kind === 'ready') {
     const before = await read($, epics)
+    const hadMilestones = ((await read($, milestones)) ?? []).length > 0
     await load($, r)
-    await followEpics($, before)
-    for (const pane of [PANE, EPICS_PANE]) {
+    const after = await read($, epics)
+    if (after.kind === 'ok') {
+      await followPane($, EPICS_PANE, 'Epics', before.kind === 'ok' && before.openEpics > 0, after.openEpics > 0)
+    }
+    await followPane($, MILESTONES_PANE, 'Milestones', hadMilestones, ((await read($, milestones)) ?? []).length > 0)
+    for (const pane of [PANE, EPICS_PANE, MILESTONES_PANE]) {
       const n = await read($, memberOf(picked, { requestId: pane }))
       if (n !== null) await loadDetail($, r, pane, n)
       else await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
@@ -378,26 +409,24 @@ async function refresh($: EngineInterface): Promise<Repo | null> {
   return r
 }
 
-// The Epics pane follows a load that found the first open epic, or none
-// left: it opens as a tab next to What's next, without the focus, or
-// closes. An Epics pane the person closed while there were epics stays
-// closed until /next. One opened without the person asking (a reload) may
-// wait undrawn on a narrow terminal; the next Refresh, which they ask for,
-// opens it again so it is drawn.
-async function followEpics($: EngineInterface, before: Epics) {
-  const after = await read($, epics)
-  if (after.kind !== 'ok') return
+// The Epics or Milestones pane, `id`, follows a load that found the first
+// open epic or milestone (`had` none before, `has` one now), or none left:
+// it opens as a tab next to What's next, without the focus, or closes. A
+// pane the person closed while there was something to show stays closed
+// until /next. One opened without the person asking (a reload) may wait
+// undrawn on a narrow terminal; the next Refresh, which they ask for, opens
+// it again so it is drawn.
+async function followPane($: EngineInterface, id: string, title: string, had: boolean, has: boolean) {
   // The engine's record says whether it is drawn; without it, What's Next's own
   // list of open panes, taken as drawn.
   const panes = await $.ui.panes().catch(async () => (await read($, panesOpen)).map(id => ({ id, isPlaced: true })))
-  const pane = panes.find(p => p.id === EPICS_PANE)
-  const first = !(before.kind === 'ok' && before.openEpics > 0)
-  if (after.openEpics > 0 && (pane ? !pane.isPlaced : first)) {
-    await $.ui.open({ id: EPICS_PANE, title: 'Epics' })
-    await update($, panesOpen, ids => (ids.includes(EPICS_PANE) ? ids : [...ids, EPICS_PANE]))
-  } else if (after.openEpics === 0 && pane) {
-    await $.ui.close({ id: EPICS_PANE })
-    await update($, panesOpen, ids => ids.filter(id => id !== EPICS_PANE))
+  const pane = panes.find(p => p.id === id)
+  if (has && (pane ? !pane.isPlaced : !had)) {
+    await $.ui.open({ id, title })
+    await update($, panesOpen, ids => (ids.includes(id) ? ids : [...ids, id]))
+  } else if (!has && pane) {
+    await $.ui.close({ id })
+    await update($, panesOpen, ids => ids.filter(i => i !== id))
   }
 }
 
@@ -447,7 +476,7 @@ async function writeIssue(
   const key = `${r.host}/${slug(r)}#${n}`
   issuesRead.delete(key)
   await backToList($, pane)
-  for (const p of [PANE, EPICS_PANE]) {
+  for (const p of [PANE, EPICS_PANE, MILESTONES_PANE]) {
     if ((await read($, memberOf(picked, { requestId: p }))) === n) await loadDetail($, r, p, n)
   }
   // The issue as the change left it, read again unless a pane just did, so
@@ -856,6 +885,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     lead?: number
     who?: string
     blockedBy?: number[]
+    // Leaves the milestone out of the facts, where the list is one milestone's.
+    noMilestone?: boolean
     onPress: () => unknown
   }
   const issueRow = (i: RowIssue, o: RowLook) => {
@@ -876,7 +907,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const parts: RenderChildren[] = (
       o.blockedBy && o.blockedBy.length > 0
         ? [blockers(o.blockedBy), opened]
-        : [pk?.pick === `m:${i.milestone}` ? null : i.milestone, i.labels.length > 0 ? labelTexts(i.labels) : null, opened]
+        : [o.noMilestone || pk?.pick === `m:${i.milestone}` ? null : i.milestone, i.labels.length > 0 ? labelTexts(i.labels) : null, opened]
     ).filter(p => p !== null && p !== '')
     const facts = parts.flatMap((p, k) => [
       ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
@@ -947,8 +978,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // The title row both lists share: the pane's name when no tab names it,
   // the picker, Refresh; with the picker open, its list under it at the
   // right, each milestone with its due date and the one picked in bold.
-  const titleRow = async (name: string) => {
-    const listOpen = pk !== null && pickedOption !== undefined && (await read($, pickerOpen))
+  // Milestones, which shows every milestone, has no picker.
+  const titleRow = async (name: string, withPicker = true) => {
+    const shown = withPicker ? pickedOption : undefined
+    const listOpen = pk !== null && shown !== undefined && (await read($, pickerOpen))
     const today = await $.clock.now()
     // One block that keeps its rows however long the list under it: a long
     // list once squeezed the title row out of the pane.
@@ -961,8 +994,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             </Text>
           )}
           <Box flexGrow={1} />
-          {pickedOption && (
-            <Button key="milestone" label={`${pickedOption.label} ▾`} hotkey="m" onPress={() => update($, pickerOpen, o => !o)} />
+          {shown && (
+            <Button key="milestone" label={`${shown.label} ▾`} hotkey="m" onPress={() => update($, pickerOpen, o => !o)} />
           )}
           <Box width={2} />
           <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
@@ -1104,7 +1137,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       <Box key="title" height={1} flexShrink={0}>
         <Button
           key="back"
-          label={from !== undefined ? say(`${ICON.back} #${from}`, `← #${from}`) : say(ICON.back, inEpics ? '← Epics' : "← What's next")}
+          label={from !== undefined ? say(`${ICON.back} #${from}`, `← #${from}`) : say(ICON.back, inEpics ? '← Epics' : e.requestId === MILESTONES_PANE ? '← Milestones' : "← What's next")}
           hotkey="b"
           onPress={() => goBack($, e.requestId)}
         />
@@ -1335,6 +1368,107 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
         {fixedLine('where-rule', '─'.repeat(columns))}
         <Box key="where" height={1} flexShrink={0}>
+          <Box flexGrow={1} />
+          {ours}
+        </Box>
+        {counter}
+      </Box>
+    )
+  }
+
+  // The Milestones pane, once setup passes: each open milestone folded, due
+  // first, with how far it is from its own counts.
+  if (e.requestId === MILESTONES_PANE && s.kind === 'ready' && r) {
+    const now = await $.clock.now()
+    const known = await read($, milestones)
+    const folds = new Set(await read($, milestonesUnfolded))
+    const rows: RenderChildren[] = []
+    if (known === null) rows.push(line('loading', 'Loading the milestones…', { dimColor: true }))
+    if (known !== null && known.length === 0) rows.push(para('none', `No open milestones in ${slug(r)}.`, { dimColor: true }))
+    const issuesOf = await read($, msIssues)
+    // Bar and count at the right of a row: 15 columns.
+    const titleWidth = Math.max(0, columns - 2 - 15)
+    // One number column for every milestone folded open, so all titles line up.
+    const numbers = [...folds].flatMap(t => (issuesOf[t] ?? []).map(c => c.number))
+    const numWidth = Math.max(0, ...numbers.map(n => `#${n}`.length)) + 1
+    for (const ms of dueFirst(known ?? [])) {
+      const b = bar(ms.closed, ms.total)
+      const open = folds.has(ms.title)
+      const due = ms.due ? `due ${dueText(ms.due, now).text}` : 'no due date'
+      // Once asked: its open issues, and what there is for you among them.
+      const issues = issuesOf[ms.title]
+      const parts = issues ? forYou(tally(issues)) : []
+      rows.push(
+        <Box key={`ms-${ms.title}`} flexDirection="column" flexShrink={0} marginBottom={open ? 0 : gap}>
+          {/* A milestone has no detail: the whole row folds. */}
+          <Button key={`milestone-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
+            <Text wrap="truncate-end">
+              <Text>{open ? '− ' : '+ '}</Text>
+              <Text bold>{`${fit(ms.title, titleWidth).padEnd(titleWidth)} `}</Text>
+              {b.filled && <Text color="success">{b.filled}</Text>}
+              {b.empty && <Text dimColor>{b.empty}</Text>}
+              <Text dimColor>{`${ms.closed}/${ms.total}`.padStart(6)}</Text>
+            </Text>
+          </Button>
+          <Box>
+            <Text>{'  '}</Text>
+            <Text {...(ms.due ? dueLook(ms.due, now) : { dimColor: true })}>{due}</Text>
+            <Text dimColor wrap="truncate-end">{` · ${ms.total - ms.closed} open`}</Text>
+            {parts.flatMap((part, k) => [
+              <Text key={`sep-${k}`} dimColor>
+                {' · '}
+              </Text>,
+              <Text key={`part-${k}`} color={part.color} dimColor={!part.color} wrap="truncate-end">
+                {part.text}
+              </Text>,
+            ])}
+          </Box>
+        </Box>,
+      )
+      if (!open) continue
+      // Folded open: its open issues as epic children are, then how many are closed.
+      const kids: RenderChildren[] = []
+      if (issues === undefined) kids.push(line(`loading-${ms.title}`, '  Loading the issues…', { dimColor: true }))
+      if (issues === null) kids.push(line(`unknown-${ms.title}`, '  issues unknown', { dimColor: true }))
+      for (const c of openChildren(issues ?? [])) {
+        const st = standing(c)
+        kids.push(
+          issueRow(c, {
+            key: `ms-row-${c.number}`,
+            buttonKey: `ms-issue-${c.number}`,
+            numWidth,
+            lead: 2,
+            mark: st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : st === 'taken' ? '○ ' : '  ',
+            markColor: st === 'mine' ? 'success' : undefined,
+            dim: st === 'blocked',
+            who: st === 'taken' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : '',
+            blockedBy: st === 'blocked' ? c.blockedBy : undefined,
+            noMilestone: true,
+            onPress: () => openIssue($, MILESTONES_PANE, c.number),
+          }),
+        )
+      }
+      if (ms.closed > 0) kids.push(line(`closed-${ms.title}`, `  ✓ ${ms.closed} closed`, { color: 'inactive' }))
+      // The last issue row brings its own empty line; a closing line needs one.
+      const endsInRow = ms.closed === 0 && issues !== undefined && issues !== null && issues.length > 0
+      rows.push(
+        <Box key={`ms-kids-${ms.title}`} flexDirection="column" flexShrink={0} marginBottom={endsInRow ? 0 : gap}>
+          {kids}
+        </Box>,
+      )
+    }
+    const count = known?.length ?? 0
+    const openIssues = (known ?? []).reduce((n, ms) => n + ms.total - ms.closed, 0)
+    return (
+      <Box flexDirection="column" height={height}>
+        {await titleRow('Milestones', false)}
+        <Box key="gap" height={1} flexShrink={0} />
+        <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          {rows}
+        </Box>
+        {fixedLine('where-rule', '─'.repeat(columns))}
+        <Box key="where" height={1} flexShrink={0}>
+          {count > 0 && <Text dimColor wrap="truncate-end">{`${count} ${count === 1 ? 'milestone' : 'milestones'} · ${openIssues} open`}</Text>}
           <Box flexGrow={1} />
           {ours}
         </Box>
@@ -1636,6 +1770,16 @@ async function runNext($: EngineInterface, name: string, word: string) {
   } else if (ep.kind === 'ok' && (await read($, panesOpen)).includes(EPICS_PANE)) {
     await $.ui.close({ id: EPICS_PANE })
   }
+  // The Milestones pane, a tab after Epics, only while there are open
+  // milestones; one the person closed opens again.
+  const ms = await read($, milestones)
+  const open = await read($, panesOpen)
+  if (r && s.kind === 'ready' && ms !== null && ms.length > 0 && !open.includes(MILESTONES_PANE)) {
+    await $.ui.open({ id: MILESTONES_PANE, title: 'Milestones' })
+    await update($, panesOpen, ids => (ids.includes(MILESTONES_PANE) ? ids : [...ids, MILESTONES_PANE]))
+  } else if (ms !== null && ms.length === 0 && open.includes(MILESTONES_PANE)) {
+    await $.ui.close({ id: MILESTONES_PANE })
+  }
   const o = await read($, overview)
   if (s.kind !== 'ready' || !r) return { text: "What's Next needs setting up: see its pane." }
   const pk = await read($, picker)
@@ -1687,7 +1831,7 @@ export const register: Register = (on, options) => {
   on('classic.SessionStart', async ($, e, next) => {
     const done = await next(e)
     if (e.source !== 'clear') return done
-    const ours = (await $.ui.panes().catch(() => [])).map(p => p.id).filter(id => id === PANE || id === EPICS_PANE)
+    const ours = (await $.ui.panes().catch(() => [])).map(p => p.id).filter(id => id === PANE || id === EPICS_PANE || id === MILESTONES_PANE)
     if (ours.length > 0) {
       await update($, panesOpen, () => ours)
       await counted($, 'clear', () => refresh($))
@@ -1706,6 +1850,8 @@ export const register: Register = (on, options) => {
   on('config.set', settingChanged)
   on('ui.close', { id: PANE }, paneClosed)
   on('ui.close', { id: EPICS_PANE }, paneClosed)
+  on('ui.close', { id: MILESTONES_PANE }, paneClosed)
   on('ui.render', { component: 'Pane', requestId: PANE }, renderPane)
   on('ui.render', { component: 'Pane', requestId: EPICS_PANE }, renderPane)
+  on('ui.render', { component: 'Pane', requestId: MILESTONES_PANE }, renderPane)
 }
