@@ -707,10 +707,13 @@ test('gitlab.com detail: Assign me sends your id, and the reload shows you assig
   // Your id came from /user: no lookup.
   expect(asked.some(a => a.includes('/api/v4/users?'))).toBe(false)
   expect(asked.filter(a => a === 'GET https://gitlab.com/api/v4/projects/boats%2Fradar/issues/14').length).toBeGreaterThan(reads)
-  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
+  expect(await texts(ui)).toContain('● #14 Issue 14')
 
+  await ui.press({ key: 'pick-14' })
+  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
   await ui.press({ key: 'assign' })
   expect(sent.at(-1)?.body).toEqual({ assignee_id: 0 })
+  await ui.press({ key: 'pick-14' })
   expect(await labelOf(ui, 'assign')).toBe('Assign me')
 })
 
@@ -780,7 +783,6 @@ test('gitlab.com detail: lists that lag a change still show it at once', GL, asy
   paneWorld(on, { sent: [], lag: true })
   const ui = await opened($)
   await ui.press({ key: 'assign' })
-  await ui.press({ key: 'back' })
   expect(await texts(ui)).toContain('● #14 Issue 14')
 
   await ui.press({ key: 'pick-14' })

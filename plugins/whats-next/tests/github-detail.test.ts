@@ -325,14 +325,14 @@ test('github.com detail: Assign me sends you as assignee, and the reload shows y
   await ui.press({ key: 'assign' })
 
   expect(sent).toEqual([{ body: { assignees: ['alice'] } }])
-  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
-  // Now yours: In progress.
-  await ui.press({ key: 'back' })
+  // Back on the list, now yours: In progress.
   expect(await texts(ui)).toContain('● #14 Issue 14')
 
   await ui.press({ key: 'pick-14' })
+  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
   await ui.press({ key: 'assign' })
   expect(sent.at(-1)?.body).toEqual({ assignees: [] })
+  await ui.press({ key: 'pick-14' })
   expect(await labelOf(ui, 'assign')).toBe('Assign me')
 })
 
@@ -378,12 +378,10 @@ test("github.com detail: lists that lag a change still show it at once, Assign m
   await clock.set(NOW)
   const ui = await opened($)
   await ui.press({ key: 'assign' })
-  await ui.press({ key: 'back' })
   expect(await texts(ui)).toContain('● #14 Issue 14')
 
   await ui.press({ key: 'pick-14' })
   await ui.press({ key: 'assign' })
-  await ui.press({ key: 'back' })
   let all = await texts(ui)
   expect(all).not.toContain('● #14 Issue 14')
   expect(all).toContain('▸ #14 Issue 14')

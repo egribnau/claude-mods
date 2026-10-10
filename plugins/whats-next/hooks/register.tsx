@@ -327,6 +327,12 @@ async function openIssue($: EngineInterface, pane: string, n: number | null) {
   await counted($, `#${n}`, () => loadDetail($, r, pane, n))
 }
 
+// Pane `pane` shows its list again: What's next or the epics.
+async function backToList($: EngineInterface, pane: string) {
+  await update($, memberOf(picked, { requestId: pane }), () => null)
+  await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
+}
+
 // Checks setup and, once it passes, loads What's next and the epics and,
 // where an issue is open, that issue again.
 async function refresh($: EngineInterface): Promise<Repo | null> {
@@ -390,7 +396,8 @@ function fit(text: string, width: number): string {
 
 // Changes issue `n` with `change` (`what` names it for a refusal), then
 // reads it again with What's next and the epics, so the change shows
-// everywhere. A refusal is shown under the actions of pane `pane`.
+// everywhere. Pane `pane` goes back to its list; a refusal keeps the issue
+// open there, shown under its actions.
 async function writeIssue(
   $: EngineInterface,
   pane: string,
@@ -408,6 +415,7 @@ async function writeIssue(
   }
   const key = `${r.host}/${slug(r)}#${n}`
   issuesRead.delete(key)
+  await backToList($, pane)
   for (const p of [PANE, EPICS_PANE]) {
     if ((await read($, memberOf(picked, { requestId: p }))) === n) await loadDetail($, r, p, n)
   }
@@ -452,13 +460,16 @@ function draftFor(i: DraftSource): string {
 // Puts the draft for `i` in the prompt box, never sending it: over an empty
 // box, under what is typed there otherwise.
 // With the actions allowed and the issue not yet yours, it is assigned to
-// you first.
+// you first. Its pane goes back to its list once the draft is in, unless
+// the assign was refused.
 async function workOn($: EngineInterface, i: DraftSource, take?: { pane: string; issue: IssueDetail }) {
   let taken = false
+  let refused = false
   if (take) {
     const s = await read($, setup)
     if (s.kind === 'ready' && s.actions.kind !== 'read-only' && !take.issue.assignees.includes(s.login)) {
       taken = await counted($, `assign #${i.number}`, () => assignMe($, take.pane, take.issue, true))
+      refused = !taken
     }
   }
   try {
@@ -471,6 +482,7 @@ async function workOn($: EngineInterface, i: DraftSource, take?: { pane: string;
         ? `#${i.number} is ${taken ? 'yours and ' : ''}in the prompt: Esc to edit it there`
         : `Could not put #${i.number} in the prompt${done.refusal ? ` (${done.refusal})` : ''}`,
     )
+    if (take && done.isFilled && !refused) await backToList($, take.pane)
   } catch (err) {
     $.ui.toast(`Could not put #${i.number} in the prompt: ${message(err)}`)
   }

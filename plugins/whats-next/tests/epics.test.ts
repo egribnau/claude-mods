@@ -53,6 +53,10 @@ type World = {
   deps?: Record<number, unknown[]>
   // The label the Epic label setting names; Forgejo filters by it.
   label?: string
+  // Whether alice may push, so the detail offers Assign me and Close.
+  push?: boolean
+  // The issues closed so far, by number; a PATCH that closes one adds it.
+  closed?: number[]
 }
 
 // A repo that passes setup, has no other open issues, and answers `w`.
@@ -83,6 +87,10 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
       value: { status, ok: status === 200, headers: {}, text: JSON.stringify(body) },
     })
     const dep = /\/issues\/(\d+)\/dependencies$/.exec(url.pathname)
+    const shut = (i: unknown) => {
+      const x = i as { number: number; state: string }
+      return w.closed?.includes(x.number) ? { ...x, state: 'closed' } : x
+    }
     if (url.pathname.endsWith('/version')) return reply(200, { version: '16.0.5+gitea-1.22.0' })
     if (url.pathname.endsWith('/user')) return reply(200, { login: 'alice' })
     if (url.pathname.endsWith('/repos/issues/search')) return reply(200, [])
@@ -91,14 +99,18 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
       return reply(200, wanted === (w.label ?? 'epic') && page === 0 ? (w.epics ?? []) : [])
     }
     if (url.pathname.endsWith('/repos/boats/radar/milestones')) return reply(200, page === 0 ? (w.milestones ?? []) : [])
-    if (dep) return reply(200, w.deps?.[Number(dep[1])] ?? [])
+    if (dep) return reply(200, (w.deps?.[Number(dep[1])] ?? []).map(shut))
     // An issue itself, for its detail view; the rest of the detail answers 404.
     const one = /\/repos\/boats\/radar\/issues\/(\d+)$/.exec(url.pathname)
     if (one) {
       const n = Number(one[1])
-      return reply(200, { ...issue(n, `Issue ${n}`), user: { login: 'alice' }, updated_at: '2026-09-01T09:00:00Z', comments: 0 })
+      if (e.init?.method === 'PATCH' && JSON.parse(String(e.init.body ?? '{}')).state === 'closed') w.closed = [...(w.closed ?? []), n]
+      const read = { ...issue(n, `Issue ${n}`), user: { login: 'alice' }, updated_at: '2026-09-01T09:00:00Z', comments: 0 }
+      return reply(200, shut(read))
     }
-    if (url.pathname.endsWith('/repos/boats/radar')) return reply(200, { full_name: 'boats/radar', open_issues_count: 9 })
+    if (url.pathname.endsWith('/repos/boats/radar')) {
+      return reply(200, { full_name: 'boats/radar', open_issues_count: 9, permissions: { push: w.push ?? false } })
+    }
     return reply(404, { message: 'not found' })
   })
   return clock
@@ -414,6 +426,22 @@ test('clicking a child opens its detail, and back returns to Epics', TOKEN, asyn
   expect(back.props.label).toBe('← Epics')
   await ui.press({ key: 'back' })
   await expect(ui.find({ key: 'milestone' })).resolves.toBeDefined()
+})
+
+test('Close on a child goes back to Epics, the child counted closed there', TOKEN, async ($, on) => {
+  const w: World = { ...REPO, push: true }
+  world(on, w)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'fold-20' })
+  await ui.press({ key: 'child-51' })
+  await ui.press({ key: 'close' })
+
+  expect(w.closed).toEqual([51])
+  await expect(ui.find({ key: 'back' })).resolves.toBeUndefined()
+  await expect(ui.find({ key: 'milestone' })).resolves.toBeDefined()
+  await expect(ui.find({ key: 'child-51' })).resolves.toBeUndefined()
+  expect(await texts(ui)).toContain('  ✓ 2 closed')
 })
 
 test("an issue opened in Epics leaves What's next as it was", TOKEN, async ($, on) => {

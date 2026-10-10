@@ -376,8 +376,12 @@ test('Assign me adds you, keeps the others, and the list follows: jdoe\'s alone,
   const searches = asked.filter(u => u.includes('/issues/search')).length
   await ui.press({ key: 'assign' })
   expect(sent).toEqual([{ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { assignees: ['jdoe', 'alice'] } }])
-  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
   expect(asked.filter(u => u.includes('/issues/search')).length).toBeGreaterThan(searches)
+  // Back on What's next, #29 under your issues.
+  expect((await texts(ui))[0]).toBe("What's next")
+  await expect(ui.find({ key: 'pick-29' })).resolves.toBeDefined()
+  await ui.press({ key: 'pick-29' })
+  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
 
   // The search still lists #29 as yours, as a lagging forge would: the
   // issue as read again wins, and someone else's issue leaves What's next.
@@ -407,6 +411,32 @@ test('a refusal says why, in red under the buttons', TOKEN, async ($, on) => {
   const line = found.find(t => t.text === 'Could not close #29: it depends on open issues.')
   expect(line?.props.color).toBe('error')
   expect(await labelOf(ui, 'close')).toBe('Close')
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
+})
+
+test('Reopen goes back to the list it came from', TOKEN, async ($, on) => {
+  const sent: Rights['sent'] = []
+  world(on, { ...FULL, '/issues/29': { ...ISSUE, state: 'closed' } }, [], [], 'open', { ...WRITE, sent })
+  const ui = await opened($)
+  expect(await labelOf(ui, 'close')).toBe('Reopen')
+  await ui.press({ key: 'close' })
+  expect(sent).toEqual([{ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { state: 'open' } }])
+  expect((await texts(ui))[0]).toBe("What's next")
+  await expect(ui.find({ key: 'back' })).resolves.toBeUndefined()
+})
+
+test('a refused assign keeps the issue open with why, and Work on this stays there too', TOKEN, async ($, on) => {
+  const toasts: string[] = []
+  world(on, FULL, [], [], 'open', { ...WRITE, sent: [], refuse: { status: 403, message: 'forbidden' } })
+  promptBox(on, '', [], true, toasts)
+  const ui = await opened($)
+  await ui.press({ key: 'assign' })
+  expect(await texts(ui)).toContain('Could not assign #29: forbidden.')
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
+
+  await ui.press({ key: 'work' })
+  expect(await texts(ui)).toContain('Could not assign #29: forbidden.')
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 })
 
 for (const [why, rights, how] of [
@@ -436,10 +466,13 @@ test('Work on this assigns you first when you are not yet assigned', TOKEN, asyn
   await ui.press({ key: 'work' })
   expect(sent).toEqual([{ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { assignees: ['alice'] } }])
   expect(toasts.at(-1)).toBe('#29 is yours and in the prompt: Esc to edit it there')
+  expect((await texts(ui))[0]).toBe("What's next")
 
+  await ui.press({ key: 'pick-29' })
   await ui.press({ key: 'work' })
   expect(sent).toHaveLength(1)
   expect(toasts.at(-1)).toBe('#29 is in the prompt: Esc to edit it there')
+  expect((await texts(ui))[0]).toBe("What's next")
 })
 
 function promptBox(on: On, typed: string, filled: Filled, take = true, toasts: string[] = []) {
@@ -503,6 +536,7 @@ test('says so when the prompt cannot take the draft', TOKEN, async ($, on) => {
   await ui.press({ key: 'work' })
 
   expect(toasts).toEqual(['Could not put #29 in the prompt'])
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 })
 
 test('Open in browser opens the issue page with open, else xdg-open', TOKEN, async ($, on) => {
@@ -510,6 +544,7 @@ test('Open in browser opens the issue page with open, else xdg-open', TOKEN, asy
   world(on, FULL, [], ran, 'xdg-open')
   const ui = await opened($)
   await ui.press({ key: 'open' })
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
   expect(ran).toEqual([
     'open https://git.example.org/boats/radar/issues/29',
     'xdg-open https://git.example.org/boats/radar/issues/29',
