@@ -71,6 +71,8 @@ type Extra = {
   body?: string | null
   title?: string
   pull?: boolean
+  // How many open issues block it.
+  blockedBy?: number
 }
 
 function issue(number: number, created: string, extra: Extra = {}) {
@@ -104,6 +106,10 @@ function issue(number: number, created: string, extra: Extra = {}) {
     author_association: 'MEMBER',
     body: extra.body === undefined ? `Body of ${number}` : extra.body,
     ...(extra.pull ? { pull_request: { url: `${API}/pulls/${number}`, merged_at: null } } : {}),
+    // GitHub sends it for issues, never for pull requests.
+    ...(extra.pull
+      ? {}
+      : { issue_dependencies_summary: { blocked_by: extra.blockedBy ?? 0, blocking: 0, total_blocked_by: extra.blockedBy ?? 0, total_blocking: 0 } }),
     state_reason: null,
   }
 }
@@ -149,7 +155,7 @@ const READY = {
   login: 'alice',
   // Push rights, and a fine-grained token, whose permissions GitHub does not list.
   actions: { kind: 'unknown' },
-  features: { time: false, deps: false, epics: false },
+  features: { time: false, deps: true, epics: false },
 }
 
 test('check: ready in four requests, with a Bearer token and the API version', async () => {
@@ -159,7 +165,7 @@ test('check: ready in four requests, with a Bearer token and the API version', a
   expect(asked.map(a => a.url)).toEqual([
     `${BASE}/user`,
     API,
-    `${API}/issues?state=open&per_page=1`,
+    `${API}/issues?state=open&per_page=20`,
     `${BASE}/search/issues?q=repo%3Aboats%2Fradar%20is%3Aissue%20is%3Aopen&per_page=1`,
   ])
   expect(asked.every(a => a.headers.Authorization === 'Bearer github_pat_x')).toBe(true)
@@ -249,6 +255,39 @@ test('check: without push rights read only, whatever the token', async () => {
     const c = await github(fakeSend(checkRoute({ user, repo: withPush(false) })), R, 't', null).check()
     expect(c.setup).toEqual({ ...READY, actions: { kind: 'read-only', reason: 'push' } })
   }
+})
+
+test('check: dependencies are on where the issues come with their summary, or on github.com with no issue to tell by', async () => {
+  const withSummary = await github(fakeSend(checkRoute()), R, 't', null).check()
+  expect(withSummary.setup).toEqual(expect.objectContaining({ features: { time: false, deps: true, epics: false } }))
+
+  const { issue_dependencies_summary: _, ...bare } = issue(14, '2026-09-18T09:00:00Z')
+  const ghe = { ...R, host: 'github.example.com' }
+  const without = await github(fakeSend(checkRoute({ issues: { status: 200, body: [bare] } }, '/api/v3')), ghe, 't', '3.12.4').check()
+  expect(without.setup).toEqual(expect.objectContaining({ features: { time: false, deps: false, epics: false } }))
+
+  // A pull request first, as the newest open item, says nothing: the issue after it tells.
+  const prFirst = { issues: { status: 200, body: [issue(16, '2026-10-05T09:00:00Z', { pull: true }), bare] } }
+  expect((await github(fakeSend(checkRoute(prFirst)), R, 't', null).check()).setup).toEqual(
+    expect.objectContaining({ features: { time: false, deps: false, epics: false } }),
+  )
+  const prThenIssue = { issues: { status: 200, body: [issue(16, '2026-10-05T09:00:00Z', { pull: true }), issue(14, '2026-09-18T09:00:00Z')] } }
+  expect((await github(fakeSend(checkRoute(prThenIssue, '/api/v3')), ghe, 't', null).check()).setup).toEqual(
+    expect.objectContaining({ features: { time: false, deps: true, epics: false } }),
+  )
+  // Only pull requests open: no issue to tell by.
+  const onlyPr = { issues: { status: 200, body: [issue(16, '2026-10-05T09:00:00Z', { pull: true })] } }
+  expect((await github(fakeSend(checkRoute(onlyPr)), R, 't', null).check()).setup).toEqual(
+    expect.objectContaining({ features: { time: false, deps: true, epics: false } }),
+  )
+
+  const none = { issues: { status: 200, body: [] } }
+  expect((await github(fakeSend(checkRoute(none)), R, 't', null).check()).setup).toEqual(
+    expect.objectContaining({ features: { time: false, deps: true, epics: false } }),
+  )
+  expect((await github(fakeSend(checkRoute(none, '/api/v3')), ghe, 't', null).check()).setup).toEqual(
+    expect.objectContaining({ features: { time: false, deps: false, epics: false } }),
+  )
 })
 
 test('check: a host that does not answer is an error naming why', async () => {
@@ -413,6 +452,8 @@ type World = {
   mineStatus?: number
   open?: unknown[]
   milestones?: unknown[]
+  // Each issue's blockers, as dependencies/blocked_by lists them.
+  deps?: Record<number, unknown[]>
   asked?: { url: string; auth: string | undefined }[]
 }
 
@@ -437,8 +478,10 @@ function world(on: On, w: World) {
     if (p === '/repos/boats/radar') return reply(200, REPO)
     if (p === '/search/issues') return reply(200, { total_count: 3, incomplete_results: false, items: [] })
     if (p === '/repos/boats/radar/milestones') return reply(200, w.milestones ?? [])
+    const blockedBy = /^\/repos\/boats\/radar\/issues\/(\d+)\/dependencies\/blocked_by$/.exec(p)
+    if (blockedBy) return reply(200, w.deps?.[Number(blockedBy[1])] ?? [])
     if (p === '/repos/boats/radar/issues') {
-      if (u.searchParams.get('per_page') === '1') {
+      if (u.searchParams.get('per_page') === '20') {
         const status = w.issuesStatus ?? 200
         return reply(status, status === 200 ? [] : { message: 'Resource not accessible by personal access token' })
       }
@@ -572,4 +615,101 @@ test('github.com with a token that may not read issues: names the Issues permiss
 
   expect(all).toContain('✗ Access  no Issues')
   expect(all).toContain("The token from GitHub token reads boats/radar, but not its issues: What's Next needs the Issues permission.")
+})
+
+// Blockers
+
+const dep = (number: number, state: string, repo = 'boats/radar') => ({
+  ...issue(number, '2026-09-01T09:00:00Z'),
+  state,
+  repository: { full_name: repo },
+})
+
+test('blockers: none asked for an issue the open issues said nothing blocks; the open ones of this repo for the rest', async () => {
+  const asked: Asked[] = []
+  const route = (u: URL): Reply => {
+    if (u.pathname === '/repos/boats/radar/issues') {
+      return { status: 200, body: [issue(14, '2026-09-18T09:00:00Z'), issue(15, '2026-09-19T09:00:00Z', { blockedBy: 1 })] }
+    }
+    if (u.pathname === '/repos/boats/radar/issues/15/dependencies/blocked_by') {
+      return { status: 200, body: [dep(9, 'open'), dep(8, 'closed'), dep(7, 'open', 'boats/other')] }
+    }
+    return NOT_FOUND
+  }
+  const t = github(fakeSend(route, asked), R, 't', null)
+  await t.open()
+  expect(await t.blockers(14)).toEqual([])
+  expect(await t.blockers(15)).toEqual([9])
+  // Not in the list: asked.
+  expect(await t.blockers(99)).toBeNull()
+  expect(asked.map(a => a.url)).toEqual([
+    `${API}/issues?state=open&per_page=100`,
+    `${API}/issues/15/dependencies/blocked_by?per_page=100`,
+    `${API}/issues/99/dependencies/blocked_by?per_page=100`,
+  ])
+})
+
+test('issue: with dependencies on, what blocks it and what it blocks, this repo only; off, not asked', async () => {
+  const asked: Asked[] = []
+  const route = (u: URL): Reply => {
+    const p = u.pathname
+    if (p === '/repos/boats/radar/issues/15') return { status: 200, body: issue(15, '2026-09-19T09:00:00Z', { blockedBy: 1 }) }
+    if (p === '/repos/boats/radar/issues/15/timeline') return { status: 200, body: [] }
+    if (p === '/repos/boats/radar/issues/15/dependencies/blocked_by') return { status: 200, body: [dep(9, 'open'), dep(8, 'closed'), dep(7, 'open', 'boats/other')] }
+    if (p === '/repos/boats/radar/issues/15/dependencies/blocking') return { status: 200, body: [dep(21, 'open')] }
+    return NOT_FOUND
+  }
+  const t = github(fakeSend(route, asked), R, 't', null)
+  const d = await t.issue(15, { time: false, deps: true, epics: false })
+  expect(d.blockedBy).toEqual([
+    { number: 9, title: 'Issue 9', state: 'open' },
+    { number: 8, title: 'Issue 8', state: 'closed' },
+  ])
+  expect(d.blocks).toEqual([{ number: 21, title: 'Issue 21', state: 'open' }])
+
+  asked.length = 0
+  const off = await t.issue(15, { time: false, deps: false, epics: false })
+  expect(off.blockedBy).toBeNull()
+  expect(off.blocks).toBeNull()
+  expect(asked.some(a => a.url.includes('/dependencies/'))).toBe(false)
+})
+
+test('github.com: an issue with an open blocker waits, the next free one is Next, and only it is asked about', GH, async ($, on) => {
+  const asked: World['asked'] = []
+  const clock = world(on, {
+    mine: [],
+    open: [
+      issue(14, '2026-09-18T09:00:00Z', { blockedBy: 1 }),
+      issue(21, '2026-10-02T09:00:00Z'),
+      issue(22, '2026-10-03T09:00:00Z'),
+      issue(23, '2026-10-04T09:00:00Z', { blockedBy: 2 }),
+    ],
+    deps: { 14: [dep(9, 'open'), dep(8, 'closed')] },
+    asked,
+  })
+  await clock.set(NOW)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('▸ #21 Issue 21')
+  expect(all).toContain('⊘ #14 Issue 14')
+  expect(all.some(t => t.includes('#9'))).toBe(true)
+  // Only #14, walked past on the way to Next, cost a request: #21 had none
+  // open, and the queue after Next is not checked.
+  expect(asked?.filter(a => a.url.includes('/dependencies/')).map(a => new URL(a.url).pathname)).toEqual([
+    '/repos/boats/radar/issues/14/dependencies/blocked_by',
+  ])
+})
+
+test('github.com: an issue whose blockers are all closed is pickable, with no request for it', GH, async ($, on) => {
+  const asked: World['asked'] = []
+  const clock = world(on, { mine: [], open: [issue(14, '2026-09-18T09:00:00Z', { blockedBy: 0 })], deps: { 14: [dep(9, 'closed')] }, asked })
+  await clock.set(NOW)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await texts(ui)).toContain('▸ #14 Issue 14')
+  expect(asked?.some(a => a.url.includes('/dependencies/'))).toBe(false)
 })

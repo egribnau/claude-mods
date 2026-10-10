@@ -1,4 +1,4 @@
-import type { Actions, CommitRef, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
+import type { Actions, CommitRef, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName } from './forge'
 import { message, type Checked, type OpenIssue, type Send, type Tracker } from './tracker'
@@ -7,7 +7,8 @@ import { message, type Checked, type OpenIssue, type Send, type Tracker } from '
 // `token` is from the GitHub token setting, null when it has none for the
 // host; `known`: the GitHub Enterprise version detection found, null for
 // github.com or when it would not say.
-// No blockers or epics yet: check turns them off.
+// Blockers are GitHub's own "blocked by" relations. No epics yet: check
+// turns them off.
 export function github(send: Send, r: Repo, token: string | null, known: string | null): Tracker {
   const slug = `${r.owner}/${r.name}`
   const dotCom = r.host.toLowerCase() === 'github.com'
@@ -57,6 +58,13 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     return res.ok ? null : refusal(res)
   }
 
+  // The issues issue `n` is blocked by, or blocks, in this repo; null when
+  // GitHub would not say.
+  async function dependencies(n: number, kind: 'blocked_by' | 'blocking'): Promise<RawDependency[] | null> {
+    const raw = await fetchAll<RawDependency>(`${api}/issues/${n}/dependencies/${kind}`, kind).catch(() => null)
+    return raw ? raw.filter(d => d.repository?.full_name === undefined || d.repository.full_name.toLowerCase() === slug.toLowerCase()) : null
+  }
+
   // Who the token belongs to: from check, else asked.
   async function login(): Promise<string> {
     const seen = loginByToken.get(token ?? '')
@@ -98,11 +106,23 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       // only, and its refusal says the token may not read them.
       const q = encodeURIComponent(`repo:${slug} is:issue is:open`)
       const [issues, counted] = await Promise.all([
-        get(`${api}/issues?state=open&per_page=1`),
+        get(`${api}/issues?state=open&per_page=20`),
         get(`${base}/search/issues?q=${q}&per_page=1`).catch(() => null),
       ])
       if (issues.status === 403 && !limited(issues)) return done({ kind: 'no-scope', missing: 'Issues' })
       if (!issues.ok) return done({ kind: 'error', message: `issues: ${refusal(issues)}` })
+      // Issues can block others where GitHub lists their dependencies with
+      // them. Pull requests come without, so the first issue that is none
+      // tells; with no such issue, github.com has them, an Enterprise server
+      // may not.
+      let probe: RawIssue[] = []
+      try {
+        probe = JSON.parse(issues.text) as RawIssue[]
+      } catch {
+        probe = []
+      }
+      const first = probe.find(isIssue)
+      const deps = first ? 'issue_dependencies_summary' in first : dotCom
       let total: number | undefined
       try {
         total = counted?.ok ? (JSON.parse(counted.text) as { total_count?: number }).total_count : undefined
@@ -114,7 +134,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         openIssues: total ?? repo.open_issues_count ?? 0,
         login: me,
         actions: mayAct(repo, scopes),
-        features: { time: false, deps: false, epics: false },
+        features: { time: false, deps, epics: false },
       })
     } catch (err) {
       return done({ kind: 'error', message: message(err) })
@@ -141,24 +161,41 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       return found.filter(isIssue).map(toRow)
     },
 
+    // How many open issues block each one is kept, so blockers asks only
+    // for the ones that are blocked.
     async open(): Promise<OpenIssue[]> {
       const found = await fetchAll<RawIssue>(`${api}/issues?state=open`, 'open issues')
+      const counts = new Map<number, number>()
+      for (const i of found) if (i.issue_dependencies_summary) counts.set(i.number, i.issue_dependencies_summary.blocked_by ?? 0)
+      blockedByRepo.set(api, counts)
       return found.filter(isIssue).map(i => ({ ...toRow(i), assignees: (i.assignees ?? []).map(a => a.login) }))
     },
 
     // Turned off by check: never asked.
     epics: async () => [],
-    blockers: async () => null,
     children: async () => null,
+
+    // No request for an issue the open issues said nothing blocks. Blockers
+    // in other repos are left out: What's Next shows this repo's numbers.
+    async blockers(n: number): Promise<number[] | null> {
+      if (blockedByRepo.get(api)?.get(n) === 0) return []
+      const raw = await dependencies(n, 'blocked_by')
+      return raw ? raw.filter(d => d.state === 'open').map(d => d.number) : null
+    },
 
     // The issue and its timeline, read in one go: the last comment, the pull
     // requests that mention it and the commits that refer to it come from the
     // timeline. Only the issue itself must answer; the rest is left out when
     // the timeline fails. Commits carry no message there: the newest three,
     // which the detail view shows, are asked for theirs.
-    async issue(n: number): Promise<IssueDetail> {
+    async issue(n: number, features: Features): Promise<IssueDetail> {
       const at = `${api}/issues/${n}`
-      const [res, timeline] = await Promise.all([get(at), fetchAll<RawEvent>(`${at}/timeline`, 'timeline').catch(() => null)])
+      const [res, timeline, blockedBy, blocking] = await Promise.all([
+        get(at),
+        fetchAll<RawEvent>(`${at}/timeline`, 'timeline').catch(() => null),
+        features.deps ? dependencies(n, 'blocked_by') : null,
+        features.deps ? dependencies(n, 'blocking') : null,
+      ])
       if (!res.ok) throw new Error(`#${n}: ${refusal(res)}`)
       const i = JSON.parse(res.text) as RawIssue
       const last = timeline?.filter(e => e.event === 'commented').at(-1)
@@ -196,8 +233,8 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         logged: null,
         estimate: null,
         assignees: (i.assignees ?? []).map(a => a.login),
-        blockedBy: null,
-        blocks: null,
+        blockedBy: blockedBy?.map(toRef) ?? null,
+        blocks: blocking?.map(toRef) ?? null,
         pulls,
         commits,
         lastComment: last ? { author: last.actor?.login ?? last.user?.login ?? 'someone', when: last.created_at, body: last.body ?? '' } : null,
@@ -274,7 +311,17 @@ type RawIssue = {
   labels?: ({ name: string; color?: string | null } | string)[] | null
   assignees?: { login: string }[] | null
   pull_request?: unknown
+  // How many open issues block it (`blocked_by`), where GitHub has dependencies.
+  issue_dependencies_summary?: { blocked_by?: number } | null
 }
+
+// An issue that blocks another, or is blocked by it.
+type RawDependency = { number: number; title: string; state: string; repository?: { full_name: string } }
+const toRef = (d: RawDependency): Ref => ({ number: d.number, title: d.title, state: d.state })
+
+// How many open issues block each open issue, by the repo's API URL, from
+// the last list of open issues.
+const blockedByRepo = new Map<string, Map<number, number>>()
 
 const isIssue = (i: RawIssue) => i.pull_request === undefined
 
