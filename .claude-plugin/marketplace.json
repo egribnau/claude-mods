@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "whats-next",
-      "description": "Your issues and what's next, from Forgejo or GitLab, in a docked pane",
+      "description": "What's next, epics and milestones from Forgejo, GitLab or GitHub, in docked panes",
       "source": "./plugins/whats-next",
       "category": "productivity"
     }

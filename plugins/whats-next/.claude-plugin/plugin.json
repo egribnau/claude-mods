@@ -1,7 +1,7 @@
 {
   "name": "whats-next",
-  "version": "0.61.0",
-  "description": "Your issues and what's next, from Forgejo, GitLab or GitHub, in a docked pane",
+  "version": "0.61.1",
+  "description": "What's next, epics and milestones from Forgejo, GitLab or GitHub, in docked panes",
   "author": {
     "name": "Erwin Gribnau"
   },
@@ -44,7 +44,7 @@
     "debug": {
       "type": "boolean",
       "title": "Debug",
-      "description": "Count What's Next's requests to the forge, on a line under the repo line: the last action's and the session's.",
+      "description": "Count What's Next's requests to the forge, on a line under the bottom line: the last action's and the session's.",
       "default": false
     },
     "compact": {
