@@ -248,6 +248,26 @@ test("after a reload, with its panes open, What's Next loads by itself", TOKEN, 
   expect(asked.length).toBeGreaterThan(before)
 })
 
+// A /clear starts the session's state over and fires no session.start; the
+// engine's record of the panes stays.
+test("after a /clear, with its pane still up, What's Next loads by itself", TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, REPO, asked)
+  on('ui.panes', () => ({ value: [{ id: 'next', title: "What's next", isShown: true, isFocused: false, isPlaced: true }] }))
+  on('classic.SessionStart', () => ({}))
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(asked.some(u => u.endsWith('/repos/boats/radar'))).toBe(true)
+})
+
+test("a /clear with no What's Next pane up loads nothing", TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, REPO, asked)
+  on('ui.panes', () => ({ value: [] }))
+  on('classic.SessionStart', () => ({}))
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(asked).toEqual([])
+})
+
 test("a session that starts with no What's Next pane open loads nothing", TOKEN, async ($, on) => {
   const asked: string[] = []
   world(on, REPO, asked)

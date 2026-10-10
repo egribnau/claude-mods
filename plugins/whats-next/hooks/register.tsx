@@ -1597,6 +1597,20 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // A /clear starts the session's state over, What's Next's list of open
+  // panes too, and fires no session.start; the panes themselves stay up. With
+  // one of them up, take the list from the engine's record and load again.
+  on('classic.SessionStart', async ($, e, next) => {
+    const done = await next(e)
+    if (e.source !== 'clear') return done
+    const ours = (await $.ui.panes().catch(() => [])).map(p => p.id).filter(id => id === PANE || id === EPICS_PANE)
+    if (ours.length > 0) {
+      await update($, panesOpen, () => ours)
+      await counted($, 'clear', () => refresh($))
+    }
+    return done
+  })
+
   // Both names: only the one registered reaches here.
   for (const command of [COMMAND, FALLBACK_COMMAND]) {
     on('command.run', { command }, async ($, e) => {
