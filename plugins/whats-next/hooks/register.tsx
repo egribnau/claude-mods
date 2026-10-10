@@ -469,7 +469,7 @@ function dueLook(iso: string, now: number): { color?: string; dimColor?: boolean
   return soon === 'passed' ? { color: 'error' } : soon === 'soon' ? { color: 'warning' } : { dimColor: true }
 }
 
-// How a place shows its due date (DRAWING.md): the short form (30 Oct) or
+// How a place shows its due date (docs/whats-next/DRAWING.md): the short form (30 Oct) or
 // the long one (30 Oct, in 19 days); `bare` leaves out the word due, `done`
 // draws it dim, `orNone` says no due date where there is none, and `width`
 // pads it to a column.

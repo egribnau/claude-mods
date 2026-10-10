@@ -6,7 +6,7 @@ follows these rules; a change to a rule changes every place it lists.
 ## Due dates
 
 These rules hold everywhere a due date is shown, whatever it is the due
-date of. A due date is drawn only by `dueDate` in hooks/register.tsx, its
+date of. A due date is drawn only by `dueDate` in plugins/whats-next/hooks/register.tsx, its
 words by `dueWords` (for a line that measures itself); `day`, `dueText`
 and `dueLook` are called from nowhere else. A place keeps only what is
 around it (` · ` before it, padding to its column).

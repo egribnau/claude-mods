@@ -1,20 +1,17 @@
 # What's Next: notes for working on this mod
 
+The mod is in `plugins/whats-next`; the rules for every mod are in the
+repo's CLAUDE.md.
+
 ## Way of working
 
-- One feature at a time, chosen by the maintainer.
-- Design first, on the maintainer's design canvas: artboard titles say
-  "(proposal)" or "(built, <version>)". Build only after the maintainer
-  agrees; keep the canvas in step with the code.
-- Bump the version in `.claude-plugin/plugin.json` with each change, update the
-  README when behaviour changes. Milestones name a theme, not a version: a
-  milestone's issues each bump the version as they land. Commit and push only when asked; the
-  maintainer pushes.
-- No em-dashes in anything written; commas and periods instead.
-- How the panes draw things (due dates, for a start) is in DRAWING.md: a new
-  view follows it, and a change to a rule updates it.
-- The words for things are in TERMINOLOGY.md: one word per thing, in the
-  panes, the README, the canvas, issues and comments.
+- Milestones name a theme, not a version: a milestone's issues each bump
+  the version as they land.
+- How the panes draw things (due dates, for a start) is in
+  `docs/whats-next/DRAWING.md`: a new view follows it, and a change to a
+  rule updates it.
+- The words for things are in `docs/whats-next/TERMINOLOGY.md`: one word
+  per thing, in the panes, the README, the canvas, issues and comments.
 
 ## Testing
 

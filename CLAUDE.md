@@ -1,0 +1,21 @@
+# claude-mods: notes for working in this repo
+
+Claude Code mods, published through the marketplace in
+`.claude-plugin/marketplace.json`. Each mod lives in `plugins/<name>`, and
+that folder is what users install: only what the mod needs to run goes
+there. Notes for working on a mod live in `docs/<name>/`.
+
+## Way of working, for every mod
+
+- One feature at a time, chosen by the maintainer.
+- Design first, on the maintainer's design canvas: artboard titles say
+  "(proposal)" or "(built, <version>)". Build only after the maintainer
+  agrees; keep the canvas in step with the code.
+- Bump the version in the mod's `.claude-plugin/plugin.json` with each
+  change, and update the README when behaviour changes.
+- Commit and push only when asked; the maintainer pushes.
+- No em-dashes in anything written; commas and periods instead.
+
+## Mods
+
+- What's Next (`plugins/whats-next`): @docs/whats-next/CLAUDE.md
