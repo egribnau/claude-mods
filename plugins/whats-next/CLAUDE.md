@@ -13,6 +13,8 @@
 - No em-dashes in anything written; commas and periods instead.
 - How the panes draw things (due dates, for a start) is in DRAWING.md: a new
   view follows it, and a change to a rule updates it.
+- The words for things are in TERMINOLOGY.md: one word per thing, in the
+  panes, the README, the canvas, issues and comments.
 
 ## Testing
 
