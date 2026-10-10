@@ -634,6 +634,26 @@ test('issue: with dependencies on, a fourth request for its links: what blocks i
   expect(unknown.blocks).toBe(null)
 })
 
+test('issue: links whose URL names a work item, as newer GitLab answers, count as this project', async () => {
+  const asWorkItem = (l: ReturnType<typeof link>) => ({ ...l, web_url: l.web_url.replace('/-/issues/', '/-/work_items/') })
+  const raw = issue(12, '2026-09-25T09:00:00.000Z')
+  const t = gitlab(
+    fakeSend(u =>
+      u.pathname === `${ISSUES}/12`
+        ? { status: 200, body: raw }
+        : u.pathname === `${ISSUES}/12/links`
+          ? { status: 200, body: [asWorkItem(link(32, 'is_blocked_by', 'closed')), asWorkItem(link(33, 'blocks')), asWorkItem(link(35, 'blocks', 'opened', 'boats/sonar'))] }
+          : { status: 200, body: [] },
+    ),
+    R,
+    'glpat-x',
+    null,
+  )
+  const got = await t.issue(12, { time: true, deps: true, epics: true })
+  expect(got.blockedBy).toEqual([{ number: 32, title: 'Issue 32', state: 'closed' }])
+  expect(got.blocks).toEqual([{ number: 33, title: 'Issue 33', state: 'open' }])
+})
+
 const note = (author: string, created: string, body: string, system = false) => ({
   id: 9000 + Date.parse(created) / 1000,
   type: null,

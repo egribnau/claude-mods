@@ -336,17 +336,17 @@ test('epics: a failing list throws, naming the epics', async () => {
 // Epic #20's links: four related children of this project (one yours, one
 // free, one someone else's, one closed), and what is left out: a blocking
 // link, a related issue of another project and a related peer epic.
-const epicLinks = (h: string) =>
-  onePage([
-    link(h, 37, 'relates_to', { assignees: ['alice'], labels: ['bug'], milestone: V12, created: '2026-09-25T09:00:00.000Z' }),
-    link(h, 51, 'relates_to', { labels: ['docs', 'needs-triage'], created: '2026-10-03T09:00:00.000Z' }),
-    link(h, 44, 'relates_to', { assignees: ['jdoe'], created: '2026-09-20T09:00:00.000Z' }),
-    link(h, 33, 'relates_to', { created: '2026-09-11T09:00:00.000Z' }),
-    link(h, 10, 'relates_to', { state: 'closed', created: '2026-08-11T09:00:00.000Z' }),
-    link(h, 60, 'blocks'),
-    link(h, 5, 'relates_to', { project: 'boats/other' }),
-    link(h, 25, 'relates_to', { labels: ['epic'] }),
-  ])
+const epicLinkItems = (h: string) => [
+  link(h, 37, 'relates_to', { assignees: ['alice'], labels: ['bug'], milestone: V12, created: '2026-09-25T09:00:00.000Z' }),
+  link(h, 51, 'relates_to', { labels: ['docs', 'needs-triage'], created: '2026-10-03T09:00:00.000Z' }),
+  link(h, 44, 'relates_to', { assignees: ['jdoe'], created: '2026-09-20T09:00:00.000Z' }),
+  link(h, 33, 'relates_to', { created: '2026-09-11T09:00:00.000Z' }),
+  link(h, 10, 'relates_to', { state: 'closed', created: '2026-08-11T09:00:00.000Z' }),
+  link(h, 60, 'blocks'),
+  link(h, 5, 'relates_to', { project: 'boats/other' }),
+  link(h, 25, 'relates_to', { labels: ['epic'] }),
+]
+const epicLinks = (h: string) => onePage(epicLinkItems(h))
 
 const CHILDREN: EpicChild[] = [
   {
@@ -427,6 +427,15 @@ test('children: related issues of this project, not other epics, with label colo
   const after = asked.slice(before)
   expect(linksAsked(after)).toEqual([`${path}/issues/20/links`])
   expect(after.filter(a => pathOf(a) === `${path}/labels`)).toHaveLength(1)
+})
+
+test('children: links whose URL names a work item, as newer GitLab answers, are children too', async () => {
+  const h = 'children-work-items.example'
+  const { r } = at(h)
+  const asWorkItems = onePage(epicLinkItems(h).map(l => ({ ...l, web_url: l.web_url.replace('/-/issues/', '/-/work_items/') })))
+  const t = gitlab(fakeSend(route({ metadata: ok(metadata(false)), links: { 20: asWorkItems } })), r, 'glpat-x', null, 'Epic')
+  await t.check()
+  expect(byNumber(await t.children(20, 'alice'))).toEqual(CHILDREN)
 })
 
 test('children: without a check, blocking links count as off', async () => {

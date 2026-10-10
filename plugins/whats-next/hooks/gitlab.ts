@@ -18,9 +18,11 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
   const headers = { 'PRIVATE-TOKEN': token ?? '', Accept: 'application/json' }
   const get = (url: string) => send(url, { method: 'GET', headers })
   const ids = idsAt(r.host)
-  // A linked issue's web_url starts with this when it is in this project:
-  // links may reach into other projects, which What's Next leaves out.
-  const here = `https://${r.host}/${slug}/-/issues/`
+  // Whether a linked issue's web_url is in this project: links may reach
+  // into other projects, which What's Next leaves out. Newer GitLab names
+  // an issue a work item in the URL.
+  const here = [`https://${r.host}/${slug}/-/issues/`, `https://${r.host}/${slug}/-/work_items/`]
+  const inProject = (url: string) => here.some(p => url.startsWith(p))
   const epicLabel = label.toLowerCase()
   const isEpic = (names: string[]) => names.some(l => l.toLowerCase() === epicLabel)
 
@@ -109,7 +111,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
     const raw = await fetchJson<RawLink[]>(`${project}/issues/${n}/links`)
     if (!Array.isArray(raw)) return null
     raw.forEach(remember)
-    return raw.filter(l => l.link_type === kind && l.web_url.startsWith(here))
+    return raw.filter(l => l.link_type === kind && inProject(l.web_url))
   }
 
   // The project's labels by name, with their colour as `rrggbb`, read once
@@ -284,7 +286,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
         fetchJson<RawRef[]>(`${at}/related_merge_requests`),
         features.deps ? fetchJson<RawLink[]>(`${at}/links`) : null,
       ])
-      const ours = Array.isArray(linked) ? linked.filter(l => l.web_url.startsWith(here)) : null
+      const ours = Array.isArray(linked) ? linked.filter(l => inProject(l.web_url)) : null
       ours?.forEach(remember)
       const of = (kind: RawLink['link_type']) => ours?.filter(l => l.link_type === kind).map(toRef) ?? null
       if (!res.ok) throw new Error(`#${n}: HTTP ${res.status}`)
