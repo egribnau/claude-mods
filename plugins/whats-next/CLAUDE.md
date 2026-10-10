@@ -11,6 +11,8 @@
   milestone's issues each bump the version as they land. Commit and push only when asked; the
   maintainer pushes.
 - No em-dashes in anything written; commas and periods instead.
+- How the panes draw things (due dates, for a start) is in DRAWING.md: a new
+  view follows it, and a change to a rule updates it.
 
 ## Testing
 
