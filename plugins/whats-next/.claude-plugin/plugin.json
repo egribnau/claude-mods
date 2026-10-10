@@ -1,7 +1,7 @@
 {
   "name": "whats-next",
-  "version": "0.45.0",
-  "description": "Your issues and what's next, from Forgejo or GitLab, in a docked pane",
+  "version": "0.46.0",
+  "description": "Your issues and what's next, from Forgejo, GitLab or GitHub, in a docked pane",
   "author": {
     "name": "Erwin Gribnau"
   },
@@ -25,6 +25,13 @@
       "type": "string",
       "title": "Private GitLab token",
       "description": "An access token for your own GitLab, any host but gitlab.com, kept in secure storage. api lets What's Next assign and close; read_api is read only. host=token pairs separated by spaces still work for more than one host.",
+      "default": "",
+      "sensitive": true
+    },
+    "githubTokens": {
+      "type": "string",
+      "title": "GitHub token",
+      "description": "A GitHub access token, for github.com and GitHub Enterprise, kept in secure storage. Fine-grained: Issues read and write to assign and close, read for read only; classic: repo. host=token pairs separated by spaces for more than one host; a pair wins over a bare token.",
       "default": "",
       "sensitive": true
     },

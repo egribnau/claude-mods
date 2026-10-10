@@ -25,7 +25,7 @@ export type Tracker = {
   // The tracker at the repo's host, the token, and what it may read and do.
   check(): Promise<Checked>
   // The forge's name, for the pane's texts.
-  name: 'Forgejo' | 'GitLab'
+  name: 'Forgejo' | 'GitLab' | 'GitHub'
   // Where to create a token, with which scopes, and the setting it goes in,
   // for setup's guide.
   tokensUrl: string

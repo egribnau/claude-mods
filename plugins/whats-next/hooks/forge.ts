@@ -77,9 +77,9 @@ function field(text: string, name: string): unknown {
   }
 }
 
-// The token settings, each kept in secure storage: one for Forgejo, and
-// for GitLab one for gitlab.com and one for a private GitLab.
-export type TokenSetting = 'Forgejo tokens' | 'GitLab.com token' | 'Private GitLab token'
+// The token settings, each kept in secure storage: one for Forgejo, for
+// GitLab one for gitlab.com and one for a private GitLab, and one for GitHub.
+export type TokenSetting = 'Forgejo tokens' | 'GitLab.com token' | 'Private GitLab token' | 'GitHub token'
 
 // The GitLab token setting for `host`: gitlab.com has its own.
 export function gitlabSetting(host: string): TokenSetting {

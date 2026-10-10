@@ -5,6 +5,7 @@ import type { Detail, Epic, Epics, IssueDetail, IssueRow, Overview, Repo, Setup,
 import { bar, openChildren, pickerOptions, standing, summary, tally } from './epics'
 import { detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
+import { github } from './github'
 import { gitlab } from './gitlab'
 import { day, dueText, duration, readable, wrap } from './issue'
 import { epicGroups, loadRepo, whatsNext, type Memory } from './load'
@@ -48,12 +49,14 @@ const send =
 // The forge each host runs, as setup's check found it.
 const forges = new Map<string, Forge>()
 
-// The tracker behind repo `r`: GitLab where setup found it, else Forgejo.
+// The tracker behind repo `r`: GitLab or GitHub where setup found it, else Forgejo.
 const tracker = ($: EngineInterface, r: Repo): Tracker => {
   const forge = forges.get(r.host)
   return forge?.kind === 'gitlab'
     ? gitlab(send($), r, gitlabToken(r.host).value, forge.version, configLabel)
-    : forgejo(send($), r, tokenFor(configTokens['Forgejo tokens'], r.host)?.value ?? null, configLabel)
+    : forge?.kind === 'github'
+      ? github(send($), r, readToken('GitHub token', r.host).value, forge.version)
+      : forgejo(send($), r, tokenFor(configTokens['Forgejo tokens'], r.host)?.value ?? null, configLabel)
 }
 
 // Runs an action and records how many requests it sent, under `label`.
@@ -66,7 +69,12 @@ async function counted<T>($: EngineInterface, label: string, action: () => Promi
 }
 
 // The token settings' text, read in `register`; a reload reads them again.
-const configTokens: Record<TokenSetting, string> = { 'Forgejo tokens': '', 'GitLab.com token': '', 'Private GitLab token': '' }
+const configTokens: Record<TokenSetting, string> = {
+  'Forgejo tokens': '',
+  'GitLab.com token': '',
+  'Private GitLab token': '',
+  'GitHub token': '',
+}
 // The Icons setting: ask, icons or text.
 let configIcons = 'ask'
 // The Compact setting: ask, on or off.
@@ -176,19 +184,15 @@ async function check($: EngineInterface): Promise<Repo | null> {
     await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: forge.reason, detail: forge.detail }))
     return r
   }
-  if (forge.kind === 'github') {
-    // No GitHub tokens setting yet.
-    await update($, token, () => null)
-    await update($, version, () => forgeName(forge))
-    await update($, setup, (): Setup => ({ kind: 'unsupported', forge: 'github' }))
-    return r
-  }
-  const tok = forge.kind === 'gitlab' ? gitlabToken(r.host) : readToken('Forgejo tokens', r.host)
+  const tok =
+    forge.kind === 'gitlab' ? gitlabToken(r.host) : forge.kind === 'github' ? readToken('GitHub token', r.host) : readToken('Forgejo tokens', r.host)
   await update($, token, () => tok.from)
   const c =
     forge.kind === 'gitlab'
       ? await gitlab(send($), r, tok.value, forge.version, configLabel).check()
-      : await forgejo(send($), r, tok.value, configLabel, forge.version).check()
+      : forge.kind === 'github'
+        ? await github(send($), r, tok.value, forge.version).check()
+        : await forgejo(send($), r, tok.value, configLabel, forge.version).check()
   await update($, version, () => c.version)
   await update($, setup, () => c.setup)
   return r
@@ -481,7 +485,6 @@ const STOPPED_AT: Record<Setup['kind'], number> = {
   checking: -1,
   'no-repo': 0,
   'not-forgejo': 1,
-  unsupported: 1,
   'no-token': 2,
   'token-refused': 3,
   'no-scope': 3,
@@ -508,7 +511,9 @@ function intro(s: Setup, r: Repo | null, t: Tracker | null, v: string | null, to
     case 'no-scope':
       return s.missing === 'read_api'
         ? `The token ${tokenText} may not read ${r ? slug(r) : 'the repo'}: What's Next needs read_api.`
-        : s.missing
+        : s.missing === 'Issues'
+          ? `The token ${tokenText} reads ${r ? slug(r) : 'the repo'}, but not its issues: What's Next needs the Issues permission.`
+          : s.missing
           ? `The token ${tokenText} reads ${r ? slug(r) : 'the repo'}, but not who it belongs to: What's Next needs ${s.missing} too.`
           : `The token ${tokenText} is valid but may not read this repo.`
     case 'not-found':
@@ -523,8 +528,6 @@ function intro(s: Setup, r: Repo | null, t: Tracker | null, v: string | null, to
           ? `What's Next needs Forgejo or Gitea 1.19 or newer, the first with scoped tokens (read:issue, read:repository, read:user). ${host} runs ${s.detail}.`
           : `${host} does not answer as Forgejo, Gitea, GitLab or GitHub Enterprise (${s.detail}). What's Next has nothing to show for this repo.`
     }
-    case 'unsupported':
-      return `${r?.host ?? 'This host'} runs ${v ?? 'GitHub'}. What's Next does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.`
     default:
       return null
   }
@@ -554,7 +557,6 @@ function todo(s: Setup, r: Repo | null, t: Tracker | null): string[] {
       ]
     }
     case 'not-forgejo':
-    case 'unsupported':
       return []
     case 'no-token':
       return [create, ...set]
@@ -564,7 +566,9 @@ function todo(s: Setup, r: Repo | null, t: Tracker | null): string[] {
     case 'not-found':
       return [
         `If origin points to the wrong repo: \`git remote set-url origin https://${host}/owner/repo.git\`.`,
-        'If the repo is private, create the token as a user who can see it.',
+        t?.name === 'GitHub'
+          ? "If the repo is private, create the token as a user who can see it; a fine-grained token also needs it among its repositories."
+          : 'If the repo is private, create the token as a user who can see it.',
         ...set,
       ]
     case 'error':
@@ -675,9 +679,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         ? `no answer from ${r?.host ?? 'this host'}`
         : s.kind === 'not-forgejo' && s.reason === 'too-old'
           ? `${s.detail}, too old`
-          : s.kind === 'unsupported'
-            ? `${v} at ${r?.host ?? 'this host'}, not supported`
-            : `no known forge at ${r?.host ?? 'this host'}`,
+          : `no known forge at ${r?.host ?? 'this host'}`,
     token: 'none found',
     actions: '',
     access:
@@ -694,7 +696,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // needs no answer from the forge. The steps that do say so; the token too,
   // where What's Next has no setting for the forge or knows none.
   const noRepo = s.kind === 'no-repo'
-  const noForge = s.kind === 'not-forgejo' || s.kind === 'unsupported'
+  const noForge = s.kind === 'not-forgejo'
   const tokenChecked = noRepo || (s.kind === 'not-forgejo' && s.reason === 'too-old')
   const steps = STEPS.map((step, i) => {
     const mark =
@@ -1502,6 +1504,7 @@ export const register: Register = (on, options) => {
   configTokens['Forgejo tokens'] = String(options.token ?? '').trim()
   configTokens['GitLab.com token'] = String(options.gitlabComToken ?? '').trim()
   configTokens['Private GitLab token'] = String(options.gitlabTokens ?? '').trim()
+  configTokens['GitHub token'] = String(options.githubTokens ?? '').trim()
   configIcons = String(options.icons ?? 'ask')
   configCompact = String(options.compact ?? 'ask')
   configLabel = String(options.label ?? 'epic').trim() || 'epic'

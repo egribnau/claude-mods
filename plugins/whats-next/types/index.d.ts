@@ -3,7 +3,7 @@ export type Repo = { host: string; owner: string; name: string }
 
 // Where a request's token comes from, never the token itself: the setting,
 // and the host when a `host=token` pair gave it. null: none found.
-export type TokenSource = { setting: 'Forgejo tokens' | 'GitLab.com token' | 'Private GitLab token'; host: string | null } | null
+export type TokenSource = { setting: 'Forgejo tokens' | 'GitLab.com token' | 'Private GitLab token' | 'GitHub token'; host: string | null } | null
 
 // How far setting up got: each kind but `ready` names the first step that
 // failed, which the pane explains. Steps: repo, forge, token, access.
@@ -15,14 +15,13 @@ export type Setup =
   // `reason`: the host answered, but not as Forgejo or Gitea; it did not
   // answer at all; or it runs a version older than What's Next needs.
   | { kind: 'not-forgejo'; reason: 'other' | 'no-answer' | 'too-old'; detail: string }
-  // A forge What's Next knows but does not show issues of yet.
-  | { kind: 'unsupported'; forge: 'github' }
   | { kind: 'no-token' }
   | { kind: 'token-refused' }
   // `missing`: the scope the token lacks: Forgejo's read:user when the repo
   // answered but /user refused, GitLab's read_api when its token or /user
-  // said so; absent when the repo itself refused.
-  | { kind: 'no-scope'; missing?: 'read:user' | 'read_api' }
+  // said so, GitHub's Issues permission when the repo answered but its
+  // issues did not; absent when the repo itself refused.
+  | { kind: 'no-scope'; missing?: 'read:user' | 'read_api' | 'Issues' }
   | { kind: 'not-found' }
   | { kind: 'error'; message: string }
   // `login`: who the token belongs to, from /user. `actions`: whether What's Next may

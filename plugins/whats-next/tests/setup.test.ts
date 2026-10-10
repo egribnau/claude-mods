@@ -242,7 +242,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('github.com: known without asking, and not supported', TOKEN, async ($, on) => {
+test('github.com: known without asking; the Forgejo token is not for GitHub', TOKEN, async ($, on) => {
   const asked: World['asked'] = []
   world(on, { remote: 'git@github.com:boats/radar.git', asked })
 
@@ -250,15 +250,16 @@ test('github.com: known without asking, and not supported', TOKEN, async ($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toEqual([
+  expect(all.slice(0, 5)).toEqual([
     "Set up What's Next",
     '✓ Repo    boats/radar',
-    '✗ Forge   GitHub at github.com, not supported',
-    '· Token   needs a forge',
-    '· Access  needs a forge',
-    '· Actions needs a forge',
-    "github.com runs GitHub. What's Next does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.",
+    '✓ Forge   GitHub at github.com',
+    '✗ Token   none found',
+    '· Access  ',
   ])
+  expect(all).toContain(
+    '2. Run /plugin configure whats-next@egribnau-mods and paste it as GitHub token, alone or as github.com=<token> next to tokens for other hosts.',
+  )
   expect(asked).toEqual([])
 })
 

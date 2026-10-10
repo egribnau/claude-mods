@@ -316,7 +316,7 @@ test('gitlab.com: a token without read_api says it needs that scope', opts('', '
   expect(asked).toHaveLength(1)
 })
 
-test('github.com: not supported, asked nothing, the token needs a forge', opts('bare'), async ($, on) => {
+test('github.com: asked nothing, and no GitHub token found', opts('bare'), async ($, on) => {
   const asked: Asked = []
   world(on, 'git@github.com:boats/radar.git', {}, asked)
 
@@ -327,11 +327,9 @@ test('github.com: not supported, asked nothing, the token needs a forge', opts('
   expect(asked).toEqual([])
   expect(all).toEqual(
     expect.arrayContaining([
-      '✗ Forge   GitHub at github.com, not supported',
-      '· Token   needs a forge',
-      '· Access  needs a forge',
-      '· Actions needs a forge',
-      "github.com runs GitHub. What's Next does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.",
+      '✓ Forge   GitHub at github.com',
+      '✗ Token   none found',
+      '1. Create a token at https://github.com/settings/personal-access-tokens with Issues read and write, or read for read only; a classic token needs repo.',
     ]),
   )
 })
@@ -393,10 +391,10 @@ test('GitHub Enterprise: found by probing, with no token sent', opts('bare'), as
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('✗ Forge   GitHub Enterprise 3.12.4 at github.example.com, not supported')
-  expect(all).toContain('· Token   needs a forge')
+  expect(all).toContain('✓ Forge   GitHub Enterprise 3.12.4 at github.example.com')
+  expect(all).toContain('✗ Token   none found')
   expect(all).toContain(
-    "github.example.com runs GitHub Enterprise 3.12.4. What's Next does not show GitHub repos yet, only Forgejo, Gitea and GitLab ones, so it has nothing to show for this repo.",
+    '1. Create a token at https://github.example.com/settings/personal-access-tokens with Issues read and write, or read for read only; a classic token needs repo.',
   )
   expect(asked).toHaveLength(3)
   expect(asked.every(a => a.auth === undefined)).toBe(true)
