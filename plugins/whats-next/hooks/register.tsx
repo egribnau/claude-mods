@@ -8,7 +8,7 @@ import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
 import { day, dueText, duration, readable, wrap } from './issue'
-import { epicGroups, loadRepo, whatsNext, type Memory } from './load'
+import { changesSince, epicGroups, loadRepo, noteChange, whatsNext, type Memory } from './load'
 import { waitingText } from './next'
 import { message, type Send, type Tracker } from './tracker'
 
@@ -215,7 +215,9 @@ async function load($: EngineInterface, r: Repo) {
   memory = null
   if ((await read($, overview)).kind !== 'ok') await update($, overview, (): Overview => ({ kind: 'loading' }))
   if ((await read($, epics)).kind !== 'ok') await update($, epics, (): Epics => ({ kind: 'loading' }))
-  const loaded = await loadRepo(tracker($, r), !(await off($, 'epics')))
+  const s = await read($, setup)
+  const key = `${r.host}/${slug(r)}`
+  const loaded = await loadRepo(tracker($, r), !(await off($, 'epics')), changesSince(key, await $.clock.now()), s.kind === 'ready' ? s.login : null)
   const issuesError = loaded.issuesError
   const epicsError = loaded.epicsError
   if (issuesError !== null) await update($, overview, (): Overview => ({ kind: 'error', message: issuesError }))
@@ -404,10 +406,20 @@ async function writeIssue(
     await update($, memberOf(detail, { requestId: pane }), (d): Detail => (d.kind === 'ok' ? { ...d, error } : d))
     return false
   }
-  issuesRead.delete(`${r.host}/${slug(r)}#${n}`)
+  const key = `${r.host}/${slug(r)}#${n}`
+  issuesRead.delete(key)
   for (const p of [PANE, EPICS_PANE]) {
     if ((await read($, memberOf(picked, { requestId: p }))) === n) await loadDetail($, r, p, n)
   }
+  // The issue as the change left it, read again unless a pane just did, so
+  // the lists show the change even where the forge's lists lag it.
+  const s = await read($, setup)
+  const fresh =
+    issuesRead.get(key) ??
+    (await tracker($, r)
+      .issue(n, s.kind === 'ready' ? s.features : { time: true, deps: true, epics: true })
+      .catch(() => null))
+  if (fresh) noteChange(`${r.host}/${slug(r)}`, fresh, await $.clock.now())
   await load($, r)
   return true
 }
@@ -1156,7 +1168,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 ? `What's Next cannot assign or close ${t?.name ?? 'its'} issues yet.`
                 : acts.kind === 'read-only' && acts.reason === 'role'
                   ? `Assign and close need Reporter or higher on ${slug(r)}.`
-                  : `Assign and close need a token with ${t?.writeScope ?? 'write:issue'}: the setup guide's steps make one.`,
+                  : acts.kind === 'read-only' && acts.reason === 'push'
+                    ? `Assign and close need push rights on ${slug(r)}.`
+                    : `Assign and close need a token with ${t?.writeScope ?? 'write:issue'}: the setup guide's steps make one.`,
               { dimColor: true },
             )}
           {error && para('action-error', error, { color: 'error' })}

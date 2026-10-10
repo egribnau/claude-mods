@@ -368,7 +368,7 @@ test('with write:issue and push, Assign me and Close sit under the title, before
   expect(all.indexOf('opened 3w ago by alice · updated 2d ago')).toBeLessThan(all.indexOf('14 Oct, in 5 days'))
 })
 
-test('Assign me adds you, keeps the others, and the list follows', TOKEN, async ($, on) => {
+test('Assign me adds you, keeps the others, and the list follows: jdoe\'s alone, #29 leaves it', TOKEN, async ($, on) => {
   const sent: Rights['sent'] = []
   const asked: string[] = []
   world(on, { ...FULL, '/issues/29': { ...ISSUE, assignees: [{ login: 'jdoe' }] } }, asked, [], 'open', { ...WRITE, sent })
@@ -379,20 +379,24 @@ test('Assign me adds you, keeps the others, and the list follows', TOKEN, async 
   expect(await labelOf(ui, 'assign')).toBe('Unassign me')
   expect(asked.filter(u => u.includes('/issues/search')).length).toBeGreaterThan(searches)
 
+  // The search still lists #29 as yours, as a lagging forge would: the
+  // issue as read again wins, and someone else's issue leaves What's next.
   await ui.press({ key: 'assign' })
   expect(sent.at(-1)).toEqual({ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { assignees: ['jdoe'] } })
-  expect(await labelOf(ui, 'assign')).toBe('Assign me')
+  const all = await texts(ui)
+  expect(all[0]).toBe("What's next")
+  expect(all.some(t => t.includes('#29'))).toBe(false)
 })
 
-test('Close closes at once, and Reopen undoes it', TOKEN, async ($, on) => {
+test('Close closes at once, and the lists leave it out though the search still has it', TOKEN, async ($, on) => {
   const sent: Rights['sent'] = []
   world(on, FULL, [], [], 'open', { ...WRITE, sent })
   const ui = await opened($)
   await ui.press({ key: 'close' })
   expect(sent).toEqual([{ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { state: 'closed' } }])
-  expect(await labelOf(ui, 'close')).toBe('Reopen')
-  await ui.press({ key: 'close' })
-  expect(sent.at(-1)?.body).toEqual({ state: 'open' })
+  const all = await texts(ui)
+  expect(all[0]).toBe("What's next")
+  expect(all.some(t => t.includes('#29'))).toBe(false)
 })
 
 test('a refusal says why, in red under the buttons', TOKEN, async ($, on) => {
@@ -405,15 +409,15 @@ test('a refusal says why, in red under the buttons', TOKEN, async ($, on) => {
   expect(await labelOf(ui, 'close')).toBe('Close')
 })
 
-for (const [why, rights] of [
-  ['the token lacks write:issue', { push: true }],
-  ['alice may not push here', { push: false, scopes: ['write:issue'] }],
+for (const [why, rights, how] of [
+  ['the token lacks write:issue', { push: true }, "Assign and close need a token with write:issue: the setup guide's steps make one."],
+  ['alice may not push here', { push: false, scopes: ['write:issue'] }, 'Assign and close need push rights on boats/radar.'],
 ] as const) {
   test(`read only (${why}): no Assign or Close, one line on how`, TOKEN, async ($, on) => {
     world(on, FULL, [], [], 'open', { ...rights })
     const ui = await opened($)
     expect(await keys(ui)).toEqual(['back', 'refresh', 'work', 'open'])
-    expect(await texts(ui)).toContain("Assign and close need a token with write:issue: the setup guide's steps make one.")
+    expect(await texts(ui)).toContain(how)
   })
 }
 

@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
-import { epicGroups, loadRepo, whatsNext } from '../hooks/load'
+import { changesSince, epicGroups, loadRepo, noteChange, whatsNext } from '../hooks/load'
 import type { EpicRow, OpenIssue, Tracker } from '../hooks/tracker'
-import type { EpicChild, IssueRow } from '../types'
+import type { EpicChild, IssueDetail, IssueRow } from '../types'
 
 // What's next and Epics against a fake tracker: no URLs, no Forgejo.
 
@@ -164,4 +164,67 @@ test('Epics: grouped by milestone, open first, children asked once with who you 
   expect(calls.filter(c => c.startsWith('children')).sort()).toEqual(['children 3 alice', 'children 4 alice'])
   await epicGroups(t, memory, 'm:v1', 'alice')
   expect(calls.filter(c => c.startsWith('children'))).toHaveLength(2)
+})
+
+// An issue as the detail view read it right after a change.
+function changed(number: number, state: string, assignees: string[], created = '2026-09-18T00:00:00Z'): IssueDetail {
+  return {
+    ...row(number, created, 'v1'),
+    state,
+    author: 'jdoe',
+    updated: '2026-10-09T00:00:00Z',
+    comments: 0,
+    milestone: { title: 'v1', due: null },
+    due: null,
+    branch: null,
+    logged: null,
+    estimate: null,
+    assignees,
+    blockedBy: null,
+    blocks: null,
+    pulls: null,
+    commits: null,
+    lastComment: null,
+  }
+}
+
+test('changes win over lists that lag them: assigned, unassigned, closed and reopened', async () => {
+  // The lists as they were before every change below.
+  const t = fake({
+    mine: [row(10, '2026-09-10T00:00:00Z'), row(11, '2026-09-11T00:00:00Z')],
+    open: [
+      free(row(10, '2026-09-10T00:00:00Z'), ['alice']),
+      free(row(11, '2026-09-11T00:00:00Z'), ['alice']),
+      free(row(12, '2026-09-12T00:00:00Z')),
+      free(row(13, '2026-09-13T00:00:00Z')),
+    ],
+  })
+  const changes = [
+    // Unassigned: free now.
+    changed(10, 'open', [], '2026-09-10T00:00:00Z'),
+    // Closed while yours: in neither list.
+    changed(11, 'closed', ['alice'], '2026-09-11T00:00:00Z'),
+    // Assigned to you: yours now.
+    changed(12, 'open', ['alice'], '2026-09-12T00:00:00Z'),
+    // Given to someone else: in neither list.
+    changed(13, 'open', ['jdoe'], '2026-09-13T00:00:00Z'),
+    // Reopened, free: back in the list.
+    changed(14, 'open', [], '2026-09-14T00:00:00Z'),
+  ]
+  const { memory } = await loadRepo(t, false, changes, 'alice')
+  expect(memory.mine.map(i => i.number)).toEqual([12])
+  expect(memory.free.map(i => i.number)).toEqual([10, 14])
+  expect(memory.free[0]).toEqual(expect.objectContaining({ milestone: 'v1', url: 'fake:10', body: '' }))
+})
+
+test('a change counts for 30 seconds, then the lists are trusted again', () => {
+  const at = Date.parse('2026-10-09T12:00:00Z')
+  noteChange('fake/boats/radar', changed(10, 'open', []), at)
+  noteChange('fake/boats/other', changed(11, 'open', []), at)
+  expect(changesSince('fake/boats/radar', at + 30_000).map(i => i.number)).toEqual([10])
+  expect(changesSince('fake/boats/radar', at + 30_001)).toEqual([])
+  // Forgotten once past: an earlier time no longer finds it.
+  expect(changesSince('fake/boats/radar', at)).toEqual([])
+  expect(changesSince('fake/boats/other', at).map(i => i.number)).toEqual([11])
+  expect(changesSince('fake/nothing', at)).toEqual([])
 })

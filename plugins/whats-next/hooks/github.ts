@@ -1,4 +1,4 @@
-import type { IssueDetail, IssueRow, Repo, Setup } from '../types'
+import type { Actions, CommitRef, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName } from './forge'
 import { message, type Checked, type OpenIssue, type Send, type Tracker } from './tracker'
@@ -7,7 +7,7 @@ import { message, type Checked, type OpenIssue, type Send, type Tracker } from '
 // `token` is from the GitHub token setting, null when it has none for the
 // host; `known`: the GitHub Enterprise version detection found, null for
 // github.com or when it would not say.
-// No blockers, epics or actions yet: check turns them off.
+// No blockers or epics yet: check turns them off.
 export function github(send: Send, r: Repo, token: string | null, known: string | null): Tracker {
   const slug = `${r.owner}/${r.name}`
   const dotCom = r.host.toLowerCase() === 'github.com'
@@ -35,6 +35,28 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     return found
   }
 
+  // One request's JSON, or null when it failed.
+  async function fetchJson<T>(url: string): Promise<T | null> {
+    const res = await get(url).catch(() => null)
+    if (!res?.ok) return null
+    try {
+      return JSON.parse(res.text) as T
+    } catch {
+      return null
+    }
+  }
+
+  // A change to issue `n`: null when GitHub took it, else why not.
+  async function patch(n: number, body: object): Promise<string | null> {
+    const res = await send(`${api}/issues/${n}`, {
+      method: 'PATCH',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch((err: unknown) => message(err))
+    if (typeof res === 'string') return res
+    return res.ok ? null : refusal(res)
+  }
+
   // Who the token belongs to: from check, else asked.
   async function login(): Promise<string> {
     const seen = loginByToken.get(token ?? '')
@@ -60,6 +82,9 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       if (!user.ok) return done({ kind: 'error', message: `/user: ${refusal(user)}` })
       const me = (JSON.parse(user.text) as { login: string }).login
       loginByToken.set(token, me)
+      // A classic token lists its scopes in this header; a fine-grained one
+      // has none, and GitHub does not say what it may do.
+      const scopes = user.headers['x-oauth-scopes']
 
       // A private repo the token may not see answers 404, as one that is not there.
       const res = await get(api)
@@ -88,7 +113,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         kind: 'ready',
         openIssues: total ?? repo.open_issues_count ?? 0,
         login: me,
-        actions: { kind: 'read-only', reason: 'later' },
+        actions: mayAct(repo, scopes),
         features: { time: false, deps: false, epics: false },
       })
     } catch (err) {
@@ -101,7 +126,8 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     name: 'GitHub',
     tokensUrl: `https://${r.host}/settings/personal-access-tokens`,
     scopes: 'Issues read and write, or read for read only; a classic token needs repo',
-    writeScope: 'Issues read and write',
+    // Only a classic token's scopes are known, so only its lack is named.
+    writeScope: 'repo',
     setting: 'GitHub token',
 
     async milestones(): Promise<MilestoneRow[]> {
@@ -125,11 +151,38 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     blockers: async () => null,
     children: async () => null,
 
-    // The issue itself, for the detail view.
+    // The issue and its timeline, read in one go: the last comment, the pull
+    // requests that mention it and the commits that refer to it come from the
+    // timeline. Only the issue itself must answer; the rest is left out when
+    // the timeline fails. Commits carry no message there: the newest three,
+    // which the detail view shows, are asked for theirs.
     async issue(n: number): Promise<IssueDetail> {
-      const res = await get(`${api}/issues/${n}`)
+      const at = `${api}/issues/${n}`
+      const [res, timeline] = await Promise.all([get(at), fetchAll<RawEvent>(`${at}/timeline`, 'timeline').catch(() => null)])
       if (!res.ok) throw new Error(`#${n}: ${refusal(res)}`)
       const i = JSON.parse(res.text) as RawIssue
+      const last = timeline?.filter(e => e.event === 'commented').at(-1)
+      const pulls: Ref[] | null = timeline
+        ? timeline
+            .flatMap(e => (e.event === 'cross-referenced' && e.source?.issue?.pull_request ? [e.source.issue] : []))
+            .filter(p => p.repository?.full_name === undefined || p.repository.full_name.toLowerCase() === slug.toLowerCase())
+            .filter((p, k, all) => all.findIndex(q => q.number === p.number) === k)
+            .map(p => ({ number: p.number, title: p.title, state: p.pull_request?.merged_at ? 'merged' : p.state }))
+        : null
+      const shas = timeline
+        ? timeline
+            .flatMap(e => (e.event === 'referenced' && e.commit_id ? [{ sha: e.commit_id, when: e.created_at }] : []))
+            .filter((c, k, all) => all.findIndex(d => d.sha === c.sha) === k)
+            .reverse()
+        : null
+      const commits: CommitRef[] | null = shas
+        ? await Promise.all(
+            shas.slice(0, 3).map(async c => {
+              const found = await fetchJson<{ commit?: { message?: string } }>(`${api}/commits/${c.sha}`)
+              return { sha: c.sha.slice(0, 7), message: (found?.commit?.message ?? '').split('\n')[0]?.trim() ?? '', when: c.when }
+            }),
+          )
+        : null
       return {
         ...toRow(i),
         state: i.state,
@@ -139,20 +192,34 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         milestone: i.milestone ? { title: i.milestone.title, due: i.milestone.due_on ?? null } : null,
         due: null,
         branch: null,
+        // GitHub tracks no time.
         logged: null,
         estimate: null,
         assignees: (i.assignees ?? []).map(a => a.login),
         blockedBy: null,
         blocks: null,
-        pulls: null,
-        commits: null,
-        lastComment: null,
+        pulls,
+        commits,
+        lastComment: last ? { author: last.actor?.login ?? last.user?.login ?? 'someone', when: last.created_at, body: last.body ?? '' } : null,
       }
     },
 
-    assign: async () => "What's Next cannot assign GitHub issues yet",
-    close: async () => "What's Next cannot close GitHub issues yet",
+    // GitHub takes the whole list of assignees, and leaves out silently
+    // whoever may not be assigned.
+    assign: (n, assignees) => patch(n, { assignees }),
+    close: (n, closed) => patch(n, { state: closed ? 'closed' : 'open' }),
   }
+}
+
+// Whether What's Next may assign and close: push rights on the repo, and
+// for a classic token `repo` (or `public_repo` on a public repo). A
+// fine-grained token's permissions are not listed: with push rights the
+// buttons show and GitHub has the last word.
+function mayAct(repo: RawRepo, scopes: string | undefined): Actions {
+  if (repo.permissions?.push !== true) return { kind: 'read-only', reason: 'push' }
+  if (scopes === undefined) return { kind: 'unknown' }
+  const list = scopes.split(',').map(sc => sc.trim())
+  return list.includes('repo') || (repo.private === false && list.includes('public_repo')) ? { kind: 'ok' } : { kind: 'read-only', reason: 'scope' }
 }
 
 // The URL of the next page from a Link header, or null on the last page.
@@ -187,7 +254,7 @@ function refusal(res: { status: number; text: string; headers: Record<string, st
 const loginByToken = new Map<string, string>()
 
 // The repo as check reads it. `open_issues_count` counts pull requests too.
-type RawRepo = { has_issues?: boolean; open_issues_count?: number }
+type RawRepo = { has_issues?: boolean; open_issues_count?: number; private?: boolean; permissions?: { push?: boolean } }
 
 type RawMilestone = { title: string; due_on?: string | null; open_issues: number; closed_issues: number }
 
@@ -220,3 +287,24 @@ const toRow = (i: RawIssue): IssueRow => ({
   url: i.html_url,
   body: i.body ?? '',
 })
+
+// One event on an issue's timeline: a comment, another issue or pull
+// request mentioning it (`source`), a commit referring to it (`commit_id`),
+// and more What's Next does not show.
+type RawEvent = {
+  event: string
+  created_at: string
+  actor?: { login: string } | null
+  user?: { login: string } | null
+  body?: string | null
+  commit_id?: string | null
+  source?: {
+    issue?: {
+      number: number
+      title: string
+      state: string
+      pull_request?: { merged_at?: string | null } | null
+      repository?: { full_name: string }
+    }
+  } | null
+}

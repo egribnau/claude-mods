@@ -564,11 +564,14 @@ type Pane = {
   sent?: { path: string; body: Record<string, unknown> }[]
   refuse?: { status: number; body: unknown }
   asked?: string[]
+  // The lists lagging every change: they keep showing #14 as it was.
+  lag?: boolean
 }
 
 function paneWorld(on: On, w: Pane) {
   const clock = mock.clock(on)
   let now = w.issue ?? issue(14, { spent: 5400, estimate: 14400 })
+  const before = now
   on('process.run', (_$, e) => {
     const cmd = e.argv.join(' ')
     const stdout =
@@ -602,7 +605,8 @@ function paneWorld(on: On, w: Pane) {
     if (p === '/api/v4/projects/boats%2Fradar') return reply(200, proj(w.level ?? 30))
     if (p === '/api/v4/projects/boats%2Fradar/milestones') return reply(403, { message: '403 Forbidden' })
     if (p === '/api/v4/projects/boats%2Fradar/issues') {
-      const open = now.state === 'opened' ? [now] : []
+      const listed = w.lag ? before : now
+      const open = listed.state === 'opened' ? [listed] : []
       if (u.searchParams.get('scope') === 'assigned_to_me') {
         if (w.mineFails) return reply(500, { message: '500 Internal Server Error' })
         return list(open.filter(i => i.assignees.some(a => a.username === 'alice')))
@@ -771,3 +775,17 @@ for (const [why, w, step, notice] of [
     expect(await texts(ui)).toContain(notice)
   })
 }
+
+test('gitlab.com detail: lists that lag a change still show it at once', GL, async ($, on) => {
+  paneWorld(on, { sent: [], lag: true })
+  const ui = await opened($)
+  await ui.press({ key: 'assign' })
+  await ui.press({ key: 'back' })
+  expect(await texts(ui)).toContain('● #14 Issue 14')
+
+  await ui.press({ key: 'pick-14' })
+  await ui.press({ key: 'close' })
+  const all = await texts(ui)
+  expect(all[0]).toBe("What's next")
+  expect(all.some(t => t.includes('#14'))).toBe(false)
+})

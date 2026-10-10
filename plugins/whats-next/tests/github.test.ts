@@ -147,7 +147,8 @@ const READY = {
   kind: 'ready',
   openIssues: 7,
   login: 'alice',
-  actions: { kind: 'read-only', reason: 'later' },
+  // Push rights, and a fine-grained token, whose permissions GitHub does not list.
+  actions: { kind: 'unknown' },
   features: { time: false, deps: false, epics: false },
 }
 
@@ -224,6 +225,32 @@ test('check: a repo with its issues turned off says so', async () => {
   expect(c.setup).toEqual({ kind: 'error', message: 'boats/radar has its issues turned off' })
 })
 
+// /user's answer for a classic token, which lists its scopes in a header.
+const classic = (scopes: string): Reply => ({ status: 200, body: USER, headers: { 'x-oauth-scopes': scopes } })
+const withPush = (push: boolean, priv = true): Reply => ({
+  status: 200,
+  body: { ...REPO, private: priv, permissions: { ...REPO.permissions, push } },
+})
+
+test('check: a classic token with repo and push rights may assign and close', async () => {
+  const c = await github(fakeSend(checkRoute({ user: classic('repo, read:org') })), R, 'ghp_x', null).check()
+  expect(c.setup).toEqual({ ...READY, actions: { kind: 'ok' } })
+})
+
+test('check: public_repo is enough on a public repo only', async () => {
+  const pub = await github(fakeSend(checkRoute({ user: classic('public_repo'), repo: withPush(true, false) })), R, 't', null).check()
+  expect(pub.setup).toEqual({ ...READY, actions: { kind: 'ok' } })
+  const priv = await github(fakeSend(checkRoute({ user: classic('public_repo') })), R, 't', null).check()
+  expect(priv.setup).toEqual({ ...READY, actions: { kind: 'read-only', reason: 'scope' } })
+})
+
+test('check: without push rights read only, whatever the token', async () => {
+  for (const user of [classic('repo'), undefined]) {
+    const c = await github(fakeSend(checkRoute({ user, repo: withPush(false) })), R, 't', null).check()
+    expect(c.setup).toEqual({ ...READY, actions: { kind: 'read-only', reason: 'push' } })
+  }
+})
+
 test('check: a host that does not answer is an error naming why', async () => {
   const c = await github(fakeSend(() => 'down'), R, 't', null).check()
   expect(c.setup).toEqual({ kind: 'error', message: 'connect ECONNREFUSED' })
@@ -234,7 +261,7 @@ test('the tracker names GitHub, its permission, its setting and where to make a 
   expect(t.name).toBe('GitHub')
   expect(t.setting).toBe('GitHub token')
   expect(t.tokensUrl).toBe('https://github.com/settings/personal-access-tokens')
-  expect(t.writeScope).toBe('Issues read and write')
+  expect(t.writeScope).toBe('repo')
 })
 
 // Lists
@@ -326,7 +353,7 @@ test('milestones: open ones with their due date and closed of all; none when ref
   expect(await github(fakeSend(() => NOT_FOUND), R, 't', null).milestones()).toEqual([])
 })
 
-test('issue: the issue itself for the detail view, nothing GitHub has no answer for yet', async () => {
+test('issue: a timeline that fails leaves comments, pull requests and commits unknown', async () => {
   const asked: Asked[] = []
   const i = issue(12, '2026-09-25T09:00:00Z', { milestone: V12, labels: ['bug'], assignees: ['alice'] })
   const t = github(fakeSend(u => (u.pathname === '/repos/boats/radar/issues/12' ? { status: 200, body: i } : NOT_FOUND), asked), R, 't', null)
@@ -342,10 +369,12 @@ test('issue: the issue itself for the detail view, nothing GitHub has no answer 
       assignees: ['alice'],
       logged: null,
       blockedBy: null,
+      pulls: null,
+      commits: null,
       lastComment: null,
     }),
   )
-  expect(asked).toHaveLength(1)
+  expect(asked.map(a => a.url)).toEqual([`${API}/issues/12`, `${API}/issues/12/timeline?per_page=100`])
   expect(t.issue(99, { time: false, deps: false, epics: false })).rejects.toThrow('#99: HTTP 404, Not Found')
 })
 
@@ -483,7 +512,7 @@ test('github.com: the milestone picker starts on the one due first and narrows t
   expect(all.some(t => t.includes('#12') || t.includes('#14'))).toBe(false)
 })
 
-test('github.com: setup passes read only for now, with the open issues counted', GH, async ($, on) => {
+test('github.com: setup passes with the open issues counted, actions unknown for a fine-grained token', GH, async ($, on) => {
   // Your issues failing keeps the steps on screen.
   world(on, { mineStatus: 500, open: OPEN })
 
@@ -498,7 +527,7 @@ test('github.com: setup passes read only for now, with the open issues counted',
       '✓ Forge   GitHub at github.com',
       '✓ Token   from GitHub token',
       '✓ Access  3 open issues, as alice',
-      '· Actions read only on GitHub for now',
+      '· Actions unknown, scopes not listed',
     ]),
   )
 })
