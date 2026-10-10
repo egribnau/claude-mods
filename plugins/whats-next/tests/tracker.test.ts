@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { changesSince, epicGroups, loadRepo, milestoneIssues, noteChange, whatsNext } from '../hooks/load'
+import { changesSince, epicGroups, loadRepo, milestoneIssues, milestoneKnown, noteChange, whatsNext } from '../hooks/load'
 import type { EpicRow, OpenIssue, Tracker } from '../hooks/tracker'
 import type { EpicChild, IssueDetail, IssueRow } from '../types'
 
@@ -284,6 +284,15 @@ test("without dependencies a milestone's issues are not checked for blockers", a
   const { memory } = await loadRepo(t, false)
   const issues = await milestoneIssues(t, memory, 'v1', null, false)
   expect(issues?.map(c => c.blocked)).toEqual([false])
+  expect(calls.some(c => c.startsWith('blockers'))).toBe(false)
+})
+
+test("what is known of a milestone without asking: without dependencies nothing is blocked, so all of it", async () => {
+  const calls: string[] = []
+  const t = fake({ open: [free(row(40, '2026-10-04T00:00:00Z', 'v1'))], blockers: { 40: [33] } }, calls)
+  const { memory } = await loadRepo(t, false)
+  expect(milestoneKnown(memory, 'v1', false)).toEqual({ checked: true, mine: 0, free: 1, taken: 0, blocked: 0 })
+  expect(milestoneKnown(memory, 'v1', true)).toEqual({ checked: false, mine: 0, free: 1, taken: 0, blocked: 0 })
   expect(calls.some(c => c.startsWith('blockers'))).toBe(false)
 })
 

@@ -209,6 +209,32 @@ export async function milestoneIssues(
   return out
 }
 
+// What there is for you in milestone `title`, from what is known without
+// asking the tracker: yours from the lists; free, someone else's and blocked
+// count only once `checked`, when every issue in it that is not yours was
+// checked for blockers (or none can be: dependencies off, or the tracker
+// would not say). Epics are left out. null when the issues could not be listed.
+export function milestoneKnown(
+  known: Memory,
+  title: string,
+  deps: boolean,
+): { checked: boolean; mine: number; free: number; taken: number; blocked: number } | null {
+  if (!known.listed) return null
+  const epics = new Set(known.epics.filter(e => e.state === 'open').map(e => e.number))
+  const inIt = <T extends { number: number; milestone: string | null }>(l: T[]) => l.filter(i => i.milestone === title && !epics.has(i.number))
+  const others = [...inIt(known.free).map(i => ({ i, taken: false })), ...inIt(known.taken).map(i => ({ i, taken: true }))]
+  const noneAsked = !deps || [...known.blockers.values()].includes(null)
+  const blockedNow = (n: number) => !noneAsked && (known.blockers.get(n) ?? []).length > 0
+  const blocked = others.filter(o => blockedNow(o.i.number)).length
+  return {
+    checked: noneAsked || others.every(o => known.blockers.has(o.i.number)),
+    mine: inIt(known.mine).length,
+    free: others.filter(o => !o.taken && !blockedNow(o.i.number)).length,
+    taken: others.filter(o => o.taken && !blockedNow(o.i.number)).length,
+    blocked,
+  }
+}
+
 // The epics within the pick, by milestone, each open one with its children,
 // asked of the tracker once and remembered. `me` makes a child yours.
 export async function epicGroups(t: Tracker, known: Memory, pick: string, me: string | null): Promise<EpicGroup[]> {

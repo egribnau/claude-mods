@@ -764,7 +764,7 @@ test("GitLab Free: What's next has no waiting rows, asks no links for them, and 
   expect(all).toContain(rule('Next in v1.2'))
   // #33 is oldest: with no blocking links it is Next.
   expect(all).toContain('  #33 Issue 33')
-  expect(all.some(t => t.startsWith('⊘') || t.startsWith('blocked by') || t === 'Nothing ready')).toBe(false)
+  expect(all.some(t => t.startsWith('⊘') || t.startsWith('blocked by') || t === 'Nothing available')).toBe(false)
   expect(all.some(t => ERROR.test(t))).toBe(false)
   expect((await texts(epics)).some(t => ERROR.test(t))).toBe(false)
   // The only links asked are the epic's, for its children.

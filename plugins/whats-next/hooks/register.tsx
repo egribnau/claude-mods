@@ -8,7 +8,7 @@ import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
 import { day, dueSoon, dueText, duration, readable, wrap } from './issue'
-import { changesSince, epicGroups, loadRepo, milestoneIssues, noteChange, whatsNext, type Memory } from './load'
+import { changesSince, epicGroups, loadRepo, milestoneIssues, milestoneKnown, noteChange, whatsNext, type Memory } from './load'
 import { waitingText } from './next'
 import { message, type Send, type Tracker } from './tracker'
 
@@ -1534,6 +1534,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const numWidth = Math.max(0, ...numbers.map(n => `#${n}`.length)) + 1
     // A milestone's row and, folded open, its issues. A closed one is a grey
     // row ending in ✓, its closed epics grey under its open issues.
+    const depsOn = !(await off($, 'deps'))
     const draw = (ms: Milestone, isClosed: boolean) => {
       const b = bar(ms.closed, ms.total)
       const open = folds.has(ms.title)
@@ -1543,7 +1544,14 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const epicRows = (issues ?? []).filter(c => c.children !== undefined && c.state === 'open')
       const closedEpics = isClosed ? (issues ?? []).filter(c => c.children !== undefined && c.state === 'closed') : []
       const plain = (issues ?? []).filter(c => c.children === undefined)
-      const parts = issues ? forYou(tally(plain)) : []
+      // Folded and never asked: only what is known without asking (yours,
+      // the rest once every issue not yours was checked).
+      const seen = issues || !memory ? null : milestoneKnown(memory, ms.title, depsOn)
+      const parts = issues
+        ? forYou(tally(plain))
+        : seen
+          ? forYou({ closed: 0, total: 0, ...(seen.checked ? seen : { mine: seen.mine, free: 0, taken: 0, blocked: 0 }) })
+          : []
       if (isClosed) {
         rows.push(
           <Box key={`ms-${ms.title}`} height={1} flexShrink={0}>
@@ -1574,20 +1582,24 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 </Text>
               </Button>
             </Box>
-            {/* One line, cut once at its end on a narrow pane. */}
-            <Text key={`under-${ms.title}`} wrap="truncate-end">
+            {/* Two lines, each cut once at its end: when and how much, then
+                what there is for you, where any of it is known. */}
+            <Text key={`when-${ms.title}`} wrap="truncate-end">
               {'  '}
               {dueDate('due', ms.due, now, { form: 'short', orNone: true })}
               <Text dimColor>{` · ${ms.total - ms.closed} open`}</Text>
-              {parts.flatMap((part, k) => [
-                <Text key={`sep-${k}`} dimColor>
-                  {' · '}
-                </Text>,
-                <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
-                  {part.text}
-                </Text>,
-              ])}
             </Text>
+            {parts.length > 0 && (
+              <Text key={`for-you-${ms.title}`} wrap="truncate-end">
+                {'  '}
+                {parts.flatMap((part, k) => [
+                  ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
+                  <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
+                    {part.text}
+                  </Text>,
+                ])}
+              </Text>
+            )}
           </Box>,
         )
       }
@@ -1898,9 +1910,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         if (m.next) rows.push(row(m.next, 'next'))
         else if (m.blocked.length > 0) {
           rows.push(
-            <Box key="nothing-ready" flexDirection="column" marginBottom={1} flexShrink={0}>
-              {line('nothing-ready-title', 'Nothing ready', { bold: true })}
-              {para('nothing-ready-why', waitingText(m.blocked), { dimColor: true })}
+            <Box key="nothing-available" flexDirection="column" marginBottom={1} flexShrink={0}>
+              {line('nothing-available-title', 'Nothing available', { bold: true })}
+              {para('nothing-available-why', waitingText(m.blocked), { dimColor: true })}
             </Box>,
           )
         } else {

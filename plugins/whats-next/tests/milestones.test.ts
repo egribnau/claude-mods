@@ -213,7 +213,7 @@ test('a milestone row has the bar and closed/total from its own counts', TOKEN, 
   expect(t.slice(i + 1, i + 5)).toEqual([`${'GitHub'.padEnd(33)} `, '▰▰▰▰', '▱▱▱▱', '  9/17'])
 })
 
-test('the line under a milestone is one line, cut at its end on a narrow pane', TOKEN, async ($, on) => {
+test('two lines under a milestone, each cut at its end: when and how much, then what there is for you', TOKEN, async ($, on) => {
   const clock = world(on, WORK)
   await clock.set(NOW)
   await $.command.run(RUN)
@@ -221,8 +221,35 @@ test('the line under a milestone is one line, cut at its end on a narrow pane', 
   await pane.press({ key: 'ms-fold-GitHub' })
   await pane.press({ key: 'ms-fold-GitHub' })
   const n = await nodes(pane)
-  const under = n.find(x => x.text === '  due 13 Oct · 8 open · 1 yours · 1 blocked · 1 up for grabs')
-  expect(under?.props.wrap).toBe('truncate-end')
+  expect(n.find(x => x.text === '  due 13 Oct · 8 open')?.props.wrap).toBe('truncate-end')
+  expect(n.find(x => x.text === '  1 yours · 1 blocked · 1 available')?.props.wrap).toBe('truncate-end')
+})
+
+test('folded, line 2 shows only what is known: yours from the lists, the rest not until every issue not yours is checked', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  const clock = world(on, WORK, asked)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const before = asked.length
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  const t = await texts(pane)
+  // GitHub: What's next checked #33 and #40, not jdoe's #36, so only yours.
+  expect(t).toContain('  1 yours')
+  expect(t.some(x => x.includes('available') || x.includes('blocked'))).toBe(false)
+  // Jira: jdoe's #50 alone, never checked: no line 2, so GitHub's is the only one.
+  expect(t.filter(x => /^ {2}\d+ (yours|with others|blocked|available)/.test(x))).toEqual(['  1 yours'])
+  expect(asked.length).toBe(before)
+})
+
+test('folded, line 2 is whole once What\'s next has checked every issue not yours, and nothing more is asked', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  const clock = world(on, { ...WORK, issues: (WORK.issues ?? []).filter(i => (i as { number: number }).number !== 36) }, asked)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const before = asked.length
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  expect(await texts(pane)).toContain('  1 yours · 1 blocked · 1 available')
+  expect(asked.length).toBe(before)
 })
 
 test('a due date is red once passed and amber within 7 days', TOKEN, async ($, on) => {
@@ -307,18 +334,17 @@ test('unfolded, a milestone lists its open issues as epic children are, then how
   expect(t).not.toContain('GitHub')
 })
 
-test('once unfolded, the line under a milestone adds what there is for you', TOKEN, async ($, on) => {
+test('once unfolded, line 2 under a milestone says all there is for you', TOKEN, async ($, on) => {
   const clock = world(on, WORK)
   await clock.set(NOW)
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
-  expect(await texts(pane)).not.toContain('1 yours')
+  expect(await texts(pane)).not.toContain('  1 yours · 1 blocked · 1 available')
   await pane.press({ key: 'ms-fold-GitHub' })
   await pane.press({ key: 'ms-fold-GitHub' })
   const t = await texts(pane)
-  const at = t.indexOf(' · 8 open')
-  expect(t.slice(at, at + 6)).toEqual([' · 8 open', ' · ', '1 yours', ' · ', '1 blocked', ' · '])
-  expect(t[at + 6]).toBe('1 up for grabs')
+  const at = t.indexOf('  1 yours · 1 blocked · 1 available')
+  expect(t.slice(at + 1, at + 6)).toEqual(['1 yours', ' · ', '1 blocked', ' · ', '1 available'])
 })
 
 test('a row opens Issue detail, and Back returns to Milestones', TOKEN, async ($, on) => {
@@ -402,7 +428,7 @@ test('epics in a milestone come first, with their bar and what there is for you 
   expect(rows[0]).toBe(`    #29 ${'GitHub support'.padEnd(27)} ▰▰▱▱▱▱▱▱   1/4`)
   expect(rows.slice(1).map(x => x.slice(2, 7))).toEqual(['● #30', '  #33', '○ #36', '⊘ #40'])
   const at = t.indexOf('▱▱▱▱▱▱')
-  expect(t.slice(at + 1, at + 6)).toEqual(['   1/4', '        1 yours · 1 up for grabs', '1 yours', ' · ', '1 up for grabs'])
+  expect(t.slice(at + 1, at + 6)).toEqual(['   1/4', '        1 yours · 1 available', '1 yours', ' · ', '1 available'])
 })
 
 test("the line under an epic in a milestone is one line, cut at its end", TOKEN, async ($, on) => {
@@ -412,7 +438,7 @@ test("the line under an epic in a milestone is one line, cut at its end", TOKEN,
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'ms-fold-GitHub' })
   const n = await nodes(pane)
-  expect(n.find(x => x.text === '        1 yours · 1 up for grabs')?.props.wrap).toBe('truncate-end')
+  expect(n.find(x => x.text === '        1 yours · 1 available')?.props.wrap).toBe('truncate-end')
 })
 
 test("an epic is not blocked by its own children, and opens its detail", TOKEN, async ($, on) => {
@@ -445,9 +471,7 @@ test('epics are left out of what there is for you in a milestone', TOKEN, async 
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'ms-fold-GitHub' })
-  const t = await texts(pane)
-  const at = t.indexOf(' · 8 open')
-  expect(t.slice(at + 1, at + 7)).toEqual([' · ', '1 yours', ' · ', '1 blocked', ' · ', '1 up for grabs'])
+  expect(await texts(pane)).toContain('  1 yours · 1 blocked · 1 available')
 })
 
 const shut = (title: string, at: string, open: number, closed: number, id = 9) => ({ ...milestone(title, null, open, closed, id), state: 'closed', closed_at: at })
@@ -552,7 +576,7 @@ test("a milestone detail's progress: the bar, closed of all, how many open, and 
   const t = await texts(pane)
   expect(t).toContain(' 9/17 · 8 open')
   const at = t.indexOf('1 yours')
-  expect(t.slice(at, at + 5)).toEqual(['1 yours', ' · ', '1 blocked', ' · ', '1 up for grabs'])
+  expect(t.slice(at, at + 5)).toEqual(['1 yours', ' · ', '1 blocked', ' · ', '1 available'])
 })
 
 test("a milestone detail's description, wrapped; none says so", TOKEN, async ($, on) => {

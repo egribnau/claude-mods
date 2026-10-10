@@ -1,6 +1,6 @@
 import type { Epic, EpicChild } from '../types'
 
-// Where an open child stands for you: yours, up for grabs, someone else's,
+// Where an open child stands for you: yours, available, someone else's,
 // or blocked. Yours wins over blocked: you know what holds it up.
 export type Standing = 'mine' | 'free' | 'taken' | 'blocked'
 
@@ -12,7 +12,7 @@ export function standing(c: EpicChild): Standing {
 
 const ORDER: Record<Standing, number> = { mine: 0, free: 1, taken: 2, blocked: 3 }
 
-// The open children in the order the pane lists them: yours, up for grabs,
+// The open children in the order the pane lists them: yours, available,
 // someone else's, blocked; each by number.
 export function openChildren(children: readonly EpicChild[]): EpicChild[] {
   return children
@@ -47,13 +47,13 @@ export function summary(e: Epic): { text: string; color?: string }[] {
   return forYou(t)
 }
 
-// What there is for you among open issues: yours, blocked, up for grabs, or
+// What there is for you among open issues: yours, blocked, available, or
 // when none of those, how many are someone else's. Each part has its colour.
 export function forYou(t: Tally): { text: string; color?: string }[] {
   const parts: { text: string; color?: string }[] = []
   if (t.mine > 0) parts.push({ text: `${t.mine} yours`, color: 'success' })
   if (t.blocked > 0) parts.push({ text: `${t.blocked} blocked` })
-  if (t.free > 0) parts.push({ text: `${t.free} up for grabs` })
+  if (t.free > 0) parts.push({ text: `${t.free} available` })
   if (parts.length === 0 && t.taken > 0) parts.push({ text: `${t.taken} with others` })
   return parts
 }

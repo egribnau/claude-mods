@@ -836,7 +836,7 @@ test('github.com: an epic with its sub-issues in the Epics pane, with the bar an
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   let all = await texts(ui)
   expect(all.some(t => t.includes('Radar sweep') && t.includes('1/5'))).toBe(true)
-  for (const want of ['1 yours', '1 blocked', '1 up for grabs']) expect(all).toContain(want)
+  for (const want of ['1 yours', '1 blocked', '1 available']) expect(all).toContain(want)
   expect(all.some(t => t.includes('Old sweep'))).toBe(true)
 
   await ui.press({ key: 'fold-20' })

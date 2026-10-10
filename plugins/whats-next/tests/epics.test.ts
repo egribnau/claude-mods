@@ -325,7 +325,7 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     ' · ',
     '1 blocked',
     ' · ',
-    '2 up for grabs',
+    '2 available',
     '+ ',
     `#20 ${'Rate limits'.padEnd(29)} ▰▰▱▱▱▱▱▱   1/5`,
     '#20 ',
@@ -338,7 +338,7 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     ' · ',
     '1 blocked',
     ' · ',
-    '1 up for grabs',
+    '1 available',
     '+ ',
     `#25 ${'Docs pass'.padEnd(29)} ▰▰▰▰▰▰▰▰   5/5`,
     '#25 ',
@@ -709,7 +709,7 @@ const child = (number: number, extra: Partial<EpicChild> = {}): EpicChild => ({
   ...extra,
 })
 
-test('openChildren: yours, up for grabs, others, blocked; closed ones left out', () => {
+test('openChildren: yours, available, others, blocked; closed ones left out', () => {
   const got = openChildren([
     child(5, { blocked: true }),
     child(4, { assignees: ['jdoe'] }),
@@ -726,7 +726,7 @@ test('tally and summary', () => {
   expect(summary({ number: 9, title: 'E', state: 'open', children: kids }).map(p => p.text)).toEqual([
     '1 yours',
     '1 blocked',
-    '1 up for grabs',
+    '1 available',
   ])
   expect(summary({ number: 9, title: 'E', state: 'open', children: [child(1, { assignees: ['jdoe'] })] })).toEqual([
     { text: '1 with others' },

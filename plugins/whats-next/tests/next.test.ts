@@ -272,7 +272,7 @@ test('a second line too long for the pane is cut at its end, its indent kept', T
   for (const b of indents) expect(b.props.flexShrink).toBe(0)
 })
 
-test('everything blocked: Nothing ready, and what it waits on', TOKEN, async ($, on) => {
+test('everything blocked: Nothing available, and what it waits on', TOKEN, async ($, on) => {
   const clock = world(on, {
     open: [[issue(33, '2026-09-11T09:00:00Z'), issue(34, '2026-09-12T09:00:00Z'), issue(37, '2026-10-02T09:00:00Z')]],
     deps: { 33: [37], 34: [37, 35], 37: [35] },
@@ -282,7 +282,7 @@ test('everything blocked: Nothing ready, and what it waits on', TOKEN, async ($,
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('Nothing ready')
+  expect(all).toContain('Nothing available')
   expect(all).toContain('#33, #34, #37 wait on #35, #37')
   expect(all).toContain(rule('Queue (3)'))
   expect(all).toContain('blocked by #37, #35 · opened 3w ago')

@@ -41,7 +41,7 @@ export async function pickNext(
 // Issues as a list for a sentence: #33, #34.
 const refs = (ns: readonly number[]) => ns.map(n => `#${n}`).join(', ')
 
-// What Nothing ready waits on: "#33, #34 wait on #37".
+// What Nothing available waits on: "#33, #34 wait on #37".
 export function waitingText(blocked: readonly BlockedRow[]): string {
   const on = [...new Set(blocked.flatMap(b => b.by))].sort((a, b) => a - b)
   const verb = blocked.length === 1 ? 'waits' : 'wait'
