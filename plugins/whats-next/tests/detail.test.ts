@@ -232,16 +232,101 @@ test('labels are text in their Forgejo colour; one too dark to read is made ligh
   expect(found.some(t => t.props.backgroundColor)).toBe(false)
 })
 
-test('an open blocker is red, a closed one struck through', TOKEN, async ($, on) => {
+// #24 blocks #29 and is blocked itself, by #22; #9 blocks #29 too, from
+// another repo on Forgejo, and is left out. #31 is what #29 blocks.
+const FOLLOW: Answers = {
+  ...FULL,
+  '/issues/29/dependencies': [
+    { number: 24, title: 'Settings screen rework', state: 'open', repository: { full_name: 'boats/radar' } },
+    { number: 9, title: 'Elsewhere', state: 'open', repository: { full_name: 'boats/sonar' } },
+    { number: 19, title: 'Drop FORGEJO_TOKEN', state: 'closed', repository: { full_name: 'boats/radar' } },
+  ],
+  '/issues/24': { ...ISSUE, number: 24, title: 'Settings screen rework', html_url: 'https://git.example.org/boats/radar/issues/24' },
+  '/issues/24/dependencies': [{ number: 22, title: 'Settings schema v2', state: 'open' }],
+  '/issues/22': { ...ISSUE, number: 22, title: 'Settings schema v2', html_url: 'https://git.example.org/boats/radar/issues/22' },
+}
+
+type Found = { text: string; props: Record<string, unknown> }
+const found = async (ui: Ui) => (await ui.findAll({ type: 'Text' })) as unknown as Found[]
+
+test('an open blocker is red; a closed one is a grey ✓, not struck through; numbers share one column', TOKEN, async ($, on) => {
   world(on, FULL)
   const ui = await opened($)
-  const all = await ui.findAll({ type: 'Text' })
-  const open = all.find(t => t.text.startsWith('Settings screen rework')) as unknown as { props: Record<string, unknown> }
-  const closed = all.find(t => t.text.startsWith('Drop FORGEJO_TOKEN')) as unknown as { props: Record<string, unknown> }
-  expect(open.props.strikethrough).toBe(false)
-  expect(closed.props.strikethrough).toBe(true)
-  const num = all.find(t => t.text === '#24 ') as unknown as { props: Record<string, unknown> }
-  expect(num.props.color).toBe('error')
+  const all = await found(ui)
+  const num = (n: string) => all.find(t => t.text === n)
+  expect(num('#24')?.props.color).toBe('error')
+  expect(num('#19')?.props.color).toBe('inactive')
+  expect(num('#31')?.props.color).toBe('suggestion')
+  const closed = all.find(t => t.text.startsWith(' Drop FORGEJO_TOKEN'))
+  expect(closed?.props.color).toBe('inactive')
+  expect(closed?.props.strikethrough).toBeUndefined()
+  const tick = all.find(t => t.text.trim() === '✓')
+  expect(tick?.props.color).toBe('inactive')
+  expect(all.some(t => t.text.trim() === 'closed')).toBe(false)
+  // Every title starts in the same column: the number column, then a space.
+  expect(all.some(t => t.text.startsWith(' Settings screen rework'))).toBe(true)
+  expect(all.some(t => t.text.startsWith(' Release notes for 0.3.0'))).toBe(true)
+})
+
+test('a number shorter than the others sits at the right of the column', TOKEN, async ($, on) => {
+  world(on, { ...FULL, '/issues/29/blocks': [{ number: 7, title: 'Short', state: 'open' }] })
+  const ui = await opened($)
+  expect((await texts(ui)).includes(' #7')).toBe(true)
+})
+
+test('an open blocker that is itself blocked says blocked, dim, its number still red', TOKEN, async ($, on) => {
+  world(on, FOLLOW)
+  const ui = await opened($)
+  const all = await found(ui)
+  const word = all.find(t => t.text.trim() === 'blocked')
+  expect(word?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === '#24')?.props.color).toBe('error')
+})
+
+test('a blocker in another repo is left out on Forgejo', TOKEN, async ($, on) => {
+  world(on, FOLLOW)
+  const ui = await opened($)
+  expect((await texts(ui)).some(t => t.includes('Elsewhere'))).toBe(false)
+  await expect(ui.find({ key: 'follow-9' })).resolves.toBeUndefined()
+})
+
+test('a blocker opens its issue in the same pane; Back returns to the issue it was opened from, then the list', TOKEN, async ($, on) => {
+  world(on, FOLLOW)
+  const ui = await opened($)
+  await ui.press({ key: 'follow-24' })
+  expect((await texts(ui)).some(t => t.includes('#24 Settings screen rework'))).toBe(true)
+  expect(await labelOf(ui, 'back')).toBe('← #29')
+
+  await ui.press({ key: 'follow-22' })
+  expect((await texts(ui)).some(t => t.includes('#22 Settings schema v2'))).toBe(true)
+  expect(await labelOf(ui, 'back')).toBe('← #24')
+
+  await ui.press({ key: 'back' })
+  expect((await texts(ui)).some(t => t.includes('#24 Settings screen rework'))).toBe(true)
+  await ui.press({ key: 'back' })
+  expect((await texts(ui)).some(t => t.includes('#29 Docs: config keys'))).toBe(true)
+  expect(await labelOf(ui, 'back')).toBe("← What's next")
+  await ui.press({ key: 'back' })
+  expect((await texts(ui))[0]).toBe("What's next")
+})
+
+test('Blocks lines open their issue too; pull requests are no buttons', TOKEN, async ($, on) => {
+  world(on, { ...FULL, '/issues/31': { ...ISSUE, number: 31, title: 'Release notes for 0.3.0' } })
+  const ui = await opened($)
+  await expect(ui.find({ key: 'follow-61' })).resolves.toBeUndefined()
+  await ui.press({ key: 'follow-31' })
+  expect((await texts(ui)).some(t => t.includes('#31 Release notes for 0.3.0'))).toBe(true)
+  expect(await labelOf(ui, 'back')).toBe('← #29')
+})
+
+test('an issue opened from the list again starts a new trail', TOKEN, async ($, on) => {
+  world(on, FOLLOW)
+  const ui = await opened($)
+  await ui.press({ key: 'follow-24' })
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'pick-29' })
+  expect(await labelOf(ui, 'back')).toBe("← What's next")
 })
 
 test('a passed due date is red', TOKEN, async ($, on) => {
@@ -381,7 +466,7 @@ test('with write:issue and push, Assign me and Close sit under the title, before
   const clock = world(on, FULL, [], [], 'open', { ...WRITE })
   await clock.set(NOW)
   const ui = await opened($)
-  expect(await keys(ui)).toEqual(['back', 'refresh', 'work', 'assign', 'close', 'open'])
+  expect(await keys(ui)).toEqual(['back', 'refresh', 'work', 'assign', 'close', 'open', 'follow-24', 'follow-19', 'follow-31'])
   expect(await labelOf(ui, 'assign')).toBe('Assign me')
   expect(await labelOf(ui, 'close')).toBe('Close')
   const all = await texts(ui)
@@ -466,7 +551,7 @@ for (const [why, rights, how] of [
   test(`read only (${why}): no Assign or Close, one line on how`, TOKEN, async ($, on) => {
     world(on, FULL, [], [], 'open', { ...rights })
     const ui = await opened($)
-    expect(await keys(ui)).toEqual(['back', 'refresh', 'work', 'open'])
+    expect(await keys(ui)).toEqual(['back', 'refresh', 'work', 'open', 'follow-24', 'follow-19', 'follow-31'])
     expect(await texts(ui)).toContain(how)
   })
 }

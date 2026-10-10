@@ -71,7 +71,9 @@ export type Overview =
 
 // An issue or pull request another one points at, with its state: open,
 // closed, or for a pull request also merged.
-export type Ref = { number: number; title: string; state: string }
+// An issue or pull request a line names. `blocked`: an open blocker that is
+// itself blocked by an open issue; only asked for under Blocked by.
+export type Ref = { number: number; title: string; state: string; blocked?: boolean }
 
 export type CommitRef = { sha: string; message: string; when: string }
 
@@ -162,6 +164,9 @@ declare module 'claude-code' {
       // the pane's list), and what was loaded for it.
       picked: StateFamily<number | null>
       detail: StateFamily<Detail>
+      // Per pane: the issues the open one was reached from through its
+      // Blocked by and Blocks lines, oldest first; Back returns to the last.
+      trail: StateFamily<number[]>
       epics: Epics
       // What's Next's panes that are open, by id: with more than one the engine draws
       // tabs naming them, so the title rows leave the names out.

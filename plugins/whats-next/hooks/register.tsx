@@ -1,7 +1,7 @@
 import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
-import type { Detail, Epic, Epics, IssueDetail, IssueRow, Overview, Repo, Setup, TokenSource } from '../types'
+import type { Detail, Epic, Epics, IssueDetail, IssueRow, Overview, Ref, Repo, Setup, TokenSource } from '../types'
 import { bar, openChildren, pickerOptions, standing, summary, tally } from './epics'
 import { detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
@@ -27,6 +27,7 @@ const overview = atom({ plugin: 'whats-next', key: 'overview' } as const, { kind
 // Per pane, keyed by its id: each opens issues in a detail view of its own.
 const picked = atom({ plugin: 'whats-next', key: 'picked' } as const, null)
 const detail = atom({ plugin: 'whats-next', key: 'detail' } as const, { kind: 'idle' })
+const trail = atom({ plugin: 'whats-next', key: 'trail' } as const, [])
 const iconsChosen = atom({ plugin: 'whats-next', key: 'icons' } as const, null)
 const compactChosen = atom({ plugin: 'whats-next', key: 'compact' } as const, null)
 const epics = atom({ plugin: 'whats-next', key: 'epics' } as const, { kind: 'idle' })
@@ -316,8 +317,30 @@ async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) 
   }
 }
 
-// Shows issue `n` in the detail view of pane `pane`, or its list again for null.
+// Shows issue `n` in the detail view of pane `pane`, or its list again for
+// null. Opened from a list, so Back goes to the list.
 async function openIssue($: EngineInterface, pane: string, n: number | null) {
+  await update($, memberOf(trail, { requestId: pane }), () => [])
+  await showIssue($, pane, n)
+}
+
+// Shows issue `n` in pane `pane`, reached from issue `from`'s Blocked by or
+// Blocks: Back returns to `from`.
+async function followIssue($: EngineInterface, pane: string, from: number, n: number) {
+  await update($, memberOf(trail, { requestId: pane }), t => [...t, from])
+  await showIssue($, pane, n)
+}
+
+// Back: the issue the open one was reached from, else the list.
+async function goBack($: EngineInterface, pane: string) {
+  const t = await read($, memberOf(trail, { requestId: pane }))
+  const from = t.at(-1)
+  if (from === undefined) return openIssue($, pane, null)
+  await update($, memberOf(trail, { requestId: pane }), () => t.slice(0, -1))
+  await showIssue($, pane, from)
+}
+
+async function showIssue($: EngineInterface, pane: string, n: number | null) {
   await update($, memberOf(picked, { requestId: pane }), () => n)
   const r = await read($, repo)
   if (n === null || !r) {
@@ -329,6 +352,7 @@ async function openIssue($: EngineInterface, pane: string, n: number | null) {
 
 // Pane `pane` shows its list again: What's next or the epics.
 async function backToList($: EngineInterface, pane: string) {
+  await update($, memberOf(trail, { requestId: pane }), () => [])
   await update($, memberOf(picked, { requestId: pane }), () => null)
   await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
 }
@@ -1049,13 +1073,15 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   if (s.kind === 'ready' && r && open !== null) {
     const d = await read($, memberOf(detail, e))
     const now = await $.clock.now()
+    // Back names where it goes: the issue this one was reached from, else the list.
+    const from = (await read($, memberOf(trail, e))).at(-1)
     const top = (
       <Box key="title" height={1} flexShrink={0}>
         <Button
           key="back"
-          label={say(ICON.back, inEpics ? '← Epics' : "← What's next")}
+          label={from !== undefined ? say(`${ICON.back} #${from}`, `← #${from}`) : say(ICON.back, inEpics ? '← Epics' : "← What's next")}
           hotkey="b"
-          onPress={() => openIssue($, e.requestId, null)}
+          onPress={() => goBack($, e.requestId)}
         />
         <Box flexGrow={1} />
         <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
@@ -1073,23 +1099,44 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {content}
         </Box>
       )
-      // One issue or pull request on a line: number, title, state.
-      const refLine = (key: string, label: string, x: { number: number; title: string; state: string }, numColor: string) => {
-        const state = x.state
-        const done = state === 'closed'
+      // One issue or pull request on a line: number, title, state. Numbers
+      // sit at the right of one column, states at the right of the line, so
+      // titles start in one column. Closed is a grey ✓; an open blocker that
+      // is itself blocked says so, dim. Blocked by and Blocks lines are
+      // buttons that open their issue here.
+      type RefKind = 'blocker' | 'blocks' | 'pull'
+      const refs = [...(i.blockedBy ?? []), ...(i.blocks ?? []), ...(i.pulls ?? [])]
+      const stateOf = (x: Ref) => (x.state === 'closed' ? '✓' : x.blocked ? 'blocked' : x.state)
+      const refNum = Math.max(0, ...refs.map(x => `#${x.number}`.length))
+      const refState = Math.max(0, ...refs.map(x => stateOf(x).length))
+      const refLine = (key: string, label: string, x: Ref, kind: RefKind) => {
+        const state = stateOf(x)
+        const done = x.state === 'closed'
+        const room = columns - KEY - refNum - 1 - 1 - refState
+        const row = (
+          <Text wrap="truncate-end">
+            <Text color={done ? 'inactive' : kind === 'blocker' ? 'error' : 'suggestion'}>{`#${x.number}`.padStart(refNum)}</Text>
+            <Text color={done ? 'inactive' : undefined}>{` ${fit(x.title, room).padEnd(room)} `}</Text>
+            <Text
+              color={
+                done ? 'inactive' : x.blocked ? undefined : x.state === 'open' ? (kind === 'blocker' ? 'error' : 'success') : x.state === 'merged' ? 'merged' : 'inactive'
+              }
+              dimColor={x.blocked && !done}
+            >
+              {state.padStart(refState)}
+            </Text>
+          </Text>
+        )
         return keyed(
           key,
           label,
-          <>
-            <Text color={done ? 'inactive' : numColor}>{`#${x.number} `}</Text>
-            <Text wrap="truncate-end" color={done ? 'inactive' : undefined} strikethrough={done && label !== 'Pull requests'}>
-              {fit(x.title, columns - KEY - `#${x.number} `.length - state.length - 1)}
-            </Text>
-            <Box flexGrow={1} />
-            <Text color={state === 'open' ? (numColor === 'error' ? 'error' : 'success') : state === 'merged' ? 'merged' : 'inactive'}>
-              {` ${state}`}
-            </Text>
-          </>,
+          kind === 'pull' ? (
+            row
+          ) : (
+            <Button key={`follow-${x.number}`} plain onPress={() => followIssue($, e.requestId, i.number, x.number)}>
+              {row}
+            </Button>
+          ),
         )
       }
       const facts: RenderChildren[] = []
@@ -1113,9 +1160,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ),
         )
       }
-      ;(i.blockedBy ?? []).forEach((x, k) => facts.push(refLine(`blocked-${k}`, k === 0 ? 'Blocked by' : '', x, 'error')))
-      ;(i.blocks ?? []).forEach((x, k) => facts.push(refLine(`blocks-${k}`, k === 0 ? 'Blocks' : '', x, 'suggestion')))
-      ;(i.pulls ?? []).forEach((x, k) => facts.push(refLine(`pull-${k}`, k === 0 ? 'Pull requests' : '', x, 'suggestion')))
+      ;(i.blockedBy ?? []).forEach((x, k) => facts.push(refLine(`blocked-${k}`, k === 0 ? 'Blocked by' : '', x, 'blocker')))
+      ;(i.blocks ?? []).forEach((x, k) => facts.push(refLine(`blocks-${k}`, k === 0 ? 'Blocks' : '', x, 'blocks')))
+      ;(i.pulls ?? []).forEach((x, k) => facts.push(refLine(`pull-${k}`, k === 0 ? 'Pull requests' : '', x, 'pull')))
       ;(i.commits ?? []).slice(0, 3).forEach((c, k) =>
         facts.push(
           keyed(

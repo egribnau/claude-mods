@@ -656,22 +656,37 @@ test('blockers: none asked for an issue the open issues said nothing blocks; the
   ])
 })
 
-test('issue: with dependencies on, what blocks it and what it blocks, this repo only; off, not asked', async () => {
+test('issue: with dependencies on, what blocks it and what it blocks, this repo only, and whether an open blocker is blocked; off, not asked', async () => {
   const asked: Asked[] = []
   const route = (u: URL): Reply => {
     const p = u.pathname
     if (p === '/repos/boats/radar/issues/15') return { status: 200, body: issue(15, '2026-09-19T09:00:00Z', { blockedBy: 1 }) }
     if (p === '/repos/boats/radar/issues/15/timeline') return { status: 200, body: [] }
-    if (p === '/repos/boats/radar/issues/15/dependencies/blocked_by') return { status: 200, body: [dep(9, 'open'), dep(8, 'closed'), dep(7, 'open', 'boats/other')] }
+    if (p === '/repos/boats/radar/issues/15/dependencies/blocked_by')
+      return {
+        status: 200,
+        body: [
+          { ...dep(9, 'open'), issue_dependencies_summary: { blocked_by: 2 } },
+          dep(8, 'closed'),
+          dep(7, 'open', 'boats/other'),
+          { ...dep(6, 'open'), issue_dependencies_summary: undefined },
+        ],
+      }
+    if (p === '/repos/boats/radar/issues/6/dependencies/blocked_by') return { status: 200, body: [dep(5, 'closed')] }
     if (p === '/repos/boats/radar/issues/15/dependencies/blocking') return { status: 200, body: [dep(21, 'open')] }
     return NOT_FOUND
   }
   const t = github(fakeSend(route, asked), R, 't', null)
   const d = await t.issue(15, { time: false, deps: true, epics: false })
+  // #9's count says it is blocked; #6 has none, so its blockers are asked:
+  // only a closed one, so it is not.
   expect(d.blockedBy).toEqual([
-    { number: 9, title: 'Issue 9', state: 'open' },
+    { number: 9, title: 'Issue 9', state: 'open', blocked: true },
     { number: 8, title: 'Issue 8', state: 'closed' },
+    { number: 6, title: 'Issue 6', state: 'open', blocked: false },
   ])
+  expect(asked.filter(a => a.url.includes('/issues/9/dependencies')).length).toBe(0)
+  expect(asked.filter(a => a.url.includes('/issues/6/dependencies/blocked_by')).length).toBe(1)
   expect(d.blocks).toEqual([{ number: 21, title: 'Issue 21', state: 'open' }])
 
   asked.length = 0

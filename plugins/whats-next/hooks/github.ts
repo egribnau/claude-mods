@@ -251,6 +251,19 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
             .filter((c, k, all) => all.findIndex(d => d.sha === c.sha) === k)
             .reverse()
         : null
+      // Whether each open blocker is itself blocked by an open issue: from
+      // the count GitHub gives with it, else one request each; one that does
+      // not answer counts as not blocked.
+      const blockers = blockedBy
+        ? await Promise.all(
+            blockedBy.map(async d => {
+              if (d.state !== 'open') return toRef(d)
+              const count = d.issue_dependencies_summary?.blocked_by
+              const theirs = count === undefined ? ((await dependencies(d.number, 'blocked_by')) ?? []).filter(x => x.state === 'open').length : count
+              return { ...toRef(d), blocked: theirs > 0 }
+            }),
+          )
+        : null
       const commits: CommitRef[] | null = shas
         ? await Promise.all(
             shas.slice(0, 3).map(async c => {
@@ -272,7 +285,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         logged: null,
         estimate: null,
         assignees: (i.assignees ?? []).map(a => a.login),
-        blockedBy: blockedBy?.map(toRef) ?? null,
+        blockedBy: blockers,
         blocks: blocking?.map(toRef) ?? null,
         pulls,
         commits,
@@ -355,7 +368,13 @@ type RawIssue = {
 }
 
 // An issue that blocks another, or is blocked by it.
-type RawDependency = { number: number; title: string; state: string; repository?: { full_name: string } }
+type RawDependency = {
+  number: number
+  title: string
+  state: string
+  repository?: { full_name: string }
+  issue_dependencies_summary?: { blocked_by?: number } | null
+}
 const toRef = (d: RawDependency): Ref => ({ number: d.number, title: d.title, state: d.state })
 
 // How many open issues block each open issue, by the repo's API URL, from

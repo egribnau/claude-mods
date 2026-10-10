@@ -213,7 +213,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
           json = null
         }
         return { ok: res.ok, status: res.status, json }
-      }, n, features)
+      }, slug, n, features)
     },
 
     assign: (n, assignees) => patch(n, { assignees }),
@@ -279,6 +279,7 @@ type RawRef = {
   title: string
   state: string
   pull_request?: { merged?: boolean } | null
+  repository?: { full_name: string } | null
 }
 type RawIssue = RawRef & {
   html_url: string
@@ -342,7 +343,7 @@ function commitMessage(body: string): string {
 // issue itself must answer; each other part is left out when it fails.
 // What the repo turned off (time tracking, dependencies) is not asked for, and
 // its lines are left out. The timeline is read page by page, to its end.
-async function loadIssue(get: Get, n: number, features: Features): Promise<IssueDetail> {
+async function loadIssue(get: Get, slug: string, n: number, features: Features): Promise<IssueDetail> {
   const at = `/issues/${n}`
   const none = async (): Promise<Got | null> => null
   const [main, comments, deps, blocks, timeline, times] = await Promise.all([
@@ -373,6 +374,21 @@ async function loadIssue(get: Get, n: number, features: Features): Promise<Issue
         .reverse()
     : null
   const logged = list<RawTime>(times)
+  // Only this repo's issues: What's Next shows this repo's numbers only.
+  const ours = (got: Got | null) =>
+    list<RawRef>(got)?.filter(d => !d.repository || d.repository.full_name.toLowerCase() === slug.toLowerCase()) ?? null
+  const blockers = ours(deps)
+  // Whether each open blocker is itself blocked by an open issue, one
+  // request each; one that does not answer counts as not blocked.
+  const blockedBy = blockers
+    ? await Promise.all(
+        blockers.map(async d => {
+          if (d.state !== 'open') return ref(d)
+          const theirs = list<RawRef>(await get(`/issues/${d.number}/dependencies`)) ?? []
+          return { ...ref(d), blocked: theirs.some(x => x.state === 'open') }
+        }),
+      )
+    : null
 
   return {
     number: i.number,
@@ -391,8 +407,8 @@ async function loadIssue(get: Get, n: number, features: Features): Promise<Issue
     estimate: null,
     labels: (i.labels ?? []).map(l => ({ name: l.name, color: l.color })),
     assignees: (i.assignees ?? []).map(a => a.login),
-    blockedBy: list<RawRef>(deps)?.map(ref) ?? null,
-    blocks: list<RawRef>(blocks)?.map(ref) ?? null,
+    blockedBy,
+    blocks: ours(blocks)?.map(ref) ?? null,
     pulls,
     commits,
     lastComment: last ? { author: last.user?.login ?? 'someone', when: last.created_at, body: last.body ?? '' } : null,

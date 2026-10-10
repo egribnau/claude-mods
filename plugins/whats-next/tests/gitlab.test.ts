@@ -591,7 +591,7 @@ const link = (iid: number, kind: string, state = 'opened', project = 'boats/rada
   link_updated_at: '2026-09-02T00:00:00.000Z',
 })
 
-test('issue: with dependencies on, a fourth request for its links: what blocks it and what it blocks, this project only', async () => {
+test('issue: with dependencies on, a fourth request for its links: what blocks it and what it blocks, this project only, and whether an open blocker is blocked', async () => {
   const asked: Asked[] = []
   const links = [
     link(31, 'is_blocked_by'),
@@ -608,7 +608,9 @@ test('issue: with dependencies on, a fourth request for its links: what blocks i
           ? { status: 200, body: raw }
           : u.pathname === `${ISSUES}/12/links`
             ? { status: 200, body: links }
-            : { status: 200, body: [] },
+            : u.pathname === `${ISSUES}/31/links`
+              ? { status: 200, body: [link(40, 'is_blocked_by'), link(12, 'blocks')] }
+              : { status: 200, body: [] },
       asked,
     ),
     R,
@@ -617,12 +619,14 @@ test('issue: with dependencies on, a fourth request for its links: what blocks i
   )
   const got = await t.issue(12, { time: true, deps: true, epics: true })
   expect(got.blockedBy).toEqual([
-    { number: 31, title: 'Issue 31', state: 'open' },
+    { number: 31, title: 'Issue 31', state: 'open', blocked: true },
     { number: 32, title: 'Issue 32', state: 'closed' },
   ])
   expect(got.blocks).toEqual([{ number: 33, title: 'Issue 33', state: 'open' }])
   expect(asked.map(a => a.url)).toContain(`${PROJECT}/issues/12/links`)
-  expect(asked).toHaveLength(4)
+  // A fifth for the open blocker's own links; the closed one is not asked.
+  expect(asked.map(a => a.url)).toContain(`${PROJECT}/issues/31/links`)
+  expect(asked).toHaveLength(5)
 
   const refused = gitlab(fakeSend(u => (u.pathname === `${ISSUES}/12` ? { status: 200, body: raw } : { status: 500 })), R, 'glpat-x', null)
   const unknown = await refused.issue(12, { time: true, deps: true, epics: true })

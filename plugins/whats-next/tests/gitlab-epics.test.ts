@@ -534,16 +534,18 @@ const detailLinks = (h: string) =>
     link(h, 40, 'relates_to', { title: 'Related' }),
   ])
 
-test('issue: with deps, a fourth request for the links gives Blocked by and Blocks', async () => {
+test('issue: with deps, a fourth request for the links gives Blocked by and Blocks, a fifth whether the open blocker is blocked', async () => {
   const h = 'issue-on.example'
   const { r, project } = at(h)
   const asked: Asked[] = []
   const got = await gitlab(fakeSend(route({ links: { 33: detailLinks(h) } }), asked), r, 'glpat-x', null, 'Epic').issue(33, ON)
 
-  expect(asked).toHaveLength(4)
+  // A fifth for the open blocker's own links: is it blocked too?
+  expect(asked).toHaveLength(5)
   expect(asked.map(a => a.url)).toContain(`${project}/issues/33/links`)
+  expect(asked.map(a => a.url)).toContain(`${project}/issues/37/links`)
   expect(got.blockedBy).toEqual([
-    { number: 37, title: 'Token refresh on 401', state: 'open' },
+    { number: 37, title: 'Token refresh on 401', state: 'open', blocked: false },
     { number: 9, title: 'Old limits', state: 'closed' },
   ])
   expect(got.blocks).toEqual([{ number: 51, title: 'Rate limit settings page', state: 'open' }])

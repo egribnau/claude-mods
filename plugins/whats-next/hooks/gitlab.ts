@@ -274,6 +274,18 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       if (!res.ok) throw new Error(`#${n}: HTTP ${res.status}`)
       const i = JSON.parse(res.text) as RawIssue
       remember(i)
+      // Whether each open blocker is itself blocked by an open issue here,
+      // one request each; one that does not answer counts as not blocked.
+      const blockers = of('is_blocked_by')
+      const blockedBy = blockers
+        ? await Promise.all(
+            blockers.map(async b =>
+              b.state === 'open'
+                ? { ...b, blocked: ((await links(b.number, 'is_blocked_by')) ?? []).some(l => l.state === 'opened') }
+                : b,
+            ),
+          )
+        : null
       // GitLab's own notes (assigned, closed, labels) are no comments.
       const last = Array.isArray(notes) ? notes.find(c => c.system !== true) : undefined
       return {
@@ -293,7 +305,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
         estimate: i.time_stats?.time_estimate || null,
         labels: labels(i),
         assignees: (i.assignees ?? []).map(a => a.username),
-        blockedBy: of('is_blocked_by'),
+        blockedBy,
         blocks: of('blocks'),
         pulls: Array.isArray(merges) ? merges.map(toRef) : null,
         commits: null,
