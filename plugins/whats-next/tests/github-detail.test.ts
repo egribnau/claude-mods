@@ -384,7 +384,7 @@ test("github.com detail: lists that lag a change still show it at once, Assign m
   await ui.press({ key: 'assign' })
   let all = await texts(ui)
   expect(all).not.toContain('● #14 Issue 14')
-  expect(all).toContain('▸ #14 Issue 14')
+  expect(all).toContain('  #14 Issue 14')
 
   await ui.press({ key: 'pick-14' })
   await ui.press({ key: 'close' })

@@ -339,6 +339,58 @@ test('a passed due date is red', TOKEN, async ($, on) => {
   expect(due.props.color).toBe('error')
 })
 
+test('a due date within 7 days is amber, a later one dim; the milestone\'s due date follows the same rule', TOKEN, async ($, on) => {
+  const clock = world(on, FULL)
+  await clock.set(NOW)
+  const all = await found(await opened($))
+  expect(all.find(t => t.text === '14 Oct, in 5 days')?.props.color).toBe('warning')
+  // The milestone is due 31 Oct, 22 days off: dim.
+  const due = all.find(t => t.text === '(due 31 Oct)')
+  expect(due?.props.dimColor).toBe(true)
+  expect(due?.props.color).toBeUndefined()
+})
+
+test('a passed milestone due date is red in the heading', TOKEN, async ($, on) => {
+  const clock = world(on, FULL)
+  await clock.set(Date.parse('2026-11-02T12:00:00Z'))
+  const all = await found(await opened($))
+  expect(all.find(t => t.text === '(due 31 Oct)')?.props.color).toBe('error')
+})
+
+test('the branch is plain, a commit sha dim and its age reads 2d ago; open under Blocks is plain', TOKEN, async ($, on) => {
+  const clock = world(on, FULL)
+  await clock.set(NOW)
+  const all = await found(await opened($))
+  expect(all.find(t => t.text === '29-config-docs')?.props.color).toBeUndefined()
+  const sha = all.find(t => /^[0-9a-f]{7,} $/.test(t.text))
+  expect(sha?.props.dimColor).toBe(true)
+  expect(sha?.props.color).toBeUndefined()
+  expect(all.find(t => t.text === ' 2d ago')?.props.dimColor).toBe(true)
+  // Under Blocks, #31 is open: the word plain, not green.
+  const open = all.filter(t => t.text.trim() === 'open')
+  expect(open.length).toBeGreaterThan(0)
+  expect(open.some(t => t.props.color === 'success')).toBe(false)
+})
+
+test('the heading wraps over two lines at most; a longer title ends the second in …', TOKEN, async ($, on) => {
+  const title =
+    'Docs: config keys and the scopes each token needs on Forgejo, GitLab and GitHub, with examples for every host and every setting'
+  world(on, { ...FULL, '/issues/29': { ...ISSUE, title } })
+  const all = await texts(await opened($))
+  const at = all.findIndex(t => t.startsWith('#29 Docs: config keys'))
+  expect(at).toBeGreaterThan(-1)
+  const second = all.slice(at + 1).find(t => t !== '#29' && !t.startsWith('Docs:') && t.length > 0) ?? ''
+  expect(second.endsWith('…')).toBe(true)
+  expect(second.length).toBeLessThanOrEqual(60)
+  expect(all.some(t => t.includes('every setting'))).toBe(false)
+})
+
+test('a closed issue\'s number is grey in its heading', TOKEN, async ($, on) => {
+  world(on, { ...FULL, '/issues/29': { ...ISSUE, state: 'closed' } })
+  const all = await found(await opened($))
+  expect(all.find(t => t.text === '#29')?.props.color).toBe('inactive')
+})
+
 test('the lines with nothing to show are left out', TOKEN, async ($, on) => {
   // Only the issue answers; dependencies, timeline and times are off.
   world(on, { '/issues/29': { ...ISSUE, due_date: null, ref: '', labels: [], comments: 0 } })

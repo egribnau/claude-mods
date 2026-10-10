@@ -969,7 +969,7 @@ test("gitlab.com: What's next shows your issue and the free ones by iid", GL, as
   expect(all).toContain(rule('In progress (1)'))
   expect(all).toContain('● #12 Issue 12')
   expect(all).toContain(rule('Next'))
-  expect(all).toContain('▸ #14 Issue 14')
+  expect(all).toContain('  #14 Issue 14')
   expect(all).toContain(rule('Queue (1)'))
   expect(all).toContain('  #21 Issue 21')
   // Someone else's is left out; the global ids are never shown.
@@ -995,7 +995,7 @@ test('gitlab.com: the milestone picker starts on the one due first and narrows t
   let all = await texts(ui)
   expect(await pickerLabel(ui)).toBe('v1.2 ▾')
   expect(all).toContain(rule('In progress in v1.2 (1)'))
-  expect(all).toContain('▸ #14 Issue 14')
+  expect(all).toContain('  #14 Issue 14')
   expect(all.some(t => t.includes('#21'))).toBe(false)
 
   await ui.press({ key: 'milestone' })
@@ -1003,7 +1003,7 @@ test('gitlab.com: the milestone picker starts on the one due first and narrows t
   all = await texts(ui)
   expect(await pickerLabel(ui)).toBe('v1.3 ▾')
   expect(all).toContain(rule('In progress in v1.3 (0)'))
-  expect(all).toContain('▸ #21 Issue 21')
+  expect(all).toContain('  #21 Issue 21')
   expect(all.some(t => t.includes('#12') || t.includes('#14'))).toBe(false)
 })
 

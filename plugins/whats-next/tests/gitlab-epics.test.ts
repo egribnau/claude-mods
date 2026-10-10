@@ -729,7 +729,7 @@ test('GitLab Free: the Epics pane shows the epic in its milestone, x/y closed, i
 
   expect(opened.some(p => p.id === 'next-epics')).toBe(true)
   let all = await texts(epics)
-  expect(all.slice(0, 3)).toEqual(['── ', 'v1.2', ' · due 31 Oct · 2/7 closed '])
+  expect(all.slice(0, 5)).toEqual(['── ', 'v1.2', ' · ', 'due 31 Oct', ' · 2/7 closed '])
   // One of its four children is closed.
   expect(all).toContain(`#20 ${'Rate limits'.padEnd(29)} ▰▰▱▱▱▱▱▱   1/4`)
 
@@ -754,7 +754,7 @@ test("GitLab Free: What's next has no waiting rows, asks no links for them, and 
   // Both panes are open: the tab names What's next, so its title row does not.
   expect(all).toContain(rule('Next in v1.2'))
   // #33 is oldest: with no blocking links it is Next.
-  expect(all).toContain('▸ #33 Issue 33')
+  expect(all).toContain('  #33 Issue 33')
   expect(all.some(t => t.startsWith('⊘') || t.startsWith('blocked by') || t === 'Nothing ready')).toBe(false)
   expect(all.some(t => ERROR.test(t))).toBe(false)
   expect((await texts(epics)).some(t => ERROR.test(t))).toBe(false)
@@ -770,7 +770,7 @@ test("GitLab EE: an issue blocked by an is_blocked_by link waits in What's next"
 
   const all = await texts(next)
   expect(all).toContain(rule('Next in v1.2'))
-  expect(all).toContain('▸ #29 Settings screen rework')
+  expect(all).toContain('  #29 Settings screen rework')
   expect(all).toContain('⊘ #33 Issue 33')
   expect(all.some(t => t.startsWith('blocked by #29'))).toBe(true)
   expect(linkPaths(asked)).toContain('/api/v4/projects/boats%2Fradar/issues/33/links')

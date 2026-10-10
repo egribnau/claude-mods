@@ -15,6 +15,12 @@ export function dueText(iso: string, now: number): { text: string; passed: boole
   return { text: `${day(iso, now)}, ${when}`, passed: days < 0 }
 }
 
+// How a due date stands: passed, within 7 days, or later.
+export function dueSoon(iso: string, now: number): 'passed' | 'soon' | 'later' {
+  const days = Math.round((Date.parse(iso) - now) / 86400000)
+  return days < 0 ? 'passed' : days <= 7 ? 'soon' : 'later'
+}
+
 // Seconds as hours and minutes: 1h 20m, 45m.
 export function duration(seconds: number): string {
   const m = Math.round(seconds / 60)

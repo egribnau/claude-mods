@@ -527,7 +527,7 @@ test("github.com: What's next shows your issue and the free ones, pull requests 
   expect(all).toContain(rule('In progress (1)'))
   expect(all).toContain('● #12 Issue 12')
   expect(all).toContain(rule('Next'))
-  expect(all).toContain('▸ #14 Issue 14')
+  expect(all).toContain('  #14 Issue 14')
   expect(all).toContain(rule('Queue (1)'))
   expect(all).toContain('  #21 Issue 21')
   expect(all.some(t => t.includes('#15') || t.includes('#16'))).toBe(false)
@@ -551,14 +551,14 @@ test('github.com: the milestone picker starts on the one due first and narrows t
   let all = await texts(ui)
   const label = async () => ((await ui.find({ key: 'milestone' })) as { props: Record<string, unknown> } | undefined)?.props.label
   expect(await label()).toBe('v1.2 ▾')
-  expect(all).toContain('▸ #14 Issue 14')
+  expect(all).toContain('  #14 Issue 14')
   expect(all.some(t => t.includes('#21'))).toBe(false)
 
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-m:v1.3' })
   all = await texts(ui)
   expect(await label()).toBe('v1.3 ▾')
-  expect(all).toContain('▸ #21 Issue 21')
+  expect(all).toContain('  #21 Issue 21')
   expect(all.some(t => t.includes('#12') || t.includes('#14'))).toBe(false)
 })
 
@@ -715,7 +715,7 @@ test('github.com: an issue with an open blocker waits, the next free one is Next
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('▸ #21 Issue 21')
+  expect(all).toContain('  #21 Issue 21')
   expect(all).toContain('⊘ #14 Issue 14')
   expect(all.some(t => t.includes('#9'))).toBe(true)
   // #23, after Next, waits too, at the bottom of the Queue.
@@ -736,7 +736,7 @@ test('github.com: an issue whose blockers are all closed is pickable, with no re
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await texts(ui)).toContain('▸ #14 Issue 14')
+  expect(await texts(ui)).toContain('  #14 Issue 14')
   expect(asked?.some(a => a.url.includes('/dependencies/'))).toBe(false)
 })
 

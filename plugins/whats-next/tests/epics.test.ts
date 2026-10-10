@@ -308,7 +308,9 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
   expect(await texts(ui)).toEqual([
     '── ',
     'v1.2',
-    ' · due 31 Oct · 9/17 closed ',
+    ' · ',
+    'due 31 Oct',
+    ' · 9/17 closed ',
     '─'.repeat(50 - '── v1.2 · due 31 Oct · 9/17 closed '.length),
     '+ ',
     `#12 ${'Auth cleanup'.padEnd(29)} ▰▰▰▱▱▱▱▱   3/8`,
@@ -344,7 +346,7 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     '   5/5',
     '      ',
     'all children closed',
-    `   #3 ${'Project setup'.padEnd(29)} ${'✓ closed'.padStart(14)}`,
+    `   #3 ${'Project setup'.padEnd(29)} ${'✓'.padStart(14)}`,
     '─'.repeat(50),
     '3 epics · ',
     '3 yours',
@@ -352,7 +354,8 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
   const all = await nodes(ui)
   expect(all.find(t => t.text === 'v1.2')?.props.bold).toBe(true)
   expect(all.find(t => t.text === 'all children closed')?.props.color).toBe('warning')
-  expect(all.find(t => t.text.startsWith('   #3 '))?.props.dimColor).toBe(true)
+  // A closed epic is grey, not dim: grey means closed.
+  expect(all.find(t => t.text.startsWith('   #3 '))?.props.color).toBe('inactive')
   expect(all.find(t => t.text === '3 yours')?.props.color).toBe('success')
 })
 
@@ -376,7 +379,8 @@ test('the fold mark folds an epic open: its children with their marks, the close
   ])
   const found = await nodes(ui)
   expect(found.find(t => t.text === '● ')?.props.color).toBe('success')
-  expect(found.find(t => t.text.startsWith('  ⊘'))?.props.dimColor).toBe(true)
+  expect(found.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
+  expect(found.find(t => t.text === '#33 ')?.props.color).toBe('suggestion')
 
   await ui.press({ key: 'fold-20' })
   expect((await texts(ui)).some(t => t.includes('#37'))).toBe(false)
@@ -546,7 +550,7 @@ test('picking another milestone shows its epics', TOKEN, async ($, on) => {
   expect(await choices(ui)).toEqual([])
   expect(await label(ui)).toBe('v1.3 ▾')
   const all = await texts(ui)
-  expect(all.slice(0, 3)).toEqual(['── ', 'v1.3', ' · due 30 Nov · 0/6 closed '])
+  expect(all.slice(0, 5)).toEqual(['── ', 'v1.3', ' · ', 'due 30 Nov', ' · 0/6 closed '])
   expect(all.some(t => t.startsWith('#60 Scripting'))).toBe(true)
   expect(all.some(t => t.includes('#12'))).toBe(false)
 })

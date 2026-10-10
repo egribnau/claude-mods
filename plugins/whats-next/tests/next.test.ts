@@ -144,8 +144,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
       ' · ',
       'opened 2w ago',
       rule('Next'),
-      '▸ #29 Issue 29',
-      '▸ ',
+      '  #29 Issue 29',
+      '  ',
       '#29 ',
       '      ',
       'docs · opened 3w ago',
@@ -174,9 +174,11 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '⊘ #33 Issue 33',
       '⊘ ',
       '#33 ',
+      'Issue 33',
       '      ',
       'blocked by #37 · opened 4w ago',
-      'blocked by #37',
+      'blocked by ',
+      '#37',
       ' · ',
       'opened 4w ago',
       '─'.repeat(50),
@@ -187,18 +189,24 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('rows carry their section\'s mark, Next is bold and a blocked issue is dimmed', TOKEN, async ($, on) => {
+test('the mark says how a row stands for you; Next is bold; a blocked row dims its mark and title, not its number', TOKEN, async ($, on) => {
   world(on, REPO)
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
-  expect(all.find(t => t.text === '▸ #29 Issue 29')?.props.bold).toBe(true)
-  expect(all.find(t => t.text === '⊘ #33 Issue 33')?.props.dimColor).toBe(true)
-  expect(all.find(t => t.text === '  #37 Issue 37')?.props.dimColor).toBe(false)
-  // Each row starts with its section's mark: In progress, Next, blocked.
+  expect(all.find(t => t.text === '  #29 Issue 29')?.props.bold).toBe(true)
+  // Yours is green; Next has no mark of its own; blocked is dim, never grey.
   expect(all.find(t => t.text === '● ')?.props.color).toBe('success')
-  expect(all.find(t => t.text === '▸ ')?.props.color).toBe('warning')
-  expect(all.find(t => t.text === '⊘ ')?.props.color).toBe('inactive')
+  const marks = all.filter(t => t.text === '  ')
+  expect(marks.every(t => t.props.color === undefined)).toBe(true)
+  expect(all.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === '⊘ ')?.props.color).toBeUndefined()
+  expect(all.find(t => t.text === '#33 ')?.props.color).toBe('suggestion')
+  expect(all.find(t => t.text === 'Issue 33')?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === '  #37 Issue 37')?.props.dimColor).toBeUndefined()
+  // What blocks it: the numbers blue, the words dim.
+  expect(all.find(t => t.text === 'blocked by ')?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === '#37')?.props.color).toBe('suggestion')
 })
 
 type Found = { key: string; props: Record<string, unknown> }
@@ -237,10 +245,11 @@ test('the Queue holds 10 checked issues, a blocked one at the bottom, the rest c
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('▸  #1 Issue 1')
+  expect(all).toContain('   #1 Issue 1')
   expect(all).toContain(rule('Queue (11 of 24)'))
+  // Next, #1, has no mark of its own either: the Queue follows it.
   const free = all.filter(t => /^ {2} ?#\d+ Issue \d+$/.test(t)).map(t => Number(/#(\d+)/.exec(t)?.[1]))
-  expect(free).toEqual([2, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+  expect(free).toEqual([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12])
   expect(all).toContain('  and 13 more')
   expect(all.indexOf('⊘  #3 Issue 3')).toBeGreaterThan(all.indexOf('  and 13 more'))
   expect(all).toContain('25 open · ')
@@ -256,7 +265,7 @@ test('a second line too long for the pane is cut at its end, its indent kept', T
   })
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await texts(ui)).toContain('blocked by #20, #21, #22, #23, #24, #25')
+  expect((await texts(ui)).some(t => t.startsWith('blocked by #20, #21, #22, #23, #24, #25'))).toBe(true)
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
   const indents = boxes.filter(b => b.key === 'indent')
   expect(indents.length).toBeGreaterThan(0)
@@ -288,7 +297,7 @@ test('nothing assigned to you: says how to start', TOKEN, async ($, on) => {
 
   expect(all).toContain(rule('In progress (0)'))
   expect(all).toContain('Nothing in progress. Assign yourself an issue to start.')
-  expect(all).toContain('▸ #29 Issue 29')
+  expect(all).toContain('  #29 Issue 29')
   expect(all.some(t => t.startsWith('── Queue'))).toBe(false)
 })
 
@@ -469,7 +478,7 @@ test('long titles are cut to one line, and numbers of any width line up', TOKEN,
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 30 }, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('▸    #7 Issue 7')
+  expect(all).toContain('     #7 Issue 7')
   const long1000 = all.find(t => t.startsWith('  #1000 A title far too'))
   expect(long1000?.endsWith('…')).toBe(true)
   expect(long1000?.length).toBe(30)
@@ -494,7 +503,7 @@ test('starts on the milestone due first, and every section keeps to it', TOKEN, 
   expect(all).toContain(rule('In progress in v1.2 (1)'))
   expect(all).toContain(rule('Next in v1.2'))
   expect(all).toContain(rule('Queue in v1.2 (1)'))
-  expect(all).toContain('▸ #37 Issue 37')
+  expect(all).toContain('  #37 Issue 37')
   expect(all.some(t => t.includes('#29') || t.includes('#33'))).toBe(false)
   expect(all.slice(-2)).toEqual(['3 open · ', '1 yours'])
   // The milestone picked is not repeated under every issue.
@@ -512,7 +521,7 @@ test('picking No milestone shows the issues without one, and All shows every one
   let all = await texts(ui)
   expect(await pickerLabel(ui)).toBe('No milestone ▾')
   expect(all).toContain(rule('In progress without a milestone (0)'))
-  expect(all).toContain('▸ #29 Issue 29')
+  expect(all).toContain('  #29 Issue 29')
   expect(all).toContain('⊘ #33 Issue 33')
 
   await ui.press({ key: 'milestone' })

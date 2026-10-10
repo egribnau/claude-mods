@@ -7,7 +7,7 @@ import { detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetti
 import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
-import { day, dueText, duration, readable, wrap } from './issue'
+import { day, dueSoon, dueText, duration, readable, wrap } from './issue'
 import { changesSince, epicGroups, loadRepo, noteChange, whatsNext, type Memory } from './load'
 import { waitingText } from './next'
 import { message, type Send, type Tracker } from './tracker'
@@ -416,6 +416,13 @@ async function openUrl($: EngineInterface, url: string) {
 function fit(text: string, width: number): string {
   if (width <= 0) return ''
   return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`
+}
+
+// A due date's colour, an issue's or a milestone's: red once passed, amber
+// within 7 days, dim otherwise.
+function dueLook(iso: string, now: number): { color?: string; dimColor?: boolean } {
+  const soon = dueSoon(iso, now)
+  return soon === 'passed' ? { color: 'error' } : soon === 'soon' ? { color: 'warning' } : { dimColor: true }
 }
 
 // Changes issue `n` with `change` (`what` names it for a refusal), then
@@ -854,9 +861,21 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const issueRow = (i: RowIssue, o: RowLook) => {
     const lead = ' '.repeat(o.lead ?? 0)
     const opened = i.created ? `opened ${age(i.created, today)} ago` : ''
+    // What blocks it: its numbers blue, as issue numbers are, the words dim.
+    const blockers = (by: number[]) => [
+      <Text key="by" dimColor>
+        {'blocked by '}
+      </Text>,
+      ...by.flatMap((n, k) => [
+        ...(k > 0 ? [<Text key={`by-sep-${k}`} dimColor>{', '}</Text>] : []),
+        <Text key={`by-${n}`} color="suggestion">
+          {`#${n}`}
+        </Text>,
+      ]),
+    ]
     const parts: RenderChildren[] = (
       o.blockedBy && o.blockedBy.length > 0
-        ? [`blocked by ${o.blockedBy.map(n => `#${n}`).join(', ')}`, opened]
+        ? [blockers(o.blockedBy), opened]
         : [pk?.pick === `m:${i.milestone}` ? null : i.milestone, i.labels.length > 0 ? labelTexts(i.labels) : null, opened]
     ).filter(p => p !== null && p !== '')
     const facts = parts.flatMap((p, k) => [
@@ -870,14 +889,17 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         : (p as RenderChildren[])),
     ])
     const room = columns - (o.lead ?? 0) - 2 - o.numWidth
+    const title = o.who ? `${fit(i.title, room - o.who.length - 1).padEnd(room - o.who.length - 1)} ` : fit(i.title, room)
     return (
       <Box key={o.key} flexDirection="column" marginBottom={gap} flexShrink={0}>
         <Button key={o.buttonKey} plain autoFocus={o.autoFocus || undefined} onPress={o.onPress}>
-          <Text wrap="truncate-end" bold={o.bold} dimColor={o.dim}>
+          <Text wrap="truncate-end" bold={o.bold}>
             {lead}
-            <Text color={o.markColor}>{o.mark}</Text>
-            <Text color={o.dim ? 'inactive' : 'suggestion'}>{`${`#${i.number}`.padStart(o.numWidth - 1)} `}</Text>
-            {o.who ? `${fit(i.title, room - o.who.length - 1).padEnd(room - o.who.length - 1)} ` : fit(i.title, room)}
+            <Text color={o.markColor} dimColor={o.dim}>
+              {o.mark}
+            </Text>
+            <Text color="suggestion">{`${`#${i.number}`.padStart(o.numWidth - 1)} `}</Text>
+            {o.dim ? <Text dimColor>{title}</Text> : title}
             {o.who && <Text dimColor>{o.who}</Text>}
           </Text>
         </Button>
@@ -949,7 +971,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Box key="choices" flexDirection="column" flexShrink={0} paddingLeft={Math.max(0, columns - 20)}>
             {pk.options.map(o => (
               <Button key={`milestone-${o.value}`} plain onPress={() => pickMilestone($, o.value)}>
-                <Text bold={o.value === pk.pick}>{`${o.label.padEnd(14)}${o.due ? day(o.due, today) : ''}`.padEnd(20)}</Text>
+                <Text bold={o.value === pk.pick}>
+                  {o.label.padEnd(14)}
+                  {o.due ? <Text {...dueLook(o.due, today)}>{day(o.due, today).padEnd(6)}</Text> : ''.padEnd(6)}
+                </Text>
               </Button>
             ))}
           </Box>
@@ -1119,9 +1144,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Text color={done ? 'inactive' : undefined}>{` ${fit(x.title, room).padEnd(room)} `}</Text>
             <Text
               color={
-                done ? 'inactive' : x.blocked ? undefined : x.state === 'open' ? (kind === 'blocker' ? 'error' : 'success') : x.state === 'merged' ? 'merged' : 'inactive'
+                done ? 'inactive' : x.blocked ? undefined : x.state === 'open' ? (kind === 'blocker' ? 'error' : undefined) : x.state === 'merged' ? 'merged' : undefined
               }
-              dimColor={x.blocked && !done}
+              dimColor={!done && (x.blocked || (x.state !== 'open' && x.state !== 'merged'))}
             >
               {state.padStart(refState)}
             </Text>
@@ -1142,9 +1167,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const facts: RenderChildren[] = []
       if (i.due) {
         const due = dueText(i.due, now)
-        facts.push(keyed('due', 'Due', <Text color={due.passed ? 'error' : 'warning'}>{due.text}</Text>))
+        facts.push(keyed('due', 'Due', <Text {...dueLook(i.due, now)}>{due.text}</Text>))
       }
-      if (i.branch) facts.push(keyed('branch', 'Branch', <Text color="success">{i.branch}</Text>))
+      if (i.branch) facts.push(keyed('branch', 'Branch', <Text>{i.branch}</Text>))
       const time = i.logged
         ? `${duration(i.logged)} logged${i.estimate ? ` of ${duration(i.estimate)} estimated` : ''}`
         : i.estimate
@@ -1169,19 +1194,22 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             `commit-${k}`,
             k === 0 ? 'Commits' : '',
             <>
-              <Text color="warning">{`${c.sha} `}</Text>
-              <Text wrap="truncate-end">{fit(c.message, columns - KEY - c.sha.length - 1 - age(c.when, now).length - 1)}</Text>
+              <Text dimColor>{`${c.sha} `}</Text>
+              <Text wrap="truncate-end">{fit(c.message, columns - KEY - c.sha.length - 1 - `${age(c.when, now)} ago`.length - 1)}</Text>
               <Box flexGrow={1} />
-              <Text dimColor>{` ${age(c.when, now)}`}</Text>
+              <Text dimColor>{` ${age(c.when, now)} ago`}</Text>
             </>,
           ),
         ),
       )
 
-      const titleLines = wrap(`#${i.number} ${i.title}`, columns).slice(0, 2)
-      const milestone = i.milestone
-        ? `${i.milestone.title}${i.milestone.due ? ` (due ${day(i.milestone.due, now)})` : ''}`
-        : 'no milestone'
+      // The heading wraps over two lines at most; a longer title ends the
+      // second in ….
+      const headText = `#${i.number} ${i.title}`
+      const wrapped = wrap(headText, columns)
+      const titleLines =
+        wrapped.length > 2 ? [wrapped[0] ?? '', fit(headText.slice((wrapped[0] ?? '').length).trimStart(), columns)] : wrapped
+      const milestoneDue = i.milestone?.due ?? null
       const comments = `${i.comments} ${i.comments === 1 ? 'comment' : 'comments'}`
 
       // What is left for the description and the last comment; the rule
@@ -1206,11 +1234,16 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Box key="head" flexDirection="column" flexShrink={0}>
           {titleLines.map((t, k) => (
             <Text key={`t-${k}`} bold wrap="truncate-end">
-              {k === 0 ? <Text color="suggestion">{`#${i.number}`}</Text> : null}
+              {k === 0 ? <Text color={closed ? 'inactive' : 'suggestion'}>{`#${i.number}`}</Text> : null}
               {k === 0 ? t.slice(`#${i.number}`.length) : t}
             </Text>
           ))}
-          <Text dimColor wrap="truncate-end">{`${i.state} · ${milestone} · ${comments}`}</Text>
+          <Text wrap="truncate-end">
+            <Text dimColor>{`${i.state} · ${i.milestone ? i.milestone.title : 'no milestone'}`}</Text>
+            {milestoneDue && <Text dimColor>{' '}</Text>}
+            {milestoneDue && <Text {...dueLook(milestoneDue, now)}>{`(due ${day(milestoneDue, now)})`}</Text>}
+            <Text dimColor>{` · ${comments}`}</Text>
+          </Text>
           <Text dimColor wrap="truncate-end">{`opened ${age(i.created, now)} ago by ${i.author} · updated ${age(i.updated, now)} ago`}</Text>
         </Box>,
       )
@@ -1333,14 +1366,17 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     groups.forEach((g, gi) => {
       // The group's rule: the milestone's name bright, the rest dim.
       const name = g.title ?? 'No milestone'
-      const rest = g.title ? `${g.due ? ` · due ${day(g.due, now)}` : ''} · ${g.closed}/${g.total} closed ` : ' '
+      const due = g.title && g.due ? ` · due ${day(g.due, now)}` : ''
+      const rest = g.title ? ` · ${g.closed}/${g.total} closed ` : ' '
       rows.push(
         // After the first, an extra empty line sets the group apart from the last epic above.
         <Box key={`group-${gi}`} height={1} flexShrink={0} marginTop={gi > 0 ? 1 : 0}>
           <Text dimColor>{'── '}</Text>
           <Text bold>{name}</Text>
+          {due && <Text dimColor>{' · '}</Text>}
+          {due && g.due && <Text {...dueLook(g.due, now)}>{due.slice(3)}</Text>}
           <Text dimColor>{rest}</Text>
-          <Text dimColor wrap="truncate-end">{'─'.repeat(Math.max(0, columns - 3 - name.length - rest.length))}</Text>
+          <Text dimColor wrap="truncate-end">{'─'.repeat(Math.max(0, columns - 3 - name.length - due.length - rest.length))}</Text>
         </Box>,
       )
       for (const x of g.epics) {
@@ -1349,8 +1385,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           rows.push(
             <Box key={`epic-${x.number}`} flexShrink={0}>
               <Button key={`epic-${x.number}`} plain onPress={() => openIssue($, EPICS_PANE, x.number)}>
-                <Text wrap="truncate-end" dimColor>
-                  {`  ${num(x.number)}${fit(x.title, titleWidth).padEnd(titleWidth)} ${'✓ closed'.padStart(14)}`}
+                <Text wrap="truncate-end" color="inactive">
+                  {`  ${num(x.number)}${fit(x.title, titleWidth).padEnd(titleWidth)} ${'✓'.padStart(14)}`}
                 </Text>
               </Button>
             </Box>,
@@ -1462,9 +1498,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // the lines under them line up whatever the numbers. Numbers sit at
       // its right, their last digits in line.
       const numWidth = Math.max(...listed.map(i => `#${i.number}`.length), 0) + 1
-      // Each row starts with its section's mark, so it says where it
-      // belongs with its heading scrolled away; the Queue's is blank.
-      const MARK = { progress: ['● ', 'success'], next: ['▸ ', 'warning'], queue: ['  ', undefined], blocked: ['⊘ ', 'inactive'] } as const
+      // The mark says how a row stands for you: yours, blocked, or blank.
+      // Next has none of its own: it is bold and has the focus first.
+      const MARK = { progress: ['● ', 'success'], next: ['  ', undefined], queue: ['  ', undefined], blocked: ['⊘ ', undefined] } as const
       // Next is bold and has the focus first, so Enter opens it at once.
       const row = (i: IssueRow, section: keyof typeof MARK, blockedBy?: number[]) => {
         const [mark, markColor] = MARK[section]
