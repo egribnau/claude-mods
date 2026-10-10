@@ -55,7 +55,7 @@ const tracker = ($: EngineInterface, r: Repo): Tracker => {
   return forge?.kind === 'gitlab'
     ? gitlab(send($), r, gitlabToken(r.host).value, forge.version, configLabel)
     : forge?.kind === 'github'
-      ? github(send($), r, readToken('GitHub token', r.host).value, forge.version)
+      ? github(send($), r, readToken('GitHub token', r.host).value, forge.version, configLabel)
       : forgejo(send($), r, tokenFor(configTokens['Forgejo tokens'], r.host)?.value ?? null, configLabel)
 }
 
@@ -191,7 +191,7 @@ async function check($: EngineInterface): Promise<Repo | null> {
     forge.kind === 'gitlab'
       ? await gitlab(send($), r, tok.value, forge.version, configLabel).check()
       : forge.kind === 'github'
-        ? await github(send($), r, tok.value, forge.version).check()
+        ? await github(send($), r, tok.value, forge.version, configLabel).check()
         : await forgejo(send($), r, tok.value, configLabel, forge.version).check()
   await update($, version, () => c.version)
   await update($, setup, () => c.setup)

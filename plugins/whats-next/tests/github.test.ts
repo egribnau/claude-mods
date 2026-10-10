@@ -155,7 +155,7 @@ const READY = {
   login: 'alice',
   // Push rights, and a fine-grained token, whose permissions GitHub does not list.
   actions: { kind: 'unknown' },
-  features: { time: false, deps: true, epics: false },
+  features: { time: false, deps: true, epics: true },
 }
 
 test('check: ready in four requests, with a Bearer token and the API version', async () => {
@@ -259,34 +259,34 @@ test('check: without push rights read only, whatever the token', async () => {
 
 test('check: dependencies are on where the issues come with their summary, or on github.com with no issue to tell by', async () => {
   const withSummary = await github(fakeSend(checkRoute()), R, 't', null).check()
-  expect(withSummary.setup).toEqual(expect.objectContaining({ features: { time: false, deps: true, epics: false } }))
+  expect(withSummary.setup).toEqual(expect.objectContaining({ features: { time: false, deps: true, epics: true } }))
 
   const { issue_dependencies_summary: _, ...bare } = issue(14, '2026-09-18T09:00:00Z')
   const ghe = { ...R, host: 'github.example.com' }
   const without = await github(fakeSend(checkRoute({ issues: { status: 200, body: [bare] } }, '/api/v3')), ghe, 't', '3.12.4').check()
-  expect(without.setup).toEqual(expect.objectContaining({ features: { time: false, deps: false, epics: false } }))
+  expect(without.setup).toEqual(expect.objectContaining({ features: { time: false, deps: false, epics: true } }))
 
   // A pull request first, as the newest open item, says nothing: the issue after it tells.
   const prFirst = { issues: { status: 200, body: [issue(16, '2026-10-05T09:00:00Z', { pull: true }), bare] } }
   expect((await github(fakeSend(checkRoute(prFirst)), R, 't', null).check()).setup).toEqual(
-    expect.objectContaining({ features: { time: false, deps: false, epics: false } }),
+    expect.objectContaining({ features: { time: false, deps: false, epics: true } }),
   )
   const prThenIssue = { issues: { status: 200, body: [issue(16, '2026-10-05T09:00:00Z', { pull: true }), issue(14, '2026-09-18T09:00:00Z')] } }
   expect((await github(fakeSend(checkRoute(prThenIssue, '/api/v3')), ghe, 't', null).check()).setup).toEqual(
-    expect.objectContaining({ features: { time: false, deps: true, epics: false } }),
+    expect.objectContaining({ features: { time: false, deps: true, epics: true } }),
   )
   // Only pull requests open: no issue to tell by.
   const onlyPr = { issues: { status: 200, body: [issue(16, '2026-10-05T09:00:00Z', { pull: true })] } }
   expect((await github(fakeSend(checkRoute(onlyPr)), R, 't', null).check()).setup).toEqual(
-    expect.objectContaining({ features: { time: false, deps: true, epics: false } }),
+    expect.objectContaining({ features: { time: false, deps: true, epics: true } }),
   )
 
   const none = { issues: { status: 200, body: [] } }
   expect((await github(fakeSend(checkRoute(none)), R, 't', null).check()).setup).toEqual(
-    expect.objectContaining({ features: { time: false, deps: true, epics: false } }),
+    expect.objectContaining({ features: { time: false, deps: true, epics: true } }),
   )
   expect((await github(fakeSend(checkRoute(none, '/api/v3')), ghe, 't', null).check()).setup).toEqual(
-    expect.objectContaining({ features: { time: false, deps: false, epics: false } }),
+    expect.objectContaining({ features: { time: false, deps: false, epics: true } }),
   )
 })
 
@@ -454,6 +454,9 @@ type World = {
   milestones?: unknown[]
   // Each issue's blockers, as dependencies/blocked_by lists them.
   deps?: Record<number, unknown[]>
+  // The issues with the Epic label, and each epic's sub-issues.
+  epics?: unknown[]
+  subs?: Record<number, unknown[]>
   asked?: { url: string; auth: string | undefined }[]
 }
 
@@ -480,11 +483,14 @@ function world(on: On, w: World) {
     if (p === '/repos/boats/radar/milestones') return reply(200, w.milestones ?? [])
     const blockedBy = /^\/repos\/boats\/radar\/issues\/(\d+)\/dependencies\/blocked_by$/.exec(p)
     if (blockedBy) return reply(200, w.deps?.[Number(blockedBy[1])] ?? [])
+    const subs = /^\/repos\/boats\/radar\/issues\/(\d+)\/sub_issues$/.exec(p)
+    if (subs) return reply(200, w.subs?.[Number(subs[1])] ?? [])
     if (p === '/repos/boats/radar/issues') {
       if (u.searchParams.get('per_page') === '20') {
         const status = w.issuesStatus ?? 200
         return reply(status, status === 200 ? [] : { message: 'Resource not accessible by personal access token' })
       }
+      if (u.searchParams.has('labels')) return reply(200, w.epics ?? [])
       if (u.searchParams.has('assignee')) return reply(w.mineStatus ?? 200, w.mineStatus ? { message: 'Server Error' } : (w.mine ?? []))
       return reply(200, w.open ?? [])
     }
@@ -530,9 +536,10 @@ test("github.com: What's next shows your issue and the free ones, pull requests 
   expect(bug?.props.color).toBe(readable('d73a4a'))
   expect(all.slice(-4)).toEqual(['github.com/', 'boats/radar', '3 open · ', '1 yours'])
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14." }))
-  // Only GitHub's API host is asked, always with the token; no blockers or epics.
+  // Only GitHub's API host is asked, always with the token; nothing blocks
+  // these, so no dependencies are asked, and no epic has sub-issues to ask.
   expect(asked?.every(a => a.url.startsWith(`${BASE}/`) && a.auth === 'Bearer github_pat_x')).toBe(true)
-  expect(asked?.some(a => a.url.includes('labels=') || a.url.includes('/timeline') || a.url.includes('dependencies'))).toBe(false)
+  expect(asked?.some(a => a.url.includes('/timeline') || a.url.includes('dependencies') || a.url.includes('sub_issues'))).toBe(false)
 })
 
 test('github.com: the milestone picker starts on the one due first and narrows to another', GH, async ($, on) => {
@@ -712,4 +719,114 @@ test('github.com: an issue whose blockers are all closed is pickable, with no re
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await texts(ui)).toContain('▸ #14 Issue 14')
   expect(asked?.some(a => a.url.includes('/dependencies/'))).toBe(false)
+})
+
+// Epics
+
+const epicIssue = (number: number, title: string, state = 'open', labels = ['Epic'], due?: typeof V12) => ({
+  ...issue(number, '2026-08-01T09:00:00Z', { title, labels, milestone: due }),
+  state,
+})
+// A sub-issue as GitHub lists it, in this repo unless `repo` says otherwise.
+const sub = (number: number, extra: Extra & { state?: string; repo?: string } = {}) => {
+  const i = issue(number, '2026-09-10T09:00:00Z', extra)
+  const repo = extra.repo ?? 'boats/radar'
+  return { ...i, state: extra.state ?? 'open', html_url: `https://github.com/${repo}/issues/${number}` }
+}
+
+test('epics: open and closed issues with the Epic label, any case, pull requests left out', async () => {
+  const asked: Asked[] = []
+  const route = listRoute('/repos/boats/radar/issues', [
+    [
+      epicIssue(20, 'Radar sweep', 'open', ['epic'], V12),
+      epicIssue(19, 'Old sweep', 'closed', ['Epic']),
+      { ...epicIssue(18, 'A pull request', 'open', ['epic']), pull_request: { url: 'x' } },
+      // GitHub may answer a label it matched otherwise: only the label counts.
+      epicIssue(17, 'Not an epic', 'open', ['epic-ish']),
+    ],
+  ])
+  const found = await github(fakeSend(route, asked), R, 't', null, 'Epic').epics()
+  expect(found).toEqual([
+    { number: 20, title: 'Radar sweep', state: 'open', milestone: 'v1.2' },
+    { number: 19, title: 'Old sweep', state: 'closed', milestone: null },
+  ])
+  expect(asked.map(a => a.url)).toEqual([`${API}/issues?state=all&labels=Epic&per_page=100`])
+})
+
+test('children: sub-issues of this repo, yours, closed, and blocked asked only where GitHub says so', async () => {
+  const asked: Asked[] = []
+  const route = (u: URL): Reply => {
+    const p = u.pathname
+    if (p === '/repos/boats/radar/issues/20/sub_issues') {
+      return {
+        status: 200,
+        body: [
+          sub(12, { assignees: ['alice'], blockedBy: 1 }),
+          sub(14, { labels: ['bug'], milestone: V12 }),
+          sub(15, { blockedBy: 1 }),
+          sub(16, { assignees: ['jdoe'] }),
+          sub(22, { state: 'closed' }),
+          sub(24, { repo: 'boats/sonar' }),
+        ],
+      }
+    }
+    if (p === '/repos/boats/radar/issues/15/dependencies/blocked_by') return { status: 200, body: [dep(9, 'open'), dep(8, 'closed')] }
+    return NOT_FOUND
+  }
+  const kids = await github(fakeSend(route, asked), R, 't', null).children(20, 'alice')
+  expect(kids?.map(k => [k.number, k.state, k.mine, k.blocked, k.blockedBy, k.assignees])).toEqual([
+    [12, 'open', true, false, [], ['alice']],
+    [14, 'open', false, false, [], []],
+    [15, 'open', false, true, [9], []],
+    [16, 'open', false, false, [], ['jdoe']],
+    [22, 'closed', false, false, [], []],
+  ])
+  expect(kids?.[1]).toEqual(expect.objectContaining({ labels: [{ name: 'bug', color: 'd73a4a' }], milestone: 'v1.2', created: '2026-09-10T09:00:00Z' }))
+  // Yours is never checked; only #15 said open issues block it.
+  expect(asked.map(a => new URL(a.url).pathname)).toEqual([
+    '/repos/boats/radar/issues/20/sub_issues',
+    '/repos/boats/radar/issues/15/dependencies/blocked_by',
+  ])
+  expect(await github(fakeSend(() => NOT_FOUND), R, 't', null).children(20, 'alice')).toBeNull()
+})
+
+const EPICS_PANE = { ...PANE, requestId: 'next-epics', props: { ...PANE.props, title: 'Epics' } } as const
+
+test('github.com: an epic with its sub-issues in the Epics pane, with the bar and the tallies', GH, async ($, on) => {
+  const asked: World['asked'] = []
+  const clock = world(on, {
+    mine: [MINE],
+    open: OPEN,
+    milestones: [V12],
+    epics: [epicIssue(20, 'Radar sweep', 'open', ['Epic'], V12), epicIssue(19, 'Old sweep', 'closed', ['Epic'], V12)],
+    subs: {
+      20: [
+        sub(12, { assignees: ['alice'] }),
+        sub(14, { labels: ['bug'] }),
+        sub(15, { blockedBy: 1 }),
+        sub(16, { assignees: ['jdoe'] }),
+        sub(22, { state: 'closed' }),
+      ],
+    },
+    deps: { 15: [dep(9, 'open')] },
+    asked,
+  })
+  await clock.set(NOW)
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  let all = await texts(ui)
+  expect(all.some(t => t.includes('Radar sweep') && t.includes('1/5'))).toBe(true)
+  for (const want of ['1 yours', '1 blocked', '1 up for grabs']) expect(all).toContain(want)
+  expect(all.some(t => t.includes('Old sweep'))).toBe(true)
+
+  await ui.press({ key: 'fold-20' })
+  all = await texts(ui)
+  expect(all).toContain('  ● #12 Issue 12')
+  expect(all).toContain('    #14 Issue 14')
+  expect(all).toContain('  ⊘ #15 Issue 15')
+  expect(all).toContain('  ✓ 1 closed')
+  expect(all.some(t => /could not|error|HTTP/i.test(t))).toBe(false)
+  // The closed epic's sub-issues are never asked.
+  expect(asked?.filter(a => a.url.includes('/sub_issues')).map(a => new URL(a.url).pathname)).toEqual(['/repos/boats/radar/issues/20/sub_issues'])
 })

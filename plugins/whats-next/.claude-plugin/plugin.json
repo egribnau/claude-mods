@@ -1,6 +1,6 @@
 {
   "name": "whats-next",
-  "version": "0.48.0",
+  "version": "0.49.0",
   "description": "Your issues and what's next, from Forgejo, GitLab or GitHub, in a docked pane",
   "author": {
     "name": "Erwin Gribnau"
@@ -38,7 +38,7 @@
     "label": {
       "type": "string",
       "title": "Epic label",
-      "description": "The label that makes an issue an epic. Its children are the issues it depends on; on GitLab, the issues it links as related.",
+      "description": "The label that makes an issue an epic. Its children are the issues it depends on; on GitLab, the issues it links as related; on GitHub, its sub-issues.",
       "default": "epic"
     },
     "debug": {

@@ -1,15 +1,15 @@
-import type { Actions, CommitRef, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
+import type { Actions, CommitRef, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName } from './forge'
-import { message, type Checked, type OpenIssue, type Send, type Tracker } from './tracker'
+import { message, type Checked, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // GitHub behind the tracker the pane asks: every GitHub URL lives here.
 // `token` is from the GitHub token setting, null when it has none for the
 // host; `known`: the GitHub Enterprise version detection found, null for
-// github.com or when it would not say.
-// Blockers are GitHub's own "blocked by" relations. No epics yet: check
-// turns them off.
-export function github(send: Send, r: Repo, token: string | null, known: string | null): Tracker {
+// github.com or when it would not say; `label` is the Epic label setting.
+// Blockers are GitHub's own "blocked by" relations. An epic is an issue with
+// the Epic label; its children are its sub-issues.
+export function github(send: Send, r: Repo, token: string | null, known: string | null, label = 'epic'): Tracker {
   const slug = `${r.owner}/${r.name}`
   const dotCom = r.host.toLowerCase() === 'github.com'
   // github.com has an API host of its own; GitHub Enterprise answers under /api/v3.
@@ -134,7 +134,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         openIssues: total ?? repo.open_issues_count ?? 0,
         login: me,
         actions: mayAct(repo, scopes),
-        features: { time: false, deps, epics: false },
+        features: { time: false, deps, epics: true },
       })
     } catch (err) {
       return done({ kind: 'error', message: message(err) })
@@ -171,9 +171,48 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       return found.filter(isIssue).map(i => ({ ...toRow(i), assignees: (i.assignees ?? []).map(a => a.login) }))
     },
 
-    // Turned off by check: never asked.
-    epics: async () => [],
-    children: async () => null,
+    // GitHub matches labels without regard to case; so does What's Next.
+    async epics(): Promise<EpicRow[]> {
+      const found = await fetchAll<RawIssue>(`${api}/issues?state=all&labels=${encodeURIComponent(label)}`, 'epics')
+      return found
+        .filter(i => isIssue(i) && labelNames(i).some(l => l.toLowerCase() === label.toLowerCase()))
+        .map(i => ({ number: i.number, title: i.title, state: i.state === 'closed' ? 'closed' : 'open', milestone: i.milestone?.title ?? null }))
+    },
+
+    // An epic's children are its sub-issues in this repo. Each open one not
+    // assigned to `me` is checked for what blocks it, with a request only
+    // when it says open issues block it.
+    async children(n: number, me: string | null): Promise<EpicChild[] | null> {
+      const raw = await fetchAll<RawIssue>(`${api}/issues/${n}/sub_issues`, 'sub-issues').catch(() => null)
+      if (!raw) return null
+      const here = `https://${r.host}/${slug}/issues/`.toLowerCase()
+      return Promise.all(
+        raw
+          .filter(c => c.html_url.toLowerCase().startsWith(here))
+          .map(async (c): Promise<EpicChild> => {
+            const assignees = (c.assignees ?? []).map(a => a.login)
+            const open = c.state !== 'closed'
+            const mine = me !== null && assignees.includes(me)
+            const blockedBy =
+              open && !mine && (c.issue_dependencies_summary?.blocked_by ?? 0) > 0
+                ? ((await dependencies(c.number, 'blocked_by')) ?? []).filter(d => d.state === 'open').map(d => d.number)
+                : []
+            const row = toRow(c)
+            return {
+              number: c.number,
+              title: c.title,
+              state: open ? 'open' : 'closed',
+              assignees,
+              mine,
+              blocked: blockedBy.length > 0,
+              labels: row.labels,
+              milestone: row.milestone,
+              created: row.created,
+              blockedBy,
+            }
+          }),
+      )
+    },
 
     // No request for an issue the open issues said nothing blocks. Blockers
     // in other repos are left out: What's Next shows this repo's numbers.
@@ -324,6 +363,8 @@ const toRef = (d: RawDependency): Ref => ({ number: d.number, title: d.title, st
 const blockedByRepo = new Map<string, Map<number, number>>()
 
 const isIssue = (i: RawIssue) => i.pull_request === undefined
+
+const labelNames = (i: RawIssue) => (i.labels ?? []).map(l => (typeof l === 'string' ? l : l.name))
 
 const toRow = (i: RawIssue): IssueRow => ({
   number: i.number,
