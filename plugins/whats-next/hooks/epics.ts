@@ -58,7 +58,18 @@ export function forYou(t: Tally): { text: string; color?: string }[] {
   return parts
 }
 
-export type MilestoneRow = { title: string; due: string | null; closed: number; total: number }
+// A milestone, open or closed: its due date, how many of its issues are
+// closed of all, and for Milestone detail its text, its page on the forge
+// and when it closed (null when the forge does not say).
+export type MilestoneRow = {
+  title: string
+  due: string | null
+  closed: number
+  total: number
+  description?: string
+  url?: string
+  closedAt?: string | null
+}
 
 // Open milestones, due first; one without a due date after those with one.
 export const dueFirst = (milestones: readonly MilestoneRow[]) =>

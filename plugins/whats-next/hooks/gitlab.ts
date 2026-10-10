@@ -40,7 +40,16 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
   async function counted(m: RawMilestone): Promise<MilestoneRow> {
     const s = await fetchJson<RawStatistics>(`${project}/issues_statistics?milestone=${encodeURIComponent(m.title)}`)
     const counts = s?.statistics?.counts
-    return { title: m.title, due: m.due_date ?? null, closed: counts?.closed ?? 0, total: counts?.all ?? 0 }
+    return {
+      title: m.title,
+      due: m.due_date ?? null,
+      closed: counts?.closed ?? 0,
+      total: counts?.all ?? 0,
+      description: m.description ?? '',
+      url: m.web_url,
+      // GitLab does not say when a milestone closed.
+      closedAt: null,
+    }
   }
 
   // A change to issue `n`: null when GitLab took it, else why not.
@@ -356,7 +365,7 @@ type RawIssue = {
   // Both in seconds.
   time_stats?: { time_estimate?: number | null; total_time_spent?: number | null } | null
 }
-type RawMilestone = { title: string; due_date?: string | null; updated_at?: string }
+type RawMilestone = { title: string; description?: string | null; web_url: string; due_date?: string | null; updated_at?: string }
 type RawStatistics = { statistics?: { counts?: { all?: number; closed?: number } | null } | null }
 
 // An issue linked to another, as GitLab lists the links: labels as plain

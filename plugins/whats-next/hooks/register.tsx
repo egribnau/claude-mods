@@ -35,6 +35,7 @@ const epics = atom({ plugin: 'whats-next', key: 'epics' } as const, { kind: 'idl
 const unfolded = atom({ plugin: 'whats-next', key: 'unfolded' } as const, [])
 const milestones = atom({ plugin: 'whats-next', key: 'milestones' } as const, null)
 const milestonesUnfolded = atom({ plugin: 'whats-next', key: 'milestonesUnfolded' } as const, [])
+const milestoneOpen = atom({ plugin: 'whats-next', key: 'milestoneOpen' } as const, null)
 const msIssues = atom({ plugin: 'whats-next', key: 'milestoneIssues' } as const, {})
 const closedMilestones = atom({ plugin: 'whats-next', key: 'closedMilestones' } as const, [])
 const closedShown = atom({ plugin: 'whats-next', key: 'closedShown' } as const, false)
@@ -235,9 +236,12 @@ async function load($: EngineInterface, r: Repo) {
   await showPicker($)
   if (issuesError === null) await showNext($, r)
   if (epicsError === null) await showEpics($, r)
-  // The milestones folded open are asked again; folded ones cost nothing.
+  // The milestones folded open, and the one in its detail, are asked again;
+  // the rest cost nothing.
   await update($, msIssues, () => ({}))
-  for (const title of await read($, milestonesUnfolded)) await showMilestone($, r, title)
+  const asked = await read($, milestonesUnfolded)
+  const inDetail = await read($, milestoneOpen)
+  for (const title of inDetail === null || asked.includes(inDetail) ? asked : [...asked, inDetail]) await showMilestone($, r, title)
 }
 
 // The open issues of milestone `title`, for the Milestones pane.
@@ -255,6 +259,15 @@ async function foldMilestone($: EngineInterface, title: string) {
   await update($, milestonesUnfolded, () => (was.includes(title) ? was.filter(t => t !== title) : [...was, title]))
   const r = await read($, repo)
   if (!r || was.includes(title) || title in (await read($, msIssues))) return
+  await counted($, title, () => showMilestone($, r, title))
+}
+
+// Opens milestone `title` in its detail, or the list again for null. Its
+// issues are asked unless a fold already did.
+async function openMilestone($: EngineInterface, title: string | null) {
+  await update($, milestoneOpen, () => title)
+  const r = await read($, repo)
+  if (!r || title === null || title in (await read($, msIssues))) return
   await counted($, title, () => showMilestone($, r, title))
 }
 
@@ -1391,6 +1404,104 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const issuesOf = await read($, msIssues)
     const closedOnes = await read($, closedMilestones)
     const showClosed = await read($, closedShown)
+
+    // A milestone open: its detail in place of the list. One no longer
+    // listed after a Refresh shows the list.
+    const inDetail = await read($, milestoneOpen)
+    const shownMs = inDetail === null ? undefined : [...(known ?? []), ...closedOnes].find(m => m.title === inDetail)
+    if (shownMs) {
+      const isClosed = !(known ?? []).includes(shownMs)
+      const b = bar(shownMs.closed, shownMs.total)
+      const issues = issuesOf[shownMs.title]
+      const plain = (issues ?? []).filter(c => c.children === undefined)
+      const parts = issues ? forYou(tally(plain)) : []
+      // The heading wraps over two lines at most; a longer title ends the
+      // second in ….
+      const wrapped = wrap(shownMs.title, columns)
+      const titleLines = wrapped.length > 2 ? [wrapped[0] ?? '', fit(shownMs.title.slice((wrapped[0] ?? '').length).trimStart(), columns)] : wrapped
+      const when = shownMs.closedAt ? Math.round((now - Date.parse(shownMs.closedAt)) / 86400000) : null
+      const state = !isClosed
+        ? 'open'
+        : when === null
+          ? 'closed'
+          : `closed ${when === 0 ? 'today' : when === 1 ? 'yesterday' : `${when} days ago`}`
+      const due = shownMs.due ? `due ${isClosed ? day(shownMs.due, now) : dueText(shownMs.due, now).text}` : 'no due date'
+      const progress = `${shownMs.closed}/${shownMs.total} · ${shownMs.total > 0 && shownMs.closed === shownMs.total ? 'all closed' : `${shownMs.total - shownMs.closed} open`}`
+      // What is left for the description: top, gap, title, head, gap,
+      // progress, gap, button, gap, rule, and the bottom rule and line.
+      const fixed = 1 + 1 + titleLines.length + 1 + 1 + 2 + 1 + 1 + 1 + 1 + 2 + 1
+      const text = (shownMs.description ?? '').trim()
+      const descLines = text === '' ? [] : wrap(text, columns)
+      const descRoom = Math.max(2, height - fixed)
+      const descShown = descLines.length > descRoom ? descRoom - 1 : descLines.length
+      const body: RenderChildren[] = [
+        <Box key="head" flexDirection="column" flexShrink={0}>
+          {titleLines.map((t, k) => (
+            <Text key={`t-${k}`} bold wrap="truncate-end" color={isClosed ? 'inactive' : undefined}>
+              {t}
+            </Text>
+          ))}
+          <Text wrap="truncate-end">
+            <Text dimColor>{state}</Text>
+            <Text dimColor>{' · '}</Text>
+            <Text {...(shownMs.due && !isClosed ? dueLook(shownMs.due, now) : { dimColor: true })}>{due}</Text>
+          </Text>
+        </Box>,
+        <Box key="progress" flexDirection="column" flexShrink={0} marginTop={1}>
+          <Text wrap="truncate-end">
+            {b.filled && <Text color="success">{b.filled}</Text>}
+            {b.empty && <Text dimColor>{b.empty}</Text>}
+            <Text dimColor>{` ${progress}`}</Text>
+          </Text>
+          {issues === undefined && line('ms-loading', 'Loading the issues…', { dimColor: true })}
+          {issues === null && line('ms-unknown', 'issues unknown', { dimColor: true })}
+          {issues && (
+            <Text wrap="truncate-end">
+              {parts.flatMap((part, k) => [
+                ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
+                <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
+                  {part.text}
+                </Text>,
+              ])}
+            </Text>
+          )}
+        </Box>,
+      ]
+      // No Work on this, Assign or Close: a milestone is not work you pick up.
+      if (shownMs.url) {
+        const url = shownMs.url
+        body.push(
+          <Box key="actions" height={1} flexShrink={0} marginTop={1}>
+            <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, url)} />
+          </Box>,
+        )
+      }
+      body.push(<Box key="gap-desc" height={1} flexShrink={0} />, rule('desc', 'Description'))
+      if (descLines.length === 0) body.push(line('no-desc', 'No description.', { dimColor: true }))
+      descLines.slice(0, descShown).forEach((t, k) => body.push(line(`d-${k}`, t || ' ')))
+      if (descShown < descLines.length) {
+        body.push(line('d-more', `… ${descLines.length - descShown} more lines`, { dimColor: true }))
+      }
+      return (
+        <Box flexDirection="column" height={height}>
+          <Box key="title" height={1} flexShrink={0}>
+            <Button key="back" label={say(ICON.back, '← Milestones')} hotkey="b" onPress={() => openMilestone($, null)} />
+            <Box flexGrow={1} />
+            <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
+          </Box>
+          <Box key="gap" height={1} flexShrink={0} />
+          <Box key="detail" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+            {body}
+          </Box>
+          {fixedLine('where-rule', '─'.repeat(columns))}
+          <Box key="where" height={1} flexShrink={0}>
+            <Box flexGrow={1} />
+            {ours}
+          </Box>
+          {counter}
+        </Box>
+      )
+    }
     // Bar and count at the right of a row: 15 columns.
     const titleWidth = Math.max(0, columns - 2 - 15)
     // One number column for every milestone folded open, so all titles line up.
@@ -1411,10 +1522,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const parts = issues ? forYou(tally(plain)) : []
       if (isClosed) {
         rows.push(
-          <Box key={`ms-${ms.title}`} flexShrink={0}>
-            <Button key={`milestone-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
+          <Box key={`ms-${ms.title}`} height={1} flexShrink={0}>
+            <Button key={`ms-fold-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
+              <Text color="inactive">{open ? '− ' : '+ '}</Text>
+            </Button>
+            <Button key={`milestone-${ms.title}`} plain onPress={() => openMilestone($, ms.title)}>
               <Text wrap="truncate-end" color="inactive">
-                {`${open ? '− ' : '+ '}${fit(ms.title, titleWidth).padEnd(titleWidth)} ${'✓'.padStart(14)}`}
+                {`${fit(ms.title, titleWidth).padEnd(titleWidth)} ${'✓'.padStart(14)}`}
               </Text>
             </Button>
           </Box>,
@@ -1422,16 +1536,20 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       } else {
         rows.push(
           <Box key={`ms-${ms.title}`} flexDirection="column" flexShrink={0} marginBottom={open ? 0 : gap}>
-            {/* A milestone has no detail: the whole row folds. */}
-            <Button key={`milestone-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
-              <Text wrap="truncate-end">
+            {/* Two targets, as an epic's: the mark folds, the rest opens its detail. */}
+            <Box height={1}>
+              <Button key={`ms-fold-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
                 <Text>{open ? '− ' : '+ '}</Text>
-                <Text bold>{`${fit(ms.title, titleWidth).padEnd(titleWidth)} `}</Text>
-                {b.filled && <Text color="success">{b.filled}</Text>}
-                {b.empty && <Text dimColor>{b.empty}</Text>}
-                <Text dimColor>{`${ms.closed}/${ms.total}`.padStart(6)}</Text>
-              </Text>
-            </Button>
+              </Button>
+              <Button key={`milestone-${ms.title}`} plain onPress={() => openMilestone($, ms.title)}>
+                <Text wrap="truncate-end">
+                  <Text bold>{`${fit(ms.title, titleWidth).padEnd(titleWidth)} `}</Text>
+                  {b.filled && <Text color="success">{b.filled}</Text>}
+                  {b.empty && <Text dimColor>{b.empty}</Text>}
+                  <Text dimColor>{`${ms.closed}/${ms.total}`.padStart(6)}</Text>
+                </Text>
+              </Button>
+            </Box>
             <Box>
               <Text>{'  '}</Text>
               <Text {...(ms.due ? dueLook(ms.due, now) : { dimColor: true })}>{due}</Text>

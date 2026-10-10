@@ -151,9 +151,18 @@ export type Epics =
   | { kind: 'ok'; groups: EpicGroup[]; openEpics: number }
   | { kind: 'error'; message: string }
 
-// An open milestone as the Milestones pane shows it: its due date and how
-// many of its issues are closed, of all.
-export type Milestone = { title: string; due: string | null; closed: number; total: number }
+// A milestone as the Milestones pane shows it: its due date and how many of
+// its issues are closed, of all; for its detail, its text, its page on the
+// forge and when it closed (null when the forge does not say).
+export type Milestone = {
+  title: string
+  due: string | null
+  closed: number
+  total: number
+  description?: string
+  url?: string
+  closedAt?: string | null
+}
 
 // The milestone picker both panes share: what it offers (a milestone's option
 // carries its due date) and which is picked: `m:<title>`, `none` or `all`.
@@ -194,6 +203,9 @@ declare module 'claude-code' {
       milestones: Milestone[] | null
       // The milestones folded open in the Milestones pane, by title.
       milestonesUnfolded: string[]
+      // The milestone open in its detail on the Milestones pane, by title;
+      // null shows the list.
+      milestoneOpen: string | null
       // The last milestones closed, newest first, and whether Closed is folded open.
       closedMilestones: Milestone[]
       closedShown: boolean

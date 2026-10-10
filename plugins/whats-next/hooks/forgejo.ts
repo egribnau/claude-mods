@@ -14,6 +14,17 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
   const headers = { Authorization: `token ${token ?? ''}`, Accept: 'application/json' }
   const get = (url: string) => send(url, { method: 'GET', headers })
 
+  // Forgejo's milestones carry no page URL: it is built from the id.
+  const toMilestone = (m: RawMilestone): MilestoneRow => ({
+    title: m.title,
+    due: m.due_on,
+    closed: m.closed_issues,
+    total: m.open_issues + m.closed_issues,
+    description: m.description ?? '',
+    url: `https://${r.host}/${slug}/milestone/${m.id}`,
+    closedAt: m.closed_at ?? null,
+  })
+
   // Every page of a list, 50 at a time; a page that fails names `what`.
   async function fetchAll<T>(url: string, what: string): Promise<T[]> {
     const found: T[] = []
@@ -145,7 +156,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
 
     async milestones(): Promise<MilestoneRow[]> {
       const raw = await fetchAll<RawMilestone>(`${api}/milestones?state=open`, 'milestones').catch(() => [])
-      return raw.map(m => ({ title: m.title, due: m.due_on, closed: m.closed_issues, total: m.open_issues + m.closed_issues }))
+      return raw.map(toMilestone)
     },
 
     async closedMilestones(n: number): Promise<MilestoneRow[]> {
@@ -153,7 +164,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
       return raw
         .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))
         .slice(0, n)
-        .map(m => ({ title: m.title, due: m.due_on, closed: m.closed_issues, total: m.open_issues + m.closed_issues }))
+        .map(toMilestone)
     },
 
     // Forgejo's search covers every repo the token sees, so it is narrowed
@@ -275,7 +286,15 @@ type RawDep = {
   created_at?: string
 }
 type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string }[] | null }
-type RawMilestone = { title: string; due_on: string | null; open_issues: number; closed_issues: number; closed_at?: string | null }
+type RawMilestone = {
+  id: number
+  title: string
+  description?: string | null
+  due_on: string | null
+  open_issues: number
+  closed_issues: number
+  closed_at?: string | null
+}
 
 // What one GET answered: its status and, when it was ok, its parsed body.
 export type Got = { ok: boolean; status: number; json: unknown }
