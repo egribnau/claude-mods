@@ -195,8 +195,8 @@ test('each open milestone is a folded row, soonest due first, those without a du
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   const t = await texts(pane)
   expect(await rowKeys(pane)).toEqual(['milestone-v0.3.0', 'milestone-GitHub', 'milestone-Jira', 'milestone-Panes'])
-  expect(t).toContain('due 13 Oct, in 4 days')
-  expect(t).toContain('due 30 Nov, in 52 days')
+  expect(t).toContain('due 13 Oct')
+  expect(t).toContain('due 30 Nov')
   expect(t).toContain('no due date')
   expect(t).toContain(' · 8 open')
 })
@@ -213,15 +213,27 @@ test('a milestone row has the bar and closed/total from its own counts', TOKEN, 
   expect(t.slice(i + 1, i + 5)).toEqual([`${'GitHub'.padEnd(33)} `, '▰▰▰▰', '▱▱▱▱', '  9/17'])
 })
 
+test('the line under a milestone is one line, cut at its end on a narrow pane', TOKEN, async ($, on) => {
+  const clock = world(on, WORK)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'ms-fold-GitHub' })
+  await pane.press({ key: 'ms-fold-GitHub' })
+  const n = await nodes(pane)
+  const under = n.find(x => x.text === '  due 13 Oct · 8 open · 1 yours · 1 blocked · 1 up for grabs')
+  expect(under?.props.wrap).toBe('truncate-end')
+})
+
 test('a due date is red once passed and amber within 7 days', TOKEN, async ($, on) => {
   const clock = world(on, REPO)
   await clock.set(NOW)
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   const n = await nodes(pane)
-  expect(n.find(x => x.text === 'due 1 Oct, 8 days ago')?.props.color).toBe('error')
-  expect(n.find(x => x.text === 'due 13 Oct, in 4 days')?.props.color).toBe('warning')
-  expect(n.find(x => x.text === 'due 30 Nov, in 52 days')?.props.dimColor).toBe(true)
+  expect(n.find(x => x.text === 'due 1 Oct')?.props.color).toBe('error')
+  expect(n.find(x => x.text === 'due 13 Oct')?.props.color).toBe('warning')
+  expect(n.find(x => x.text === 'due 30 Nov')?.props.dimColor).toBe(true)
 })
 
 test('the fold mark folds a milestone open and shut', TOKEN, async ($, on) => {
@@ -390,7 +402,17 @@ test('epics in a milestone come first, with their bar and what there is for you 
   expect(rows[0]).toBe(`    #29 ${'GitHub support'.padEnd(27)} ▰▰▱▱▱▱▱▱   1/4`)
   expect(rows.slice(1).map(x => x.slice(2, 7))).toEqual(['● #30', '  #33', '○ #36', '⊘ #40'])
   const at = t.indexOf('▱▱▱▱▱▱')
-  expect(t.slice(at + 1, at + 6)).toEqual(['   1/4', '        ', '1 yours', ' · ', '1 up for grabs'])
+  expect(t.slice(at + 1, at + 6)).toEqual(['   1/4', '        1 yours · 1 up for grabs', '1 yours', ' · ', '1 up for grabs'])
+})
+
+test("the line under an epic in a milestone is one line, cut at its end", TOKEN, async ($, on) => {
+  const clock = world(on, EPIC_WORK)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'ms-fold-GitHub' })
+  const n = await nodes(pane)
+  expect(n.find(x => x.text === '        1 yours · 1 up for grabs')?.props.wrap).toBe('truncate-end')
 })
 
 test("an epic is not blocked by its own children, and opens its detail", TOKEN, async ($, on) => {

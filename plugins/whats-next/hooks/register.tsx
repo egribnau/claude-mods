@@ -463,12 +463,29 @@ function fit(text: string, width: number): string {
   return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`
 }
 
-// A due date's colour, an issue's or a milestone's: red once passed, amber
-// within 7 days, dim otherwise.
+// A due date's colour: red once passed, amber within 7 days, dim otherwise.
 function dueLook(iso: string, now: number): { color?: string; dimColor?: boolean } {
   const soon = dueSoon(iso, now)
   return soon === 'passed' ? { color: 'error' } : soon === 'soon' ? { color: 'warning' } : { dimColor: true }
 }
+
+// How a place shows its due date (DRAWING.md): the short form (30 Oct) or
+// the long one (30 Oct, in 19 days); `bare` leaves out the word due, `done`
+// draws it dim, `orNone` says no due date where there is none, and `width`
+// pads it to a column.
+type DueShown = { form: 'short' | 'long'; bare?: boolean; done?: boolean; orNone?: boolean; width?: number }
+
+// The words of a due date as `o` shows it; null where nothing is shown.
+function dueWords(iso: string | null, now: number, o: DueShown): string | null {
+  const words = iso
+    ? `${o.bare ? '' : 'due '}${o.form === 'short' ? day(iso, now) : dueText(iso, now).text}`
+    : o.orNone
+      ? 'no due date'
+      : null
+  if (words === null) return o.width ? ''.padEnd(o.width) : null
+  return o.width ? words.padEnd(o.width) : words
+}
+
 
 // Changes issue `n` with `change` (`what` names it for a refusal), then
 // reads it again with What's next and the epics, so the change shows
@@ -738,6 +755,16 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const say = (icon: string, words: string) => (icons === 'icons' ? icon : words)
   const columns = e.props.bodyColumns
 
+  // A due date, drawn: every due date in the panes is drawn by this.
+  const dueDate = (key: string, iso: string | null, now: number, o: DueShown): RenderChildren | null => {
+    const words = dueWords(iso, now, o)
+    if (words === null) return null
+    return (
+      <Text key={key} {...(iso && !o.done ? dueLook(iso, now) : { dimColor: true })}>
+        {words}
+      </Text>
+    )
+  }
   const line = (key: string, text: string, props: Record<string, unknown> = {}) => (
     <Text key={key} wrap="truncate-end" {...props}>
       {text}
@@ -1022,7 +1049,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               <Button key={`milestone-${o.value}`} plain onPress={() => pickMilestone($, o.value)}>
                 <Text bold={o.value === pk.pick}>
                   {o.label.padEnd(14)}
-                  {o.due ? <Text {...dueLook(o.due, today)}>{day(o.due, today).padEnd(6)}</Text> : ''.padEnd(6)}
+                  {dueDate('due', o.due ?? null, today, { form: 'short', bare: true, width: 6 })}
                 </Text>
               </Button>
             ))}
@@ -1215,8 +1242,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       }
       const facts: RenderChildren[] = []
       if (i.due) {
-        const due = dueText(i.due, now)
-        facts.push(keyed('due', 'Due', <Text {...dueLook(i.due, now)}>{due.text}</Text>))
+        facts.push(keyed('due', 'Due', dueDate('due-date', i.due, now, { form: 'long', bare: true })))
       }
       if (i.branch) facts.push(keyed('branch', 'Branch', <Text>{i.branch}</Text>))
       const time = i.logged
@@ -1289,8 +1315,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ))}
           <Text wrap="truncate-end">
             <Text dimColor>{`${i.state} · ${i.milestone ? i.milestone.title : 'no milestone'}`}</Text>
-            {milestoneDue && <Text dimColor>{' '}</Text>}
-            {milestoneDue && <Text {...dueLook(milestoneDue, now)}>{`(due ${day(milestoneDue, now)})`}</Text>}
+            {milestoneDue && <Text dimColor>{' · '}</Text>}
+            {dueDate('milestone-due', milestoneDue, now, { form: 'short' })}
             <Text dimColor>{` · ${comments}`}</Text>
           </Text>
           <Text dimColor wrap="truncate-end">{`opened ${age(i.created, now)} ago by ${i.author} · updated ${age(i.updated, now)} ago`}</Text>
@@ -1425,7 +1451,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         : when === null
           ? 'closed'
           : `closed ${when === 0 ? 'today' : when === 1 ? 'yesterday' : `${when} days ago`}`
-      const due = shownMs.due ? `due ${isClosed ? day(shownMs.due, now) : dueText(shownMs.due, now).text}` : 'no due date'
       const progress = `${shownMs.closed}/${shownMs.total} · ${shownMs.total > 0 && shownMs.closed === shownMs.total ? 'all closed' : `${shownMs.total - shownMs.closed} open`}`
       // What is left for the description: top, gap, title, head, gap,
       // progress, gap, button, gap, rule, and the bottom rule and line.
@@ -1444,7 +1469,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Text wrap="truncate-end">
             <Text dimColor>{state}</Text>
             <Text dimColor>{' · '}</Text>
-            <Text {...(shownMs.due && !isClosed ? dueLook(shownMs.due, now) : { dimColor: true })}>{due}</Text>
+            {dueDate('due', shownMs.due, now, { form: isClosed ? 'short' : 'long', done: isClosed, orNone: true })}
           </Text>
         </Box>,
         <Box key="progress" flexDirection="column" flexShrink={0} marginTop={1}>
@@ -1512,7 +1537,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const draw = (ms: Milestone, isClosed: boolean) => {
       const b = bar(ms.closed, ms.total)
       const open = folds.has(ms.title)
-      const due = ms.due ? `due ${dueText(ms.due, now).text}` : 'no due date'
       // Once asked: its open issues, its epics first, and what there is for
       // you among the issues that are not epics.
       const issues = issuesOf[ms.title]
@@ -1550,19 +1574,20 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 </Text>
               </Button>
             </Box>
-            <Box>
-              <Text>{'  '}</Text>
-              <Text {...(ms.due ? dueLook(ms.due, now) : { dimColor: true })}>{due}</Text>
-              <Text dimColor wrap="truncate-end">{` · ${ms.total - ms.closed} open`}</Text>
+            {/* One line, cut once at its end on a narrow pane. */}
+            <Text key={`under-${ms.title}`} wrap="truncate-end">
+              {'  '}
+              {dueDate('due', ms.due, now, { form: 'short', orNone: true })}
+              <Text dimColor>{` · ${ms.total - ms.closed} open`}</Text>
               {parts.flatMap((part, k) => [
                 <Text key={`sep-${k}`} dimColor>
                   {' · '}
                 </Text>,
-                <Text key={`part-${k}`} color={part.color} dimColor={!part.color} wrap="truncate-end">
+                <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
                   {part.text}
                 </Text>,
               ])}
-            </Box>
+            </Text>
           </Box>,
         )
       }
@@ -1593,15 +1618,15 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 <Text dimColor>{`${t.closed}/${t.total}`.padStart(6)}</Text>
               </Text>
             </Button>
-            <Box>
-              <Text>{' '.repeat(4 + numWidth)}</Text>
+            <Text key={`under-${c.number}`} wrap="truncate-end">
+              {' '.repeat(4 + numWidth)}
               {summary({ number: c.number, title: c.title, state: 'open', children: c.children ?? null }).flatMap((part, k) => [
                 ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
                 <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
                   {part.text}
                 </Text>,
               ])}
-            </Box>
+            </Text>
           </Box>,
         )
       }
@@ -1702,7 +1727,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     groups.forEach((g, gi) => {
       // The group's rule: the milestone's name bright, the rest dim.
       const name = g.title ?? 'No milestone'
-      const due = g.title && g.due ? ` · due ${day(g.due, now)}` : ''
+      const dueShown = g.title ? dueWords(g.due, now, { form: 'short' }) : null
+      const due = dueShown ? ` · ${dueShown}` : ''
       const rest = g.title ? ` · ${g.closed}/${g.total} closed ` : ' '
       rows.push(
         // After the first, an extra empty line sets the group apart from the last epic above.
@@ -1710,7 +1736,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Text dimColor>{'── '}</Text>
           <Text bold>{name}</Text>
           {due && <Text dimColor>{' · '}</Text>}
-          {due && g.due && <Text {...dueLook(g.due, now)}>{due.slice(3)}</Text>}
+          {due && dueDate('due', g.due, now, { form: 'short' })}
           <Text dimColor>{rest}</Text>
           <Text dimColor wrap="truncate-end">{'─'.repeat(Math.max(0, columns - 3 - name.length - due.length - rest.length))}</Text>
         </Box>,

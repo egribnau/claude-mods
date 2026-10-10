@@ -191,7 +191,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(all).not.toContain("What's next")
     for (const want of [
       '#29 Docs: config keys',
-      'open · v0.3.0 (due 31 Oct) · 2 comments',
+      'open · v0.3.0 · due 31 Oct · 2 comments',
       'opened 3w ago by alice · updated 2d ago',
       '14 Oct, in 5 days',
       '29-config-docs',
@@ -345,7 +345,7 @@ test('a due date within 7 days is amber, a later one dim; the milestone\'s due d
   const all = await found(await opened($))
   expect(all.find(t => t.text === '14 Oct, in 5 days')?.props.color).toBe('warning')
   // The milestone is due 31 Oct, 22 days off: dim.
-  const due = all.find(t => t.text === '(due 31 Oct)')
+  const due = all.find(t => t.text === 'due 31 Oct')
   expect(due?.props.dimColor).toBe(true)
   expect(due?.props.color).toBeUndefined()
 })
@@ -354,7 +354,7 @@ test('a passed milestone due date is red in the heading', TOKEN, async ($, on) =
   const clock = world(on, FULL)
   await clock.set(Date.parse('2026-11-02T12:00:00Z'))
   const all = await found(await opened($))
-  expect(all.find(t => t.text === '(due 31 Oct)')?.props.color).toBe('error')
+  expect(all.find(t => t.text === 'due 31 Oct')?.props.color).toBe('error')
 })
 
 test('the branch is plain, a commit sha dim and its age reads 2d ago; open under Blocks is plain', TOKEN, async ($, on) => {
