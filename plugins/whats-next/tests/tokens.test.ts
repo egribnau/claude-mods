@@ -185,6 +185,38 @@ test('Close: a refusal that echoes the request shows without the token', GH, asy
   noToken(said)
 })
 
+test('Last closed: an issue whose title names the token, and the requests for where you work, carry no token', GH, async ($, on) => {
+  const closed = { ...issue(41, `Rotate ${TOKEN}`), state: 'closed', closed_at: '2026-10-09T10:00:00Z' }
+  const asked: { url: string; headers: Record<string, string> }[] = []
+  const said = world(on, {
+    answers: {
+      '/repos/boats/radar/issues': (url, h) => {
+        asked.push({ url, headers: h })
+        const u = new URL(url)
+        return u.searchParams.get('state') === 'closed' ? json(200, [closed]) : json(200, u.searchParams.has('assignee') ? [] : [issue(14)])
+      },
+      '/repos/boats/radar/issues/41/parent': (url, h) => {
+        asked.push({ url, headers: h })
+        return json(200, { ...issue(30, `Epic ${TOKEN}`), state: 'open' })
+      },
+    },
+  })
+  const ui = await shown($)
+  said.push(...(await texts(ui)))
+
+  expect(said).toContain('✓ #41 Rotate <token>')
+  expect(said.some(s => s.startsWith('── Last closed') && s.includes('in epic #30'))).toBe(true)
+  // The new requests go to GitHub's API host with the token, and say it nowhere else.
+  expect(asked.some(a => new URL(a.url).searchParams.get('state') === 'closed')).toBe(true)
+  expect(asked.some(a => a.url.endsWith('/issues/41/parent'))).toBe(true)
+  for (const a of asked) {
+    expect(new URL(a.url).host).toBe('api.github.com')
+    expect(a.url).not.toContain(TOKEN)
+    expect(a.headers.Authorization).toBe(`Bearer ${TOKEN}`)
+  }
+  noToken(said)
+})
+
 test('Work on this: the prompt it drafts, its toast and the Debug counter carry no token, even from an issue that names it', GH, async ($, on) => {
   const said = world(on, { title: `Rotate ${TOKEN}` })
   const ui = await shown($)

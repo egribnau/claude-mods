@@ -27,8 +27,9 @@ it stands for you: green is for yours alone (#45, built 0.65.0).
 The number stays blue whatever the mark. Yours wins over blocked; blocked
 wins over with others, whose name still shows at the right. What's next
 shows no `◌`: it leaves issues with others out. Next and the Queue show
-`○`, as available does everywhere; Next is also bold and has the focus
-first.
+`○`, as available does everywhere; Next is also bold. Nothing has the
+focus when the pane opens, Next neither: an inverted bold row was too
+heavy (#57, built 0.67.0).
 
 This table is for an issue row. Where the fold mark sits, what it folds,
 and the fold marks of epics and milestones at the top and of section rules:
@@ -90,29 +91,32 @@ blocks that show are joined by ` · `, dim, in one text cut once at its end.
 |---|---|---|---|
 | 0 | shown above | the issue is already in the tree higher up | `shown above`, dim; the line is this alone |
 | 1 | blocked by | it stands blocked: open blockers, and not yours | `⊘ #24, #22`: the mark dim, the numbers blue, commas dim (#45, built 0.66.0) |
+| 1b | unblocks | open issues wait on it, as far as is known (GitHub's lists count them; on Forgejo and GitLab what the blocker checks found) | `↦ 2`: the bar is this issue, the arrow what it opens; dim, a count, never the numbers (#57, built 0.67.0) |
 | 2 | due date | it has one (Forgejo and GitLab send it with the lists; GitHub issues have none) | `⧗ 14 Oct`, short form, red once passed, amber within 7 days, dim otherwise (DRAWING.md, Due dates; #45, built 0.66.0) |
-| 3 | milestone | it has one, and the list is not that milestone's (the picker shows it, or the row is under it) | `v0.3.0`, dim |
+| 3 | milestone | it has one, and the list is not that milestone's (the milestone filter is set to it, or the row is under it) | `v0.3.0`, dim |
 | 4 | labels | it has any | each in its colour, commas dim |
 | 5 | age | always | `✎ 3d`: the pencil (U+270E, one cell), how long ago it was opened, dim (#45, built 0.66.0) |
 
 Not on the line: when it was updated, how many comments; the detail
-shows both (#45). What the issue
-blocks stays off this line: arrows for blocked by and blocks (`⊘`/`→`,
-or `←`/`→`) are for the issue detail, #62. Whom it is with
+shows both (#45). What the issue blocks is only counted here, `↦ 2`
+(#57, built 0.67.0); which issues those are is for the issue detail, #62.
+The epic an issue is in is not on the line: where it says why a row
+is where it is, the rule says it (DRAWING.md, Rules). Whom it is with
 is at the right of the title line, not here. They are not buttons: the
-row opens its own issue. Compact drops the empty line between rows.
+row opens its own issue. Compact drops the empty line between rows, not
+the one that ends a section (DRAWING.md, Rules).
 
 An age is minutes, hours, days, weeks, months or years (`5m`, `3h`, `6d`,
 `3w`, `4mo`, `2y`), from `age`: on the facts line after `✎`, elsewhere
 followed by `ago`.
 
-Drawn by: `issueRow`, its parts through `partsLine`; the due date by `duePart`; labels by `labelTexts`.
+Drawn by: `issueRow`, its parts through `partsLine`; the due date by `duePart`; labels by `labelTexts`; unblocks from `waiting`, which reads What's next's count, so a pane knows it as far as What's next does.
 
 | Where | Drawn as |
 |---|---|
-| What's next, every row | blocked by, due date, milestone (not in a picked one), labels, age |
+| What's next, every row | blocked by, unblocks, due date, milestone (not when the milestone filter is set to one), labels, age |
 | Epics, a child | the same |
-| Milestones, an issue under a milestone | blocked by, due date, labels, age |
+| Milestones, an issue under a milestone | blocked by, unblocks, due date, labels, age |
 | Issue detail, under the heading | `open · v0.3.0 · ⧗ 30 Oct · 3 comments`, then `opened 3d ago by jdoe · updated 1d ago` |
 
 ## The for-you line

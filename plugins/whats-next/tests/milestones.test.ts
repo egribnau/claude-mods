@@ -602,6 +602,18 @@ test('a Closed rule after the open milestones, folded, with how many', TOKEN, as
   expect(await rowKeys(pane)).not.toContain('milestone-GitLab')
 })
 
+for (const compact of ['on', 'off'] as const) {
+  test(`one empty line before the Closed rule, with Compact ${compact}`, { options: { token: 'secret', icons: 'text', compact } }, async ($, on) => {
+    const clock = world(on, CLOSED)
+    await clock.set(NOW)
+    await $.command.run(RUN)
+    const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+    const boxes = (await pane.findAll({ type: 'Box' })) as unknown as { key?: string; props: Record<string, unknown> }[]
+    // Without Compact the last milestone's row leaves the empty line; with it, a line of its own.
+    expect(boxes.some(b => b.key === 'end-closed' && b.props.height === 1)).toBe(compact === 'on')
+  })
+}
+
 test('unfolded, Closed lists the last three closed, newest first, each a grey row ending in ✓', TOKEN, async ($, on) => {
   const clock = world(on, CLOSED)
   await clock.set(NOW)

@@ -1,7 +1,7 @@
 import type { Actions, CommitRef, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName } from './forge'
-import { message, type Checked, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
+import { message, type Checked, type Closed, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // Forgejo, or Gitea, behind the tracker the pane asks: every Forgejo URL
 // lives here. `token` is from the Forgejo tokens setting, null when it has
@@ -13,6 +13,12 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
   const api = `${base}/repos/${slug}`
   const headers = { Authorization: `token ${token ?? ''}`, Accept: 'application/json' }
   const get = (url: string) => send(url, { method: 'GET', headers })
+  // Whether the repo has dependencies, remembered for where you work.
+  const depsAt = (repo: RawRepo) => {
+    const on = repo.internal_tracker?.enable_issue_dependencies !== false
+    depsByRepo.set(api, on)
+    return on
+  }
 
   // Forgejo's milestones carry no page URL: it is built from the id.
   const toMilestone = (m: RawMilestone): MilestoneRow => ({
@@ -51,6 +57,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
   }
 
   const deps = (n: number) => fetchJson<RawDep[]>(`${api}/issues/${n}/dependencies`)
+  const isEpic = (i: { labels?: { name: string }[] | null }) => (i.labels ?? []).some(l => l.name === label)
 
   // A change to issue `n`: null when Forgejo took it, else why not.
   const patch = (n: number, body: object) => patchAt(`${api}/issues/${n}`, body)
@@ -97,7 +104,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
             actions: await mayAct(login, repo.permissions?.push === true),
             features: {
               time: repo.internal_tracker?.enable_time_tracker !== false,
-              deps: repo.internal_tracker?.enable_issue_dependencies !== false,
+              deps: depsAt(repo),
               epics: true,
             },
           }
@@ -198,6 +205,34 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
       return raw ? raw.filter(d => d.state === 'open').map(d => d.number) : null
     },
 
+    // An epic's children are dependencies: with those off, there are none to ask.
+    async members(n: number): Promise<number[] | null> {
+      if (depsByRepo.get(api) === false) return null
+      const raw = await deps(n)
+      return raw ? raw.filter(c => !isEpic(c)).map(c => c.number) : null
+    },
+
+    // The epics that depend on it: an open one holds it as a child.
+    async parentOf(n: number): Promise<number | null> {
+      if (depsByRepo.get(api) === false) return null
+      const raw = await fetchJson<RawDep[]>(`${api}/issues/${n}/blocks?limit=50&page=1`)
+      return raw?.find(e => e.state !== 'closed' && isEpic(e))?.number ?? null
+    },
+
+    // An epic that depends on another waits for it: no epic is a child.
+    nested: false,
+
+    // Forgejo lists newest first by when an issue was opened, not closed:
+    // the first page is read and the latest closed of it taken. Forgejo
+    // filters by a milestone's name, not by none.
+    async lastClosed(within, me): Promise<Closed | null> {
+      const milestone = typeof within === 'object' ? `&milestones=${encodeURIComponent(within.title)}` : ''
+      const raw = await fetchJson<RawListed[]>(
+        `${api}/issues?state=closed&type=issues&assigned_by=${encodeURIComponent(me)}${milestone}&limit=50&page=1`,
+      )
+      return latest((raw ?? []).filter(i => within !== 'none' || i.milestone === null))
+    },
+
     // An epic's children are the issues it depends on, other epics left
     // out: an epic that depends on another waits for it, as any issue does.
     async children(n: number, me: string | null): Promise<EpicChild[] | null> {
@@ -205,7 +240,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
       if (!raw) return null
       return Promise.all(
         raw
-          .filter(c => !(c.labels ?? []).some(l => l.name === label))
+          .filter(c => !isEpic(c))
           .map(async (c): Promise<EpicChild> => {
           const assignees = (c.assignees ?? []).map(a => a.login)
           const open = c.state !== 'closed'
@@ -249,6 +284,10 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
   }
 }
 
+// Whether each repo has dependencies, by its API URL: what check found,
+// so the calls for where you work ask nothing when they are off.
+const depsByRepo = new Map<string, boolean>()
+
 // Whether a Forgejo or Gitea version is 1.19 or newer, the first with
 // scoped tokens. Forgejo numbers from 7.0 on are all newer.
 function supported(version: string): boolean {
@@ -267,6 +306,8 @@ type RawListed = {
   number: number
   title: string
   created_at: string
+  updated_at?: string
+  closed_at?: string | null
   due_date?: string | null
   html_url: string
   body: string | null
@@ -285,7 +326,16 @@ const toRow = (i: RawListed): IssueRow => ({
   due: i.due_date ?? null,
   url: i.html_url,
   body: i.body ?? '',
+  updated: i.updated_at ?? i.created_at,
 })
+
+// The one of `found` that closed last, as Last closed needs it.
+function latest(found: RawListed[]): Closed | null {
+  const last = found
+    .filter(i => i.closed_at)
+    .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))[0]
+  return last ? { number: last.number, title: last.title, closed: last.closed_at ?? '', milestone: last.milestone?.title ?? null } : null
+}
 
 type RawDep = {
   number: number

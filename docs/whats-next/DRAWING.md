@@ -69,7 +69,7 @@ joins the table:
 | Milestone detail | `9/17 · 8 open`, or `9/17 · all closed` |
 | Milestone detail, the Issues rule | `− Issues · 8 open` |
 | Milestones pane, the Closed rule | `+ Closed · 3` |
-| What's next, section rules | `In progress · 2`, `Queue · 3 of 14`; Next has none |
+| What's next, section rules | `In progress · 2`; Next and the Queue have none: what the Queue's limit leaves out is the line `and 14 more` under its rows (#57, built 0.67.0) |
 | Bottom lines | What's next `14 open · 2 yours`; Epics `4 epics · 2 yours`; Milestones `3 milestones · 20 open` |
 
 When every issue or child is closed, it says `all closed`, in every place
@@ -87,12 +87,23 @@ right edge. One look everywhere (#45, built 0.65.0):
   dim (a count, a due date in its own colour), then the line, dim
 - a rule that folds starts with its `+`/`−`, plain, in place of `──`: the
   whole rule is one target (Rows that fold)
+- exactly one empty line before every rule but the first in a pane, with
+  Compact on or off: Compact drops the empty line between rows, never the
+  one before a rule. A row leaves that line only without Compact, a closed
+  row and a closing line never, a paragraph always; what is missing is
+  added, never a second one (`sectionEnd`, and in What's next `pushRule`;
+  #57, built 0.67.0). The places: What's next's sections and Last closed,
+  the groups in Epics, Closed in Milestones, the milestone detail's Issues
+  and Description, the issue detail's Description and Last comment
 - a count follows the name after ` · `: `In progress · 2`,
-  `Queue · 3 of 14`, `Closed · 3`, `Issues · 8 open`
+  `Closed · 3`, `Issues · 8 open`; never `n of m`, which reads as
+  closed of all (#57, built 0.67.0)
 
 | Where | Drawn as |
 |---|---|
-| What's next | `── In progress · 2`, `── Next`, `── Queue · 3 of 14` |
+| What's next | `── In progress · 2`, `── Next`, `── Queue`; never what the milestone filter is set to, which the filter already shows (#57, built 0.67.0) |
+| What's next, by scope | `── Next · in epic #30`; the Queue split by scope, `── Queue · in epic #30`, `── Queue · in v1.2` (the milestone of the issue you work from, only with the milestone filter on All), then `── Queue` for the rest, no count: the scope said once, in the rule, never on a row; the epic number blue (#57, built 0.67.0) |
+| What's next, above the bottom line | `── Last closed · 2h ago · in epic #30`: how long ago, then its epic, the number blue; no epic part when it was in none. One grey closed row under it, `✓` in the mark column, that opens its detail; nothing closed by you in the milestone filter, no rule and no row (#57, built 0.67.0) |
 | Epics, a milestone's group | `── v0.3.0 · ⧗ 30 Oct · 9/17 closed` |
 | Milestones, closed milestones | `+ Closed · 3` |
 | Milestone detail | `− Issues · 8 open`, `+ Description` or `── Description` |
@@ -126,7 +137,7 @@ Two forms:
 
 `⧗ ` (U+29D7, the hourglass, one cell, plain Unicode; not the `⌛` emoji,
 which is two cells) goes before it, in the date's own colour, except where
-the place already says what it is: the picker's column of dates and the
+the place already says what it is: the milestone filter's column of dates and the
 issue detail's Due line (#45, built 0.66.0). `⚑` is kept for git tags,
 later.
 
@@ -135,7 +146,7 @@ same rule and joins the table:
 
 | Where | Form | Drawn as |
 |---|---|---|
-| Milestone picker (What's next, Epics) | short | `30 Oct`, no word before it |
+| Milestone filter (What's next, Epics) | short | `30 Oct`, no word before it |
 | Epics pane, a milestone's rule | short | `· ⧗ 30 Oct` |
 | Milestones pane, the line under a milestone | short | `⧗ 30 Oct`, first on the line |
 | Epics and Milestones, the line under a folded epic | short | `⧗ 14 Oct`, the epic's own due date from the lists, first on the line (#45, built 0.66.0) |

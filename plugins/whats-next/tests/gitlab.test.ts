@@ -406,6 +406,7 @@ test('mine: your open issues by iid, with label colours without #, and their own
       due: '2026-10-14',
       url: 'https://gitlab.com/boats/radar/-/issues/12',
       body: 'Body of 12',
+      updated: expect.any(String),
     },
   ])
   const u = new URL(asked[0]?.url ?? '')
@@ -435,6 +436,7 @@ test('open: every open issue by iid with its assignees, a plain string label wit
     due: null,
     url: 'https://gitlab.com/boats/radar/-/issues/14',
     body: '',
+    updated: expect.any(String),
     assignees: [],
   })
   expect(got[1]?.assignees).toEqual(['jdoe', 'mvos'])
@@ -991,9 +993,10 @@ test("gitlab.com: What's next shows your issue and the free ones by iid", GL, as
   expect(all[0]).toBe("What's next")
   expect(all).toContain(rule('In progress · 1'))
   expect(all).toContain('● #12 Issue 12')
-  expect(all).toContain(rule('Next'))
+  // You work in v1.2, where #12 is yours: Next is taken from there.
+  expect(all).toContain(rule('Next · in v1.2'))
   expect(all).toContain('○ #14 Issue 14')
-  expect(all).toContain(rule('Queue · 1'))
+  expect(all).toContain(rule('Queue'))
   expect(all).toContain('○ #21 Issue 21')
   // Someone else's is left out; the global ids are never shown.
   expect(all.some(t => t.includes('#15'))).toBe(false)
@@ -1002,22 +1005,23 @@ test("gitlab.com: What's next shows your issue and the free ones by iid", GL, as
   const bug = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'bug')
   expect(bug?.props.color).toBe('#d9534f')
   expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
-  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14." }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14, in v1.2." }))
 })
 
 type Btn = { key: string; props: Record<string, unknown> }
 const pickerLabel = async (ui: { find: (q: { key: string }) => Promise<unknown> }) =>
   ((await ui.find({ key: 'milestone' })) as Btn | undefined)?.props.label
 
-test('gitlab.com: the milestone picker starts on the one due first and narrows to another', GL, async ($, on) => {
+test('gitlab.com: the milestone filter starts where you work and narrows to another', GL, async ($, on) => {
   const clock = world(on, { mine: [MINE], open: OPEN, milestones: [V13, V12] })
   await clock.set(NOW)
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   let all = await texts(ui)
+  // #12, yours, is in v1.2.
   expect(await pickerLabel(ui)).toBe('v1.2 ▾')
-  expect(all).toContain(rule('In progress in v1.2 · 1'))
+  expect(all).toContain(rule('In progress · 1'))
   expect(all).toContain('○ #14 Issue 14')
   expect(all.some(t => t.includes('#21'))).toBe(false)
 
@@ -1025,7 +1029,7 @@ test('gitlab.com: the milestone picker starts on the one due first and narrows t
   await ui.press({ key: 'milestone-m:v1.3' })
   all = await texts(ui)
   expect(await pickerLabel(ui)).toBe('v1.3 ▾')
-  expect(all).toContain(rule('In progress in v1.3 · 0'))
+  expect(all).toContain(rule('In progress · 0'))
   expect(all).toContain('○ #21 Issue 21')
   expect(all.some(t => t.includes('#12') || t.includes('#14'))).toBe(false)
 })
@@ -1097,8 +1101,9 @@ test('gitlab.com Free: an epic with its related issues in the Epics pane, no blo
   expect(all.some(t => t.includes('#23') || t.includes('#24'))).toBe(false)
   expect(all.some(t => /could not|error|HTTP/i.test(t))).toBe(false)
   expect((await ui.findAll({ type: 'Text' })).find(t => t.text === 'bug')?.props.color).toBe('#d9534f')
-  // Only the epic's links: no child is asked what blocks it.
-  expect(asked?.filter(a => a.url.endsWith('/links')).map(a => a.url)).toEqual([`${PROJECT}/issues/20/links`])
+  // Only the epic's links, and your #12's, for the epic you work in: no
+  // child is asked what blocks it.
+  expect(asked?.filter(a => a.url.endsWith('/links')).map(a => a.url)).toEqual([`${PROJECT}/issues/12/links`, `${PROJECT}/issues/20/links`])
 })
 
 test('closedMilestones: the last changed first, at most n, counts asked for those only', async () => {
@@ -1152,4 +1157,49 @@ test("a parent group's milestone says which group it is, from its page; refused 
     'it belongs to the group boats/crew, and your token may not change it',
   )
   expect(await refused.closeMilestone({ title: 'v1.2', due: null, closed: 0, total: 0, id: 4410102 }, true)).toBe('403 Forbidden')
+})
+
+// Where you work (docs/whats-next/ORDERING.md): the requests behind it.
+
+test('lastClosed: assigned to you, closed, by the milestone title or None, the latest closed of the first page', async () => {
+  const asked: Asked[] = []
+  const closed = (n: number, at: string) => ({ ...issue(n, '2026-09-01T00:00:00.000Z', { milestone: V12 }), state: 'closed', closed_at: at })
+  // One page, no page number asked.
+  const page = [closed(40, '2026-10-07T10:00:00.000Z'), closed(41, '2026-10-09T10:00:00.000Z')]
+  const route = (u: URL): Reply => (u.pathname === ISSUES ? { status: 200, body: page } : { status: 404, body: { message: '404 Not Found' } })
+  const t = gitlab(fakeSend(route, asked), R, 'glpat-x', null)
+  expect(await t.lastClosed({ title: 'v1.2', due: null, closed: 0, total: 0 }, 'alice')).toEqual({
+    number: 41,
+    title: 'Issue 41',
+    closed: '2026-10-09T10:00:00.000Z',
+    milestone: 'v1.2',
+  })
+  const u = new URL(asked[0]?.url ?? '')
+  expect(u.searchParams.get('state')).toBe('closed')
+  expect(u.searchParams.get('scope')).toBe('assigned_to_me')
+  expect(u.searchParams.get('milestone')).toBe('v1.2')
+  expect(u.searchParams.get('order_by')).toBe('updated_at')
+  await t.lastClosed('none', 'alice')
+  expect(new URL(asked[1]?.url ?? '').searchParams.get('milestone')).toBe('None')
+  expect(asked).toHaveLength(2)
+})
+
+test("parentOf: the open epic linked as related; members: the related issues that are not epics; epics don't nest", async () => {
+  const linked = (iid: number, labels: string[], state = 'opened') => ({
+    ...issue(iid, '2026-09-01T00:00:00.000Z'),
+    labels,
+    state,
+    link_type: 'relates_to',
+  })
+  const route = (u: URL): Reply =>
+    u.pathname.endsWith('/issues/41/links')
+      ? { status: 200, body: [linked(29, ['epic'], 'closed'), linked(30, ['Epic']), linked(44, [])] }
+      : u.pathname.endsWith('/issues/30/links')
+        ? { status: 200, body: [linked(41, []), linked(43, ['bug']), linked(31, ['epic'])] }
+        : { status: 404, body: { message: '404 Not Found' } }
+  const t = gitlab(fakeSend(route), R, 'glpat-x', null)
+  expect(await t.parentOf(41)).toBe(30)
+  expect(await t.members(30)).toEqual([41, 43])
+  expect(await t.parentOf(99)).toBe(null)
+  expect(t.nested).toBe(false)
 })

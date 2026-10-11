@@ -53,22 +53,51 @@ export type IssueRow = {
   url: string
   // Its description, as written.
   body: string
+  // When it last changed: of your issues in progress, the one updated last
+  // is the one you work from (docs/whats-next/ORDERING.md).
+  updated: string
+  // How many open issues wait on it, where the list says so (GitHub);
+  // elsewhere the blocker checks count it.
+  unblocks?: number
 }
+
+// The issue you closed last within the milestone filter, as Last closed
+// shows it: when it closed and the epic it was in.
+export type LastClosed = { number: number; title: string; closed: string; milestone: string | null; epic: number | null }
+
+// Where an issue of Next or the Queue was taken from: the epic you work in
+// (or a parent of it), the milestone of the issue you work from, or null
+// for the rest of the milestone filter.
+export type Scope = { kind: 'epic'; number: number } | { kind: 'milestone'; title: string }
 
 // An unassigned issue found blocked on the way to Next: `by` names its open
 // dependencies.
 export type BlockedRow = { issue: IssueRow; by: number[] }
 
 // What's next, once setup passes. In progress: open issues assigned to you.
-// Next: the oldest open, unassigned issue with no open dependencies. Queue:
-// the unassigned issues after Next, oldest first, not checked for
-// dependencies. Blocked: the ones skipped on the way to Next. Issues
-// assigned only to others are left out.
+// Next: the first available issue in the order docs/whats-next/ORDERING.md
+// sets out. Queue: the available issues after Next, in that order. Blocked:
+// the ones found blocked on the way. Issues assigned only to others are
+// left out.
 export type Overview =
   | { kind: 'idle' }
   | { kind: 'loading' }
   // `more`: the free issues past the Queue's limit, not checked or shown.
-  | { kind: 'ok'; inProgress: IssueRow[]; next: IssueRow | null; queue: IssueRow[]; blocked: BlockedRow[]; more: number }
+  // `scopes`: the scope each issue of Next and the Queue was taken from, by
+  // number, none for the rest of the milestone filter. `unblocks`: how many
+  // open issues wait on each, as far as known. `lastClosed`: the issue you
+  // closed last within the milestone filter.
+  | {
+      kind: 'ok'
+      inProgress: IssueRow[]
+      next: IssueRow | null
+      queue: IssueRow[]
+      blocked: BlockedRow[]
+      more: number
+      scopes: Record<number, Scope>
+      unblocks: Record<number, number>
+      lastClosed: LastClosed | null
+    }
   | { kind: 'error'; message: string }
 
 // An issue or pull request another one points at, with its state: open,

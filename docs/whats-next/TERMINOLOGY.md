@@ -21,6 +21,7 @@ DRAWING.md and DRAWING-issue.md.
 | child | An issue an epic holds, or on GitHub any issue. On Forgejo: an issue the epic depends on, other epics left out (an epic that depends on another waits for it). On GitLab: an issue it links as related, other epics left out (a related link has no direction). On GitHub: a sub-issue, of any issue. Only on GitHub does a child have children of its own, and unfold to them. |
 | blocker | An open issue that another one waits on. On Forgejo: a dependency. On GitLab EE: a blocking link. On GitHub: a "blocked by" relation. |
 | blocked by, blocks | The two sides of a blocker, as the issue detail lists them. |
+| unblocks | How many open issues wait on an issue, as its facts line counts them (`↦ 2`); the detail lists them under blocks (#57, built 0.67.0). |
 
 ## How an issue stands for you
 
@@ -45,10 +46,12 @@ free one is blocked.
 | In progress | Your open issues. |
 | Next | The available issue to take now. |
 | Queue | The available issues after Next. |
+| where you work | Where What's next starts from within the milestone filter: the epic (else the milestone) of your issue in progress, else of your last closed one; it widens to the parent epic, the milestone, then the rest of the filter (#57, built 0.67.0). |
+| Last closed | The issue you closed last within the milestone filter, from anywhere (the pane, the browser, a commit); What's next follows on from it (#57, built 0.67.0). |
 | Epics | The pane of epics, grouped by milestone. |
 | Milestones | The pane of open milestones, then Closed. |
 | Closed | The section of closed milestones in Milestones. |
-| picker | The milestone choice What's next and Epics share: a milestone, No milestone, or All. |
+| milestone filter | The choice What's next and Epics share, and what it is set to: a milestone, No milestone, or All; they show only what is in it. It starts where you work: your issue in progress's milestone, else your last closed issue's, else the one due first (#57, built 0.67.0). |
 | detail | An issue or a milestone shown in place of the list, left with Back. |
 | section | A part of a list or a detail under a rule that folds with + or −: Closed in Milestones; Issues and Description in the milestone detail. |
 | row | One issue, epic or milestone in a list. |
@@ -93,3 +96,5 @@ free one is blocked.
 | all children closed | all closed | One state, one word under an epic and a milestone; #45. |
 | no due date | nothing | A missing due date is not shown at all; #45. |
 | My issues | What's next, In progress | The pane was renamed in 0.24.0. |
+| picker, pick | milestone filter | It is what it is: a filter on milestone; #57. |
+| focus (for where you work) | where you work | Focus is the keyboard's: the control Enter presses; #57. |

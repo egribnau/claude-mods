@@ -1,13 +1,13 @@
 import { expect, test } from 'claude-code/testing'
 
-import { changesSince, epicGroups, loadRepo, milestoneIssues, milestoneKnown, noteChange, whatsNext } from '../hooks/load'
-import type { EpicRow, OpenIssue, Tracker } from '../hooks/tracker'
+import { changesSince, epicGroups, loadRepo, milestoneIssues, milestoneKnown, noteChange, startingPick, whatsNext } from '../hooks/load'
+import type { Closed, EpicRow, OpenIssue, Tracker } from '../hooks/tracker'
 import type { EpicChild, IssueDetail, IssueRow } from '../types'
 
 // What's next and Epics against a fake tracker: no URLs, no Forgejo.
 
 function row(number: number, created: string, milestone: string | null = null): IssueRow {
-  return { number, title: `Issue ${number}`, milestone, labels: [], created, due: null, url: `fake:${number}`, body: '' }
+  return { number, title: `Issue ${number}`, milestone, labels: [], created, due: null, url: `fake:${number}`, body: '', updated: created }
 }
 
 function child(number: number, extra: Partial<EpicChild> = {}): EpicChild {
@@ -34,6 +34,13 @@ type Fake = {
   blockers?: Record<number, number[] | null>
   children?: Record<number, EpicChild[] | null>
   failing?: 'mine' | 'epics'
+  // Where you work: your last closed issue within each milestone filter
+  // setting, the epic each issue is a child of, each epic's children's
+  // numbers, and whether children nest.
+  lastClosed?: Record<string, Closed | null>
+  parents?: Record<number, number>
+  members?: Record<number, number[]>
+  nested?: boolean
 }
 
 // A tracker answering from `f`, recording each call.
@@ -75,6 +82,20 @@ function fake(f: Fake, calls: string[] = []): Tracker {
     children: async (n, me) => {
       calls.push(`children ${n} ${me}`)
       return f.children?.[n] ?? null
+    },
+    members: async n => {
+      calls.push(`members ${n}`)
+      return f.members?.[n] ?? null
+    },
+    parentOf: async n => {
+      calls.push(`parent ${n}`)
+      return f.parents?.[n] ?? null
+    },
+    nested: f.nested ?? false,
+    lastClosed: async within => {
+      const key = typeof within === 'object' ? `m:${within.title}` : within
+      calls.push(`last closed ${key}`)
+      return f.lastClosed?.[key] ?? null
     },
     issue: async () => fail('issue'),
     assign: async () => null,
@@ -336,4 +357,125 @@ test('an epic blocked by an issue outside it is blocked by that one only', async
   const { memory } = await loadRepo(t, true)
   const issues = await milestoneIssues(t, memory, 'v1', null, true)
   expect(issues?.map(c => [c.blocked, c.blockedBy])).toEqual([[true, [99]]])
+})
+
+// Where you work (docs/whats-next/ORDERING.md). Epic #30 holds #43 and #44;
+// #41, closed last, was in it. v1 holds #29 and #37; #50 has no milestone.
+const NOW = Date.parse('2026-10-09T12:00:00Z')
+const LAST: Closed = { number: 41, title: 'Issue 41', closed: '2026-10-09T10:00:00Z', milestone: 'v1' }
+const WORK: Fake = {
+  open: [
+    free(row(29, '2026-09-01T00:00:00Z', 'v1')),
+    free(row(37, '2026-09-02T00:00:00Z', 'v1')),
+    free(row(43, '2026-09-20T00:00:00Z', 'v1')),
+    free(row(44, '2026-09-21T00:00:00Z', 'v1')),
+    free(row(50, '2026-08-01T00:00:00Z')),
+  ],
+  lastClosed: { all: LAST },
+  parents: { 41: 30 },
+  members: { 30: [41, 43, 44] },
+}
+
+test('where you work: Next follows on in the epic of the issue you closed last, then its milestone, then the rest', async () => {
+  const calls: string[] = []
+  const t = fake(WORK, calls)
+  const { memory } = await loadRepo(t, false)
+  const next = await whatsNext(t, memory, 'all', false, 'alice', NOW)
+  expect(next.next?.number).toBe(43)
+  expect(next.queue.map(i => i.number)).toEqual([44, 29, 37, 50])
+  expect(next.scopes).toEqual({
+    43: { kind: 'epic', number: 30 },
+    44: { kind: 'epic', number: 30 },
+    29: { kind: 'milestone', title: 'v1' },
+    37: { kind: 'milestone', title: 'v1' },
+  })
+  expect(next.lastClosed).toEqual({ ...LAST, epic: 30 })
+  // Three requests: your last closed issue, its epic, the epic's children.
+  expect(calls.filter(c => /^(last closed|parent|members)/.test(c))).toEqual(['last closed all', 'parent 41', 'members 30'])
+  // Remembered until Refresh: a second look asks nothing more.
+  await whatsNext(t, memory, 'all', false, 'alice', NOW)
+  expect(calls.filter(c => /^(last closed|parent|members)/.test(c))).toHaveLength(3)
+})
+
+test('where you work: your issue in progress updated last wins over the one you closed last', async () => {
+  const calls: string[] = []
+  const older = { ...row(60, '2026-09-01T00:00:00Z'), updated: '2026-10-01T00:00:00Z' }
+  const newer = { ...row(61, '2026-09-02T00:00:00Z', 'v1'), updated: '2026-10-08T00:00:00Z' }
+  const t = fake({ ...WORK, mine: [older, newer], parents: { 41: 30, 61: 12 }, members: { 30: [43, 44], 12: [37, 61] } }, calls)
+  const { memory } = await loadRepo(t, false, [], 'alice')
+  const next = await whatsNext(t, memory, 'all', false, 'alice', NOW)
+  // #61 was updated last: its epic #12 first, then v1.
+  expect(next.next?.number).toBe(37)
+  expect(next.scopes[37]).toEqual({ kind: 'epic', number: 12 })
+  expect(next.queue.map(i => i.number)).toEqual([29, 43, 44, 50])
+  // Last closed still names its own epic, asked for it.
+  expect(next.lastClosed?.epic).toBe(30)
+  expect(calls.filter(c => c.startsWith('parent'))).toEqual(['parent 61', 'parent 41'])
+})
+
+test('where you work widens through each parent up the tree where children nest', async () => {
+  const t = fake({ ...WORK, parents: { 41: 30, 30: 12 }, members: { 30: [43], 12: [30, 44] }, nested: true })
+  const { memory } = await loadRepo(t, false)
+  const next = await whatsNext(t, memory, 'all', false, 'alice', NOW)
+  expect([next.next?.number, ...next.queue.map(i => i.number)]).toEqual([43, 44, 29, 37, 50])
+  expect(next.scopes[43]).toEqual({ kind: 'epic', number: 30 })
+  expect(next.scopes[44]).toEqual({ kind: 'epic', number: 12 })
+})
+
+test('where you work: without children that nest, an epic above an epic is not followed', async () => {
+  const calls: string[] = []
+  const t = fake({ ...WORK, parents: { 41: 30, 30: 12 } }, calls)
+  const { memory } = await loadRepo(t, false)
+  await whatsNext(t, memory, 'all', false, 'alice', NOW)
+  expect(calls.filter(c => c.startsWith('parent'))).toEqual(['parent 41'])
+})
+
+test('where you work, per milestone filter setting: the last closed within it, asked once; All also answers for its milestone', async () => {
+  const calls: string[] = []
+  const t = fake({ ...WORK, lastClosed: { all: LAST, none: null } }, calls)
+  const { memory } = await loadRepo(t, false)
+  await whatsNext(t, memory, 'all', false, 'alice', NOW)
+  const inV1 = await whatsNext(t, memory, 'm:v1', false, 'alice', NOW)
+  expect(inV1.next?.number).toBe(43)
+  expect(inV1.lastClosed?.number).toBe(41)
+  const none = await whatsNext(t, memory, 'none', false, 'alice', NOW)
+  expect(none.next?.number).toBe(50)
+  expect(none.lastClosed).toBe(null)
+  // All's answer is v1's too; No milestone is asked for itself.
+  expect(calls.filter(c => c.startsWith('last closed'))).toEqual(['last closed all', 'last closed none'])
+})
+
+test('where you work: with nothing in progress and nothing closed, the order is the keys over the whole filter', async () => {
+  const t = fake({ ...WORK, lastClosed: {} })
+  const { memory } = await loadRepo(t, false)
+  const next = await whatsNext(t, memory, 'all', false, 'alice', NOW)
+  expect([next.next?.number, ...next.queue.map(i => i.number)]).toEqual([50, 29, 37, 43, 44])
+  expect(next.scopes).toEqual({})
+  expect(next.lastClosed).toBe(null)
+})
+
+test('where you work: unblocks counts what the walk found waiting, and orders the next look', async () => {
+  const t = fake({ ...WORK, lastClosed: {}, blockers: { 50: [37] } })
+  const { memory } = await loadRepo(t, true)
+  const first = await whatsNext(t, memory, 'all', true, 'alice', NOW)
+  expect(first.next?.number).toBe(29)
+  expect(first.unblocks).toEqual({ 37: 1 })
+  // Now known: #37 unblocks #50, so it goes before the older #29.
+  const again = await whatsNext(t, memory, 'all', true, 'alice', NOW)
+  expect(again.next?.number).toBe(37)
+})
+
+test('the milestone filter starts where you work: your issue in progress updated last, else the one you closed last', async () => {
+  const options = [{ value: 'm:v1' }, { value: 'm:v2' }, { value: 'none' }, { value: 'all' }]
+  const t = fake({ ...WORK, mine: [{ ...row(61, '2026-09-02T00:00:00Z', 'v2'), updated: '2026-10-08T00:00:00Z' }] })
+  const { memory } = await loadRepo(t, false)
+  expect(await startingPick(t, memory, 'alice', options)).toBe('m:v2')
+
+  const closedOnly = fake(WORK)
+  const loaded = await loadRepo(closedOnly, false)
+  expect(await startingPick(closedOnly, loaded.memory, 'alice', options)).toBe('m:v1')
+  // Its milestone not offered, or nothing to start from: none.
+  expect(await startingPick(closedOnly, loaded.memory, 'alice', [{ value: 'all' }])).toBe(null)
+  const empty = fake({ ...WORK, lastClosed: {} })
+  expect(await startingPick(empty, (await loadRepo(empty, false)).memory, 'alice', options)).toBe(null)
 })

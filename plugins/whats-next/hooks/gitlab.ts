@@ -1,7 +1,7 @@
 import type { Actions, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName, gitlabSetting } from './forge'
-import { message, type Checked, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
+import { message, type Checked, type Closed, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // GitLab behind the tracker the pane asks: every GitLab URL lives here.
 // `token` is from the GitLab.com token setting for gitlab.com, else from the
@@ -247,6 +247,33 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       return raw ? raw.filter(l => l.state === 'opened').map(l => l.iid) : null
     },
 
+    async members(n: number): Promise<number[] | null> {
+      const raw = await links(n, 'relates_to')
+      return raw ? raw.filter(l => !isEpic(names(l))).map(l => l.iid) : null
+    },
+
+    // A related link has no direction: an open epic linked to it holds it.
+    async parentOf(n: number): Promise<number | null> {
+      const raw = await links(n, 'relates_to')
+      return raw?.find(l => l.state === 'opened' && isEpic(names(l)))?.iid ?? null
+    },
+
+    // Epics linked to each other are peers: no epic is a child.
+    nested: false,
+
+    // GitLab sorts by the last change, not by when an issue closed: the
+    // latest closed of the first page is taken.
+    async lastClosed(within, _me): Promise<Closed | null> {
+      const milestone = typeof within === 'object' ? `&milestone=${encodeURIComponent(within.title)}` : within === 'none' ? '&milestone=None' : ''
+      const raw = await fetchJson<RawIssue[]>(
+        `${project}/issues?state=closed&scope=assigned_to_me&order_by=updated_at&sort=desc&per_page=20${milestone}`,
+      )
+      const last = (raw ?? [])
+        .filter(i => i.closed_at)
+        .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))[0]
+      return last ? { number: last.iid, title: last.title, closed: last.closed_at ?? '', milestone: last.milestone?.title ?? null } : null
+    },
+
     // An epic's children are the issues it links as related, other epics
     // left out: those are its peers.
     async children(n: number, me: string | null): Promise<EpicChild[] | null> {
@@ -373,6 +400,7 @@ type RawIssue = {
   author?: RawUser | null
   created_at: string
   updated_at: string
+  closed_at?: string | null
   user_notes_count?: number
   milestone: { title: string; due_date?: string | null } | null
   due_date?: string | null
@@ -429,6 +457,7 @@ const toRow = (i: RawIssue): IssueRow => ({
   due: i.due_date ?? null,
   url: i.web_url,
   body: i.description ?? '',
+  updated: i.updated_at ?? i.created_at,
 })
 
 // The project as check reads it: your access level in it, and in its group.

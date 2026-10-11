@@ -1,7 +1,7 @@
 import type { Actions, CommitRef, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName } from './forge'
-import { message, type Checked, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
+import { message, type Checked, type Closed, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // GitHub behind the tracker the pane asks: every GitHub URL lives here.
 // `token` is from the GitHub token setting, null when it has none for the
@@ -21,6 +21,8 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     'X-GitHub-Api-Version': '2022-11-28',
   }
   const get = (url: string) => send(url, { method: 'GET', headers })
+  // Where this repo's issues live: links may reach into other repos.
+  const here = `https://${r.host}/${slug}/issues/`.toLowerCase()
 
   // Every page of a list, 100 at a time, following the `next` link GitHub
   // gives in the Link header; a page that fails names `what`. The token goes
@@ -182,7 +184,12 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       const counts = new Map<number, number>()
       for (const i of found) if (i.issue_dependencies_summary) counts.set(i.number, i.issue_dependencies_summary.blocked_by ?? 0)
       blockedByRepo.set(api, counts)
-      return found.filter(isIssue).map(i => ({ ...toRow(i), assignees: (i.assignees ?? []).map(a => a.login) }))
+      // How many open issues wait on each comes with it too.
+      return found.filter(isIssue).map(i => ({
+        ...toRow(i),
+        ...(i.issue_dependencies_summary?.blocking !== undefined && { unblocks: i.issue_dependencies_summary.blocking }),
+        assignees: (i.assignees ?? []).map(a => a.login),
+      }))
     },
 
     // GitHub matches labels without regard to case; so does What's Next.
@@ -193,6 +200,33 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         .map(i => ({ number: i.number, title: i.title, state: i.state === 'closed' ? 'closed' : 'open', milestone: i.milestone?.title ?? null, due: null }))
     },
 
+    async members(n: number): Promise<number[] | null> {
+      const raw = await fetchAll<RawIssue>(`${api}/issues/${n}/sub_issues`, 'sub-issues').catch(() => null)
+      return raw ? raw.filter(c => c.html_url.toLowerCase().startsWith(here)).map(c => c.number) : null
+    },
+
+    // Its parent issue, open and in this repo, label or not.
+    async parentOf(n: number): Promise<number | null> {
+      const raw = await fetchJson<RawIssue>(`${api}/issues/${n}/parent`)
+      return raw && raw.state !== 'closed' && raw.html_url.toLowerCase().startsWith(here) ? raw.number : null
+    },
+
+    nested: true,
+
+    // GitHub filters by a milestone's number, or none; sorted by the last
+    // change, the latest closed of the first page is taken. Pull requests
+    // are in the same list and left out.
+    async lastClosed(within, me): Promise<Closed | null> {
+      const milestone = typeof within === 'object' ? `&milestone=${within.id}` : within === 'none' ? '&milestone=none' : ''
+      const raw = await fetchJson<RawIssue[]>(
+        `${api}/issues?state=closed&assignee=${encodeURIComponent(me)}&sort=updated&direction=desc&per_page=20${milestone}`,
+      )
+      const last = (raw ?? [])
+        .filter(i => isIssue(i) && i.closed_at)
+        .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))[0]
+      return last ? { number: last.number, title: last.title, closed: last.closed_at ?? '', milestone: last.milestone?.title ?? null } : null
+    },
+
     // An issue's children are its sub-issues in this repo, an epic's or any
     // other's, each with how many sub-issues it has itself. Each open one not
     // assigned to `me` is checked for what blocks it, with a request only
@@ -200,7 +234,6 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     async children(n: number, me: string | null): Promise<EpicChild[] | null> {
       const raw = await fetchAll<RawIssue>(`${api}/issues/${n}/sub_issues`, 'sub-issues').catch(() => null)
       if (!raw) return null
-      const here = `https://${r.host}/${slug}/issues/`.toLowerCase()
       return Promise.all(
         raw
           .filter(c => c.html_url.toLowerCase().startsWith(here))
@@ -397,13 +430,15 @@ type RawIssue = {
   user?: { login: string } | null
   created_at: string
   updated_at: string
+  closed_at?: string | null
   comments?: number
   milestone: { title: string; due_on?: string | null } | null
   labels?: ({ name: string; color?: string | null } | string)[] | null
   assignees?: { login: string }[] | null
   pull_request?: unknown
-  // How many open issues block it (`blocked_by`), where GitHub has dependencies.
-  issue_dependencies_summary?: { blocked_by?: number } | null
+  // How many open issues block it (`blocked_by`), and how many it blocks
+  // (`blocking`), where GitHub has dependencies.
+  issue_dependencies_summary?: { blocked_by?: number; blocking?: number } | null
   // How many sub-issues it has, closed (`completed`) and in all, in any repo.
   sub_issues_summary?: { total: number; completed: number } | null
 }
@@ -435,6 +470,7 @@ const toRow = (i: RawIssue): IssueRow => ({
   due: null,
   url: i.html_url,
   body: i.body ?? '',
+  updated: i.updated_at ?? i.created_at,
 })
 
 // One event on an issue's timeline: a comment, another issue or pull

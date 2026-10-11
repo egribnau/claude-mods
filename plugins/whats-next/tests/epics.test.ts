@@ -629,9 +629,11 @@ test('All shows a group per milestone, No milestone last, and counts them all', 
   expect(all.slice(-4)).toEqual(['5 epics · 3 yours', '5 epics', ' · ', '3 yours'])
   const found = await nodes(ui)
   expect(found.filter(t => names.includes(t.text)).every(t => t.props.bold === true)).toBe(true)
-  // An extra empty line sets each group after the first apart from the last epic above it.
+  // One empty line before each group after the first: v1.2 ends in a
+  // closed epic, which leaves none, so v1.3's rule adds it; v1.3 ends in an
+  // open one, whose row leaves it already.
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Btn[]
-  expect(['group-0', 'group-1', 'group-2'].map(k => boxes.find(b => b.key === k)?.props.marginTop ?? 0)).toEqual([0, 1, 1])
+  expect(['group-0', 'group-1', 'group-2'].map(k => boxes.find(b => b.key === k)?.props.marginTop ?? 0)).toEqual([0, 1, 0])
 })
 
 test("a pick in Epics is What's next's pick too", TOKEN, async ($, on) => {

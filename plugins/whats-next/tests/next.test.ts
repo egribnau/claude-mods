@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { readable } from '../hooks/issue'
-import { pickNext, waitingText } from '../hooks/next'
+import { order, pickNext, waitingText, type OrderBy, type Scoped } from '../hooks/next'
 import type { IssueRow } from '../types'
 
 const PANE = {
@@ -60,6 +60,10 @@ type World = {
   openStatus?: number
   // The repo's open milestones; left out, the list is refused.
   milestones?: unknown[]
+  // Your closed issues, as the repo's closed list answers them, and the
+  // issues that depend on each issue (an epic depends on its children).
+  closed?: unknown[]
+  blocks?: Record<number, unknown[]>
 }
 
 // A repo that passes setup and answers from `w`.
@@ -79,9 +83,15 @@ function world(on: On, w: World, asked: string[] = []) {
       value: { status, ok: status === 200, headers: {}, text: JSON.stringify(body) },
     })
     const dep = /\/issues\/(\d+)\/dependencies$/.exec(url.pathname)
+    const blocks = /\/issues\/(\d+)\/blocks$/.exec(url.pathname)
+    if (blocks) return reply(200, w.blocks?.[Number(blocks[1])] ?? [])
     if (url.pathname.endsWith('/version')) return reply(200, { version: '16.0.5+gitea-1.22.0' })
     if (url.pathname.endsWith('/api/v1/user')) return reply(200, { login: 'alice' })
     if (url.pathname.endsWith('/repos/issues/search')) return reply(200, w.mine?.[page] ?? [])
+    if (url.pathname.endsWith('/repos/boats/radar/issues') && url.searchParams.get('state') === 'closed') {
+      const ms = url.searchParams.get('milestones')
+      return reply(200, (w.closed ?? []).filter(i => ms === null || (i as { milestone: { title: string } | null }).milestone?.title === ms))
+    }
     if (url.pathname.endsWith('/repos/boats/radar/issues')) {
       const status = w.openStatus ?? 200
       return reply(status, status === 200 ? (w.open?.[page] ?? []) : {})
@@ -151,26 +161,21 @@ for (const surface of ['terminal', 'desktop'] as const) {
       'bug',
       ' · ',
       '✎ 2w',
-      ...ruleTexts('Next'),
-      '○ #29 Issue 29',
-      '○ ',
-      '#29 ',
-      '      ',
-      'docs · ✎ 3w',
-      'docs',
-      ' · ',
-      '✎ 3w',
-      ...ruleTexts('Queue', '3'),
+      // You work in v1.2 (#42 is yours there): its issues come first.
+      ...ruleTexts('Next', 'in v1.2'),
       '○ #37 Issue 37',
       '○ ',
       '#37 ',
       '      ',
-      'v1.2 · prio/high · ✎ 7d',
+      '↦ 1 · v1.2 · prio/high · ✎ 7d',
+      '↦ 1',
+      ' · ',
       'v1.2',
       ' · ',
       'prio/high',
       ' · ',
       '✎ 7d',
+      ...ruleTexts('Queue', 'in v1.2'),
       '○ #51 Issue 51',
       '○ ',
       '#51 ',
@@ -179,6 +184,15 @@ for (const surface of ['terminal', 'desktop'] as const) {
       'v1.2',
       ' · ',
       '✎ 6d',
+      ...ruleTexts('Queue'),
+      '○ #29 Issue 29',
+      '○ ',
+      '#29 ',
+      '      ',
+      'docs · ✎ 3w',
+      'docs',
+      ' · ',
+      '✎ 3w',
       '⊘ #33 Issue 33',
       '⊘ ',
       '#33 ',
@@ -195,7 +209,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       ' · ',
       '1 yours',
     ])
-    expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #29." }))
+    expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #37, in v1.2." }))
   })
 }
 
@@ -204,7 +218,7 @@ test('the mark says how a row stands for you; Next is bold; a blocked row dims i
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
-  expect(all.find(t => t.text === '○ #29 Issue 29')?.props.bold).toBe(true)
+  expect(all.find(t => t.text === '○ #37 Issue 37')?.props.bold).toBe(true)
   // Yours is green; available, Next and the Queue, is ○ plain; blocked is dim, never grey.
   expect(all.find(t => t.text === '● ')?.props.color).toBe('success')
   const marks = all.filter(t => t.text === '○ ')
@@ -214,7 +228,7 @@ test('the mark says how a row stands for you; Next is bold; a blocked row dims i
   expect(all.find(t => t.text === '⊘ ')?.props.color).toBeUndefined()
   expect(all.find(t => t.text === '#33 ')?.props.color).toBe('suggestion')
   expect(all.find(t => t.text === 'Issue 33')?.props.dimColor).toBe(true)
-  expect(all.find(t => t.text === '○ #37 Issue 37')?.props.dimColor).toBeUndefined()
+  expect(all.find(t => t.text === '○ #29 Issue 29')?.props.dimColor).toBeUndefined()
   // What blocks it: the numbers blue, the words dim.
   expect(all.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
   expect(all.find(t => t.text === '#37')?.props.color).toBe('suggestion')
@@ -224,11 +238,11 @@ type Found = { key: string; props: Record<string, unknown> }
 const focused = async (ui: { findAll: (q: { type: string }) => Promise<unknown[]> }) =>
   ((await ui.findAll({ type: 'Button' })) as Found[]).filter(b => b.props.autoFocus).map(b => b.key)
 
-test('the focus starts on Next, so Enter opens it', TOKEN, async ($, on) => {
+test('nothing has the focus at first, not even Next: Tab or an arrow moves it', TOKEN, async ($, on) => {
   world(on, REPO)
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await focused(ui)).toEqual(['pick-29'])
+  expect(await focused(ui)).toEqual([])
 })
 
 test('with no Next, the focus starts on nothing', TOKEN, async ($, on) => {
@@ -238,13 +252,14 @@ test('with no Next, the focus starts on nothing', TOKEN, async ($, on) => {
   expect(await focused(ui)).toEqual([])
 })
 
-test('dependencies are checked oldest first, past Next through the Queue', TOKEN, async ($, on) => {
+test('dependencies are checked in the order of where you work, past Next through the Queue', TOKEN, async ($, on) => {
   const asked: string[] = []
   world(on, REPO, asked)
   await $.command.run(RUN)
 
+  // v1.2 first, where your #42 is; then the rest, oldest first.
   const checked = asked.map(u => /\/issues\/(\d+)\/dependencies$/.exec(new URL(u).pathname)?.[1]).filter(Boolean)
-  expect(checked).toEqual(['33', '29', '37', '51'])
+  expect(checked).toEqual(['37', '51', '33', '29'])
 })
 
 test('the Queue holds 10 checked issues, a blocked one at the bottom, the rest counted', TOKEN, async ($, on) => {
@@ -257,7 +272,9 @@ test('the Queue holds 10 checked issues, a blocked one at the bottom, the rest c
   const all = await texts(ui)
 
   expect(all).toContain('○  #1 Issue 1')
-  expect(all).toContain(rule('Queue · 11 of 24'))
+  // The Queue's rule has no count: what the limit leaves out is the line under it.
+  expect(all).toContain(rule('Queue'))
+  expect(all.some(t => /Queue · \d+/.test(t))).toBe(false)
   // Next, #1, has no mark of its own either: the Queue follows it.
   const free = all.filter(t => /^○ {1,2}#\d+ Issue \d+$/.test(t)).map(t => Number(/#(\d+)/.exec(t)?.[1]))
   expect(free).toEqual([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12])
@@ -295,7 +312,7 @@ test('everything blocked: Nothing available, and what it waits on', TOKEN, async
 
   expect(all).toContain('Nothing available')
   expect(all).toContain('#33, #34, #37 wait on #35, #37')
-  expect(all).toContain(rule('Queue · 3'))
+  expect(all).toContain(rule('Queue'))
   expect(all).toContain('⊘ #37, #35 · ✎ 3w')
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 0 in progress, nothing available." }))
 })
@@ -332,12 +349,12 @@ test('no open issues at all: says so, without sections', TOKEN, async ($, on) =>
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: no open issues." }))
 })
 
-test('dependencies that answer nothing: the oldest unassigned issue is Next, and no other is asked', TOKEN, async ($, on) => {
+test('dependencies that answer nothing: the first in order is Next, and no other is asked', TOKEN, async ($, on) => {
   const asked: string[] = []
   world(on, { ...REPO, deps: 'off' }, asked)
   const out = await $.command.run(RUN)
 
-  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #33." }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #37, in v1.2." }))
   expect(asked.filter(u => u.endsWith('/dependencies'))).toHaveLength(1)
 })
 
@@ -349,10 +366,11 @@ test('reads every page of both lists', TOKEN, async ($, on) => {
 
   const out = await $.command.run(RUN)
 
-  // The epics are asked for on the same path, by label; they are not counted here.
+  // The epics are asked for on the same path, by label, and your last
+  // closed issue by state; they are not counted here.
   const pages = (path: string) =>
     asked
-      .filter(u => new URL(u).pathname.endsWith(path) && !new URL(u).searchParams.has('labels'))
+      .filter(u => new URL(u).pathname.endsWith(path) && !new URL(u).searchParams.has('labels') && new URL(u).searchParams.get('state') !== 'closed')
       .map(u => new URL(u).searchParams.get('page'))
   expect(pages('/repos/issues/search')).toEqual(['1', '2'])
   expect(pages('/repos/boats/radar/issues')).toEqual(['1', '2'])
@@ -504,7 +522,7 @@ type Btn = { key: string; props: Record<string, unknown> }
 const pickerLabel = async (ui: { find: (q: { key: string }) => Promise<unknown> }) =>
   ((await ui.find({ key: 'milestone' })) as Btn | undefined)?.props.label
 
-test('starts on the milestone due first, and every section keeps to it', TOKEN, async ($, on) => {
+test('starts where you work, and every section keeps to it', TOKEN, async ($, on) => {
   const clock = world(on, { ...REPO, milestones: MILESTONES })
   await clock.set(NOW)
   const out = await $.command.run(RUN)
@@ -512,9 +530,9 @@ test('starts on the milestone due first, and every section keeps to it', TOKEN, 
   const all = await texts(ui)
 
   expect(await pickerLabel(ui)).toBe('v1.2 ▾')
-  expect(all).toContain(rule('In progress in v1.2 · 1'))
-  expect(all).toContain(rule('Next in v1.2'))
-  expect(all).toContain(rule('Queue in v1.2 · 1'))
+  expect(all).toContain(rule('In progress · 1'))
+  expect(all).toContain(rule('Next'))
+  expect(all).toContain(rule('Queue'))
   expect(all).toContain('○ #37 Issue 37')
   expect(all.some(t => t.includes('#29') || t.includes('#33'))).toBe(false)
   expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
@@ -532,7 +550,7 @@ test('picking No milestone shows the issues without one, and All shows every one
   await ui.press({ key: 'milestone-none' })
   let all = await texts(ui)
   expect(await pickerLabel(ui)).toBe('No milestone ▾')
-  expect(all).toContain(rule('In progress without a milestone · 0'))
+  expect(all).toContain(rule('In progress · 0'))
   expect(all).toContain('○ #29 Issue 29')
   expect(all).toContain('⊘ #33 Issue 33')
 
@@ -540,7 +558,7 @@ test('picking No milestone shows the issues without one, and All shows every one
   await ui.press({ key: 'milestone-all' })
   all = await texts(ui)
   expect(all).toContain(rule('In progress · 1'))
-  expect(all).toContain(rule('Queue · 3'))
+  expect(all).toContain(rule('Queue'))
 })
 
 for (const rows of [60, 12]) {
@@ -598,7 +616,7 @@ test('labels under an issue are text in their own colour, the rest of the line d
 })
 
 // The facts line's recipe (DRAWING-issue.md, The facts line).
-test('the facts line: what blocks it, its due date, milestone, labels and age, in that order; a blocked row keeps them all', TOKEN, async ($, on) => {
+test('the facts line: what blocks it, what it unblocks, its due date, milestone, labels and age, in that order; a blocked row keeps them all', TOKEN, async ($, on) => {
   const clock = world(on, {
     open: [
       [
@@ -617,7 +635,9 @@ test('the facts line: what blocks it, its due date, milestone, labels and age, i
   const all = found.map(t => t.text)
   expect(all).toContain('⊘ #37 · ⧗ 2 Oct · v1.2 · docs · ✎ 4w')
   expect(all).toContain('⧗ 14 Oct · v1.2 · bug · ✎ 3w')
-  expect(all).toContain('⧗ 30 Nov · ✎ 7d')
+  // #33 waits on #37: ↦ 1, dim, before its due date.
+  expect(all).toContain('↦ 1 · ⧗ 30 Nov · ✎ 7d')
+  expect(found.find(t => t.text === '↦ 1')?.props.dimColor).toBe(true)
   // No due date: nothing, and the line starts with what comes next.
   expect(all).toContain('✎ 6d')
   expect(all.some(t => t.includes('due') || t.includes('opened'))).toBe(false)
@@ -649,6 +669,7 @@ const row = (number: number): IssueRow => ({
   due: null,
   url: '',
   body: '',
+  updated: '2026-09-01T00:00:00Z',
 })
 
 test('pickNext: the first unblocked issue, then the Queue checked too', async () => {
@@ -708,4 +729,178 @@ test('pickNext: nothing to pick from', async () => {
 test('waitingText: one issue waits, several wait', () => {
   expect(waitingText([{ issue: row(33), by: [37] }])).toBe('#33 waits on #37')
   expect(waitingText([{ issue: row(33), by: [37] }, { issue: row(34), by: [37] }])).toBe('#33, #34 wait on #37')
+})
+
+// Issues for the order: `created` days into September, a due date, a
+// milestone, how many wait on it.
+const keyed = (number: number, o: { day?: number; due?: string; milestone?: string; unblocks?: number } = {}): IssueRow => ({
+  ...row(number),
+  created: `2026-09-${String(o.day ?? 1).padStart(2, '0')}T00:00:00Z`,
+  due: o.due ?? null,
+  milestone: o.milestone ?? null,
+  ...(o.unblocks !== undefined && { unblocks: o.unblocks }),
+})
+const by = (o: Partial<OrderBy> = {}): OrderBy => ({
+  scopes: [],
+  milestoneDue: () => null,
+  unblocks: i => i.unblocks ?? 0,
+  now: NOW,
+  ...o,
+})
+const numbers = (l: { issue: IssueRow }[]) => l.map(o => o.issue.number)
+
+test('order: due soon first, earliest first; a due date past 7 days counts as none', () => {
+  const got = order(
+    [keyed(1), keyed(2, { due: '2026-10-14T00:00:00Z' }), keyed(3, { due: '2026-10-01T00:00:00Z' }), keyed(4, { due: '2026-12-01T00:00:00Z' })],
+    by(),
+  )
+  // #3 passed, #2 within 7 days; #4 is months off, so as #1: oldest first.
+  expect(numbers(got)).toEqual([3, 2, 1, 4])
+})
+
+test("order: an issue without a due date takes its milestone's", () => {
+  const got = order([keyed(1), keyed(2, { milestone: 'v1.2' })], by({ milestoneDue: t => (t === 'v1.2' ? '2026-10-12T00:00:00Z' : null) }))
+  expect(numbers(got)).toEqual([2, 1])
+})
+
+test('order: the most unblocked first, then the oldest, then the lowest number', () => {
+  const got = order([keyed(5, { day: 3 }), keyed(4, { day: 3 }), keyed(1, { day: 1 }), keyed(9, { day: 9, unblocks: 1 }), keyed(8, { day: 8, unblocks: 3 })], by())
+  expect(numbers(got)).toEqual([8, 9, 1, 4, 5])
+})
+
+test('order: the scope comes first, then due soon, then unblocks, then age; each issue says its scope', () => {
+  const epic: Scoped = { scope: { kind: 'epic', number: 30 }, holds: i => [6, 7].includes(i.number) }
+  const ms: Scoped = { scope: { kind: 'milestone', title: 'v1.2' }, holds: i => i.milestone === 'v1.2' }
+  const got = order(
+    [
+      keyed(1, { due: '2026-10-10T00:00:00Z' }),
+      keyed(2, { milestone: 'v1.2', unblocks: 2 }),
+      keyed(3, { milestone: 'v1.2', day: 2, due: '2026-10-11T00:00:00Z' }),
+      keyed(6, { day: 5 }),
+      keyed(7, { day: 6, unblocks: 1 }),
+    ],
+    by({ scopes: [epic, ms] }),
+  )
+  // The epic: #7 unblocks one; v1.2: #3 due soon beats #2 unblocking two; the rest.
+  expect(numbers(got)).toEqual([7, 6, 3, 2, 1])
+  expect(got.map(o => o.scope)).toEqual([epic.scope, epic.scope, ms.scope, ms.scope, null])
+})
+
+test('order: an issue two scopes hold is taken by the first', () => {
+  const inner: Scoped = { scope: { kind: 'epic', number: 30 }, holds: i => i.number === 2 }
+  const outer: Scoped = { scope: { kind: 'epic', number: 12 }, holds: i => [1, 2].includes(i.number) }
+  const got = order([keyed(1), keyed(2, { day: 9 })], by({ scopes: [inner, outer] }))
+  expect(got).toEqual([
+    { issue: keyed(2, { day: 9 }), scope: inner.scope },
+    { issue: keyed(1), scope: outer.scope },
+  ])
+})
+
+// Where you work (docs/whats-next/ORDERING.md), on Forgejo. You closed #41
+// two hours ago; epic #30, open, depends on it and on #43 and #44.
+const closedIssue = (n: number, closedAt: string, extra: Extra = {}) => ({
+  ...issue(n, '2026-09-01T09:00:00Z', { ...extra, assignees: ['alice'] }),
+  state: 'closed',
+  closed_at: closedAt,
+})
+const EPIC = { ...issue(30, '2026-08-01T09:00:00Z', { labels: ['epic'] }), state: 'open' }
+const WORKED: World = {
+  open: [
+    [
+      issue(50, '2026-08-20T09:00:00Z'),
+      issue(29, '2026-09-18T09:00:00Z'),
+      issue(43, '2026-09-25T09:00:00Z'),
+      issue(44, '2026-09-26T09:00:00Z'),
+    ],
+  ],
+  closed: [closedIssue(40, '2026-10-01T09:00:00Z'), closedIssue(41, '2026-10-09T10:00:00Z')],
+  blocks: { 41: [EPIC] },
+  deps: { 30: [41, 43, 44] },
+}
+
+test('Next follows on in the epic of the issue you closed last; the Queue says each scope; Last closed sits above the bottom line', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  const clock = world(on, WORKED, asked)
+  await clock.set(NOW)
+  const out = await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
+  const all = found.map(t => t.text)
+
+  // #41 has no milestone: the milestone filter starts on No milestone.
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 0 in progress, next is #43, in epic #30 (No milestone)." }))
+  expect(all).toContain(rule('Next · in epic #30'))
+  expect(all).toContain(rule('Queue · in epic #30'))
+  expect(all).toContain(rule('Queue'))
+  const order = all.filter(t => /^○ #\d+ Issue \d+$/.test(t)).map(t => Number(/#(\d+)/.exec(t)?.[1]))
+  expect(order).toEqual([43, 44, 50, 29])
+  expect(all.indexOf(rule('Queue · in epic #30'))).toBeLessThan(all.indexOf('○ #44 Issue 44'))
+  expect(all.indexOf(rule('Queue'))).toBeGreaterThan(all.indexOf('○ #44 Issue 44'))
+  // The epic's number blue, the words dim.
+  expect(found.find(t => t.text === '#30')?.props.color).toBe('suggestion')
+  expect(found.find(t => t.text === 'in epic ')?.props.dimColor).toBe(true)
+
+  // Last closed: its rule, then one grey row, ✓ in the mark column, under the list.
+  expect(all).toContain(rule('Last closed · 2h ago · in epic #30'))
+  const last = found.find(t => t.text === '✓ #41 Issue 41')
+  expect(last?.props.color).toBe('inactive')
+  expect(all.indexOf('✓ #41 Issue 41')).toBeGreaterThan(all.indexOf('○ #29 Issue 29'))
+  expect(all.indexOf('✓ #41 Issue 41')).toBeLessThan(all.indexOf('─'.repeat(50)))
+  expect(await ui.find({ key: 'last-closed-open' })).toBeTruthy()
+
+  // Asked: your closed issues, assigned to you; the epic that depends on
+  // #41; the epic's children. Once each.
+  const closedAsked = asked.filter(u => new URL(u).pathname.endsWith('/issues') && new URL(u).searchParams.get('state') === 'closed')
+  expect(closedAsked).toHaveLength(1)
+  expect(new URL(closedAsked[0] ?? '').searchParams.get('assigned_by')).toBe('alice')
+  expect(asked.filter(u => u.includes('/issues/41/blocks'))).toHaveLength(1)
+  expect(asked.filter(u => new URL(u).pathname.endsWith('/issues/30/dependencies'))).toHaveLength(1)
+})
+
+test('nothing closed by you: no Last closed, and the rules name no scope', TOKEN, async ($, on) => {
+  world(on, { ...WORKED, closed: [] })
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+  expect(all.some(t => t.includes('Last closed'))).toBe(false)
+  expect(all).toContain(rule('Next'))
+  expect(all.some(t => t.includes('in epic'))).toBe(false)
+})
+
+test('the milestone filter starts where you work, and /next brings it back there after a choice', TOKEN, async ($, on) => {
+  world(on, {
+    ...WORKED,
+    open: [[issue(29, '2026-09-18T09:00:00Z', { milestone: 'v1.2' }), issue(43, '2026-09-25T09:00:00Z', { milestone: 'v1.3' })]],
+    closed: [closedIssue(41, '2026-10-09T10:00:00Z', { milestone: 'v1.3' })],
+    milestones: MILESTONES,
+  })
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // v1.2 is due first, but you closed #41 in v1.3.
+  expect(await pickerLabel(ui)).toBe('v1.3 ▾')
+  await ui.press({ key: 'milestone' })
+  await ui.press({ key: 'milestone-all' })
+  expect(await pickerLabel(ui)).toBe('All ▾')
+  await $.command.run(RUN)
+  expect(await pickerLabel(ui)).toBe('v1.3 ▾')
+})
+
+test('with Compact on, rows have no empty line between them, but each section still ends in one', { options: { token: 'secret', icons: 'text', compact: 'on' } }, async ($, on) => {
+  world(on, { ...WORKED, blocks: { 41: [EPIC], 42: [EPIC] }, mine: [[issue(42, '2026-09-25T09:00:00Z', { assignees: ['alice'] })]], open: [[issue(42, '2026-09-25T09:00:00Z', { assignees: ['alice'] }), ...(WORKED.open?.[0] ?? [])]] })
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
+  const ends = boxes.filter(b => (b.key ?? '').startsWith('end-'))
+  // Before Next, before the Queue's first part and before its second: once each.
+  expect(ends).toHaveLength(3)
+  expect(ends.every(b => b.props.height === 1)).toBe(true)
+  expect(boxes.filter(b => (b.key ?? '').startsWith('issue-')).every(b => (b.props.marginBottom ?? 0) === 0)).toBe(true)
+})
+
+test('with Compact off, no extra empty line: the rows leave one already', TOKEN, async ($, on) => {
+  world(on, WORKED)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string }[]
+  expect(boxes.some(b => (b.key ?? '').startsWith('end-'))).toBe(false)
 })

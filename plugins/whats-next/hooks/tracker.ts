@@ -11,6 +11,9 @@ export type Send = (url: string, init: Parameters<EngineInterface['http']['fetch
 // An open issue in the repo, with who it is assigned to: none makes it free.
 export type OpenIssue = IssueRow & { assignees: string[] }
 
+// A closed issue, as Last closed needs it: when it closed, and its milestone.
+export type Closed = { number: number; title: string; closed: string; milestone: string | null }
+
 // An issue with the Epic label, open or closed, with its milestone's title
 // and its own due date.
 export type EpicRow = { number: number; title: string; state: 'open' | 'closed'; milestone: string | null; due: string | null }
@@ -48,6 +51,19 @@ export type Tracker = {
   // The children of epic `n`. Each open one not assigned to `me` is
   // checked for what blocks it.
   children(n: number, me: string | null): Promise<EpicChild[] | null>
+  // The numbers of epic `n`'s children, open and closed, without checking
+  // them for blockers: one request. null when the forge would not say.
+  members(n: number): Promise<number[] | null>
+  // The open epic issue `n` is a child of; on GitHub its parent issue, of
+  // any kind. null for none, or when the forge would not say.
+  parentOf(n: number): Promise<number | null>
+  // Whether a child can have children of its own (GitHub): then where you
+  // work widens through each parent up the tree.
+  nested: boolean
+  // The issue assigned to `me` that closed last, within a milestone, those
+  // without one ('none'), or all: one request. null for none, or when the
+  // forge would not say.
+  lastClosed(within: MilestoneRow | 'none' | 'all', me: string): Promise<Closed | null>
   // Everything the detail view shows of issue `n`; what `features` turns
   // off is not asked for.
   issue(n: number, features: Features): Promise<IssueDetail>

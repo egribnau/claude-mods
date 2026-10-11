@@ -349,6 +349,7 @@ test('mine: asked by login, pull requests left out, labels keep their colour', a
       due: null,
       url: 'https://github.com/boats/radar/issues/12',
       body: 'Body of 12',
+      updated: expect.any(String),
     },
   ])
   await t.mine()
@@ -527,16 +528,17 @@ test("github.com: What's next shows your issue and the free ones, pull requests 
   expect(all[0]).toBe("What's next")
   expect(all).toContain(rule('In progress · 1'))
   expect(all).toContain('● #12 Issue 12')
-  expect(all).toContain(rule('Next'))
+  // You work in v1.2, where #12 is yours: Next is taken from there.
+  expect(all).toContain(rule('Next · in v1.2'))
   expect(all).toContain('○ #14 Issue 14')
-  expect(all).toContain(rule('Queue · 1'))
+  expect(all).toContain(rule('Queue'))
   expect(all).toContain('○ #21 Issue 21')
   expect(all.some(t => t.includes('#15') || t.includes('#16'))).toBe(false)
   const bug = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'bug')
   // GitHub's colour, without '#', made readable as any label's is.
   expect(bug?.props.color).toBe(readable('d73a4a'))
   expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
-  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14." }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14, in v1.2." }))
   // Only GitHub's API host is asked, always with the token; nothing blocks
   // these, so no dependencies are asked, and no epic has sub-issues to ask.
   expect(asked?.every(a => a.url.startsWith(`${BASE}/`) && a.auth === 'Bearer github_pat_x')).toBe(true)
@@ -929,4 +931,57 @@ test('closedMilestones: the last closed first, at most n; none when refused', as
   ])
   expect(asked.map(a => a.url)).toEqual([`${API}/milestones?state=closed&per_page=100`])
   expect(await github(fakeSend(() => NOT_FOUND), R, 't', null).closedMilestones(3)).toEqual([])
+})
+
+// Where you work (docs/whats-next/ORDERING.md): the requests behind it.
+
+test('lastClosed: your closed issues in the milestone by its number, newest change first; the latest closed, pull requests left out', async () => {
+  const asked: Asked[] = []
+  const closed = (n: number, at: string, extra: Extra = {}) => ({ ...issue(n, '2026-09-01T00:00:00Z', extra), state: 'closed', closed_at: at })
+  const route = listRoute('/repos/boats/radar/issues', [
+    [
+      closed(40, '2026-10-07T10:00:00Z', { milestone: V12 }),
+      closed(41, '2026-10-09T10:00:00Z', { milestone: V12 }),
+      closed(42, '2026-10-09T11:00:00Z', { milestone: V12, pull: true }),
+    ],
+  ])
+  const t = github(fakeSend(route, asked), R, 'gh-x', null)
+  expect(await t.lastClosed({ title: 'v1.2', due: null, closed: 0, total: 0, id: 2 }, 'alice')).toEqual({
+    number: 41,
+    title: 'Issue 41',
+    closed: '2026-10-09T10:00:00Z',
+    milestone: 'v1.2',
+  })
+  const u = new URL(asked[0]?.url ?? '')
+  expect(u.searchParams.get('state')).toBe('closed')
+  expect(u.searchParams.get('assignee')).toBe('alice')
+  expect(u.searchParams.get('milestone')).toBe('2')
+  expect(u.searchParams.get('sort')).toBe('updated')
+  expect(asked).toHaveLength(1)
+  await t.lastClosed('none', 'alice')
+  await t.lastClosed('all', 'alice')
+  expect(new URL(asked[1]?.url ?? '').searchParams.get('milestone')).toBe('none')
+  expect(new URL(asked[2]?.url ?? '').searchParams.has('milestone')).toBe(false)
+})
+
+test('parentOf: the parent issue while open and in this repo; members: the sub-issues by number', async () => {
+  const parent = (state: string, repo = 'boats/radar') => ({ ...issue(30, '2026-09-01T00:00:00Z'), state, html_url: `https://github.com/${repo}/issues/30` })
+  const answer = (body: unknown) => (u: URL): Reply =>
+    u.pathname.endsWith('/sub_issues') ? { status: 200, body: [issue(43, '2026-09-01T00:00:00Z'), issue(44, '2026-09-02T00:00:00Z')] } : { status: 200, body }
+  const asked: Asked[] = []
+  expect(await github(fakeSend(answer(parent('open')), asked), R, 'gh-x', null).parentOf(41)).toBe(30)
+  expect(asked.map(a => a.url)).toEqual([`${API}/issues/41/parent`])
+  expect(await github(fakeSend(answer(parent('closed'))), R, 'gh-x', null).parentOf(41)).toBe(null)
+  expect(await github(fakeSend(answer(parent('open', 'boats/other'))), R, 'gh-x', null).parentOf(41)).toBe(null)
+  expect(await github(fakeSend(() => NOT_FOUND), R, 'gh-x', null).parentOf(41)).toBe(null)
+  const t = github(fakeSend(answer(null)), R, 'gh-x', null)
+  expect(await t.members(30)).toEqual([43, 44])
+  expect(t.nested).toBe(true)
+})
+
+test('open: how many open issues wait on each comes with the list', async () => {
+  const blocking = { ...issue(37, '2026-09-01T00:00:00Z'), issue_dependencies_summary: { blocked_by: 0, blocking: 2, total_blocked_by: 0, total_blocking: 2 } }
+  const t = github(fakeSend(listRoute('/repos/boats/radar/issues', [[blocking, issue(38, '2026-09-02T00:00:00Z')]])), R, 'gh-x', null)
+  const got = await t.open()
+  expect(got.map(i => i.unblocks)).toEqual([2, 0])
 })

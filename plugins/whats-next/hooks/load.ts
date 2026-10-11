@@ -1,13 +1,16 @@
-import type { Epic, EpicChild, EpicGroup, IssueDetail, IssueRow, MilestoneIssue } from '../types'
+import type { Epic, EpicChild, EpicGroup, IssueDetail, IssueRow, LastClosed, MilestoneIssue, Scope } from '../types'
 import { groupsFor, roots, tree, type MilestoneRow } from './epics'
-import { pickNext } from './next'
-import { message, type EpicRow, type OpenIssue, type Tracker } from './tracker'
+import { order, pickNext, type Scoped } from './next'
+import { message, type Closed, type EpicRow, type OpenIssue, type Tracker } from './tracker'
 
-// What is remembered of a repo until the next Refresh or /next, so the picker
-// can switch without asking the tracker again: its open milestones, your
-// open issues, the available ones and those with others (`listed`: whether
-// the lists answered), the blockers checked so far, the epics, and the
-// children of each epic loaded so far.
+// What is remembered of a repo until the next Refresh or /next, so the
+// milestone filter can switch without asking the tracker again: its open
+// milestones, your open issues, the available ones and those with others
+// (`listed`: whether the lists answered), the blockers checked so far, the
+// epics, and the children of each epic loaded so far. For where you work:
+// the issue you closed last within each milestone filter setting, the open
+// epic each issue is a child of, and the children's numbers of each epic,
+// as asked.
 export type Memory = {
   milestones: MilestoneRow[]
   closedMilestones: MilestoneRow[]
@@ -18,6 +21,9 @@ export type Memory = {
   blockers: Map<number, number[] | null>
   epics: EpicRow[]
   children: Map<number, EpicChild[] | null>
+  lastClosed: Map<string, Closed | null>
+  parents: Map<number, number | null>
+  members: Map<number, number[] | null>
 }
 
 const oldestFirst = (a: IssueRow, b: IssueRow) => a.created.localeCompare(b.created)
@@ -53,6 +59,7 @@ const toRow = (i: IssueDetail): IssueRow => ({
   due: i.due,
   url: i.url,
   body: i.body,
+  updated: i.updated,
 })
 
 // Asks the tracker for what the panes show: the open milestones, your open
@@ -114,27 +121,116 @@ export async function loadRepo(
       blockers: new Map(),
       epics: found,
       children: new Map(),
+      lastClosed: new Map(),
+      parents: new Map(),
+      members: new Map(),
     },
     issuesError,
     epicsError,
   }
 }
 
-// Whether an issue's milestone is in what the picker picked.
+// Whether an issue's milestone is in what the milestone filter is set to.
 export const inPick = (pick: string, milestone: string | null) =>
   pick === 'all' || (pick === 'none' ? milestone === null : pick === `m:${milestone}`)
 
-// What's next within the pick: yours in it are In progress; of the available ones
-// in it, walked oldest first, the first with no open blockers is Next, and
-// the Queue after it is checked too, up to its limit. A tracker without
-// dependencies is not asked for blockers, so its Queue is only limited; nor
-// is one that would not say for an issue (dependencies off without the
-// setup check knowing, an error), until the next Refresh.
-export async function whatsNext(t: Tracker, known: Memory, pick: string, deps: boolean) {
+// Your issues, the one updated last first.
+const latestFirst = (l: readonly IssueRow[]) => [...l].sort((a, b) => b.updated.localeCompare(a.updated))
+
+// What's next within the milestone filter (`pick`): yours in it are In
+// progress; the available ones in it are taken in the order
+// docs/whats-next/ORDERING.md sets out, from where you work outward, and
+// the first with no open blockers is Next; the Queue after it is checked
+// too, up to its limit. A tracker without dependencies is not asked for
+// blockers, so its Queue is only limited; nor is one that would not say for
+// an issue (dependencies off without the setup check knowing, an error),
+// until the next Refresh. `me`: who you are, for Last closed.
+export async function whatsNext(t: Tracker, known: Memory, pick: string, deps: boolean, me: string | null = null, now = 0) {
   const inProgress = known.mine.filter(i => inPick(pick, i.milestone))
   const free = known.free.filter(i => inPick(pick, i.milestone))
-  const { next, queue, blocked, more } = await pickNext(free, blockersOf(t, known, deps))
-  return { inProgress, next, queue, blocked, more }
+  const last = me === null ? null : await lastClosedIn(t, known, pick, me)
+  const from = latestFirst(inProgress)[0] ?? last
+  const chain = from ? await epicsAbove(t, known, from.number) : []
+  const scopes: Scoped[] = []
+  for (const e of chain) {
+    const kids = await membersOf(t, known, e)
+    if (kids) scopes.push({ scope: { kind: 'epic', number: e }, holds: i => kids.includes(i.number) })
+  }
+  const ms = from?.milestone ?? null
+  if (pick === 'all' && ms !== null) scopes.push({ scope: { kind: 'milestone', title: ms }, holds: i => i.milestone === ms })
+  const waitingOn = (n: number) => [...known.blockers.values()].filter(by => by?.includes(n)).length
+  const unblocksOf = (i: IssueRow) => i.unblocks ?? waitingOn(i.number)
+  const due = new Map(known.milestones.map(m => [m.title, m.due]))
+  const ordered = order(free, { scopes, milestoneDue: title => due.get(title) ?? null, unblocks: unblocksOf, now })
+  const { next, queue, blocked, more } = await pickNext(
+    ordered.map(o => o.issue),
+    blockersOf(t, known, deps),
+  )
+  const scopeOf: Record<number, Scope> = {}
+  for (const o of ordered) if (o.scope) scopeOf[o.issue.number] = o.scope
+  // Counted after the walk, which may have found more that wait; for every
+  // open issue known, as every pane's facts line says it.
+  const unblocks: Record<number, number> = {}
+  for (const i of [...known.mine, ...known.free, ...known.taken]) {
+    const n = unblocksOf(i)
+    if (n > 0) unblocks[i.number] = n
+  }
+  const lastClosed: LastClosed | null = last
+    ? { ...last, epic: from === last ? (chain[0] ?? null) : await parentOf(t, known, last.number) }
+    : null
+  return { inProgress, next, queue, blocked, more, scopes: scopeOf, unblocks, lastClosed }
+}
+
+// The issue assigned to `me` that closed last within the milestone filter
+// (`pick`), asked once per setting and remembered. The one within All is
+// also the last within its own milestone.
+export async function lastClosedIn(t: Tracker, known: Memory, pick: string, me: string): Promise<Closed | null> {
+  if (known.lastClosed.has(pick)) return known.lastClosed.get(pick) ?? null
+  const within = pick === 'all' || pick === 'none' ? pick : known.milestones.find(m => `m:${m.title}` === pick)
+  const found = within ? await t.lastClosed(within, me).catch(() => null) : null
+  known.lastClosed.set(pick, found)
+  if (pick === 'all' && found) {
+    const own = found.milestone === null ? 'none' : `m:${found.milestone}`
+    if (!known.lastClosed.has(own)) known.lastClosed.set(own, found)
+  }
+  return found
+}
+
+// The open epic issue `n` is a child of, asked once and remembered.
+async function parentOf(t: Tracker, known: Memory, n: number): Promise<number | null> {
+  if (!known.parents.has(n)) known.parents.set(n, await t.parentOf(n).catch(() => null))
+  return known.parents.get(n) ?? null
+}
+
+// The epics above issue `n`, nearest first: its epic, and on a forge where
+// children nest, each parent up the tree, a loop stopped where it repeats.
+async function epicsAbove(t: Tracker, known: Memory, n: number): Promise<number[]> {
+  const chain: number[] = []
+  for (let e = await parentOf(t, known, n); e !== null && !chain.includes(e) && e !== n; ) {
+    chain.push(e)
+    if (!t.nested) break
+    e = await parentOf(t, known, e)
+  }
+  return chain
+}
+
+// The numbers of epic `n`'s children: from the children Epics loaded, else
+// asked once and remembered.
+async function membersOf(t: Tracker, known: Memory, n: number): Promise<number[] | null> {
+  const loaded = known.children.get(n)
+  if (loaded) return loaded.map(c => c.number)
+  if (!known.members.has(n)) known.members.set(n, await t.members(n).catch(() => null))
+  return known.members.get(n) ?? null
+}
+
+// Where the milestone filter starts on /next: the milestone of your issue
+// in progress updated last, else of the issue you closed last in the repo;
+// null when neither is there or its milestone is not among `options`.
+export async function startingPick(t: Tracker, known: Memory, me: string | null, options: readonly { value: string }[]): Promise<string | null> {
+  const from = latestFirst(known.mine)[0] ?? (me === null ? null : await lastClosedIn(t, known, 'all', me))
+  if (!from) return null
+  const value = from.milestone === null ? 'none' : `m:${from.milestone}`
+  return options.some(o => o.value === value) ? value : null
 }
 
 // The open issues issue `n` waits on, asked of the tracker once and
@@ -238,7 +334,7 @@ export function milestoneKnown(
   }
 }
 
-// The epics within the pick, by milestone, each open one with its children,
+// The epics within the milestone filter, by milestone, each open one with its children,
 // asked of the tracker once and remembered. `me` makes a child yours.
 export async function epicGroups(t: Tracker, known: Memory, pick: string, me: string | null): Promise<EpicGroup[]> {
   const loadOne = async (i: EpicRow): Promise<Epic> => {
@@ -257,7 +353,7 @@ export async function epicGroups(t: Tracker, known: Memory, pick: string, me: st
   )
 }
 
-// The Epics pane as a tree: the groups of the pick with only the epics at
+// The Epics pane as a tree: the groups of the milestone filter with only the epics at
 // the top of the tree in them, and the open epics shown under a parent epic
 // instead (`held`).
 export async function epicTree(
