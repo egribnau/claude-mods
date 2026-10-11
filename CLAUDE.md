@@ -18,4 +18,7 @@ there. Notes for working on a mod live in `docs/<name>/`.
 
 ## Mods
 
+Before working on a mod, read its notes in `docs/<name>/CLAUDE.md`
+(Claude Code loads them through the imports below).
+
 - What's Next (`plugins/whats-next`): @docs/whats-next/CLAUDE.md

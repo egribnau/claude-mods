@@ -3,15 +3,20 @@
 The mod is in `plugins/whats-next`; the rules for every mod are in the
 repo's CLAUDE.md.
 
+## Read first
+
+| When you | Read |
+|---|---|
+| add or change how a pane draws something (a view, a line, a mark, a count, a due date) | `docs/whats-next/DRAWING.md`: a new view follows it, a change to a rule updates it |
+| name a thing in a pane, the README, the canvas, an issue, a comment or code | `docs/whats-next/TERMINOLOGY.md`: one word per thing |
+| settle a drawing rule or a word in a design review | both, and write the decision into the right one at once |
+| add a token setting or a request, or show forge text in a new place | Testing and Hard rules below, and `tests/tokens.test.ts` |
+| change the marketplace name | `docs/whats-next/check-marketplace.sh` |
+
 ## Way of working
 
 - Milestones name a theme, not a version: a milestone's issues each bump
   the version as they land.
-- How the panes draw things (due dates, for a start) is in
-  `docs/whats-next/DRAWING.md`: a new view follows it, and a change to a
-  rule updates it.
-- The words for things are in `docs/whats-next/TERMINOLOGY.md`: one word
-  per thing, in the panes, the README, the canvas, issues and comments.
 
 ## Testing
 
