@@ -2,13 +2,13 @@ import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
 import type { Detail, Epic, Epics, IssueDetail, IssueRow, Milestone, Overview, Ref, Repo, Setup, TokenSource } from '../types'
-import { bar, dueFirst, forYou, openChildren, pickerOptions, standing, summary, tally } from './epics'
+import { bar, dueFirst, forYou, openChildren, pickerOptions, standing, summary, tally, tree } from './epics'
 import { configureCommand, detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
 import { day, dueSoon, dueText, duration, readable, wrap } from './issue'
-import { changesSince, epicGroups, loadRepo, milestoneIssues, milestoneKnown, noteChange, whatsNext, type Memory } from './load'
+import { changesSince, epicTree, loadRepo, milestoneIssues, milestoneKnown, noteChange, whatsNext, type Memory } from './load'
 import { waitingText } from './next'
 import { message, withoutToken, type Send, type Tracker } from './tracker'
 
@@ -330,7 +330,7 @@ async function showEpics($: EngineInterface, r: Repo) {
   const known = memory
   const openEpics = known.epics.filter(i => i.state === 'open').length
   if (openEpics === 0) {
-    await update($, epics, (): Epics => ({ kind: 'ok', groups: [], openEpics }))
+    await update($, epics, (): Epics => ({ kind: 'ok', groups: [], openEpics, held: [], kids: {}, epicNumbers: [] }))
     return
   }
   // Who you are, from the setup check: the children assigned to you are yours.
@@ -338,11 +338,21 @@ async function showEpics($: EngineInterface, r: Repo) {
   const me = s.kind === 'ready' ? s.login : null
   const pick = (await read($, picker))?.pick ?? 'all'
   try {
-    const groups = await epicGroups(tracker($, r), known, pick, me)
-    await update($, epics, (): Epics => ({ kind: 'ok', groups, openEpics }))
+    const shown = await epicTree(tracker($, r), known, pick, me, new Set(await read($, unfolded)))
+    await update($, epics, (): Epics => ({ kind: 'ok', ...shown, openEpics }))
   } catch (err) {
     await update($, epics, (): Epics => ({ kind: 'error', message: message(err) }))
   }
+}
+
+// Folds issue `n` open or shut in Epics; open, the children it now shows
+// are asked for, those not asked before.
+async function foldIssue($: EngineInterface, n: number) {
+  const was = await read($, unfolded)
+  await update($, unfolded, () => (was.includes(n) ? was.filter(x => x !== n) : [...was, n]))
+  const r = await read($, repo)
+  if (!r || was.includes(n)) return
+  await counted($, `#${n}`, () => showEpics($, r))
 }
 
 // Picks a milestone for both panes and closes the picker's list.
@@ -957,6 +967,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     blockedBy?: number[]
     // Leaves the milestone out of the facts, where the list is one milestone's.
     noMilestone?: boolean
+    // A row with children of its own, in the tree: its fold mark in place of
+    // the mark, a target of its own (none for one shown above, drawn dim),
+    // and how many of its children are closed, of all, at the right.
+    fold?: { mark: string; key: string; onPress?: () => unknown }
+    count?: string
+    // Said dim on the second line, in place of the facts.
+    note?: string
     onPress: () => unknown
   }
   const issueRow = (i: RowIssue, o: RowLook) => {
@@ -975,7 +992,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       ]),
     ]
     const parts: RenderChildren[] = (
-      o.blockedBy && o.blockedBy.length > 0
+      o.note
+        ? [o.note]
+        : o.blockedBy && o.blockedBy.length > 0
         ? [blockers(o.blockedBy), opened]
         : [o.noMilestone || pk?.pick === `m:${i.milestone}` ? null : i.milestone, i.labels.length > 0 ? labelTexts(i.labels) : null, opened]
     ).filter(p => p !== null && p !== '')
@@ -989,10 +1008,35 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ]
         : (p as RenderChildren[])),
     ])
-    const room = columns - (o.lead ?? 0) - 2 - o.numWidth
-    const title = o.who ? `${fit(i.title, room - o.who.length - 1).padEnd(room - o.who.length - 1)} ` : fit(i.title, room)
+    const room = columns - (o.lead ?? 0) - 2 - o.numWidth - (o.count !== undefined ? 6 : 0)
+    const title =
+      o.who || o.count !== undefined
+        ? `${fit(i.title, room - (o.who ? o.who.length + 1 : 0)).padEnd(room - (o.who ? o.who.length + 1 : 0))}${o.who ? ' ' : ''}`
+        : fit(i.title, room)
+    const fold = o.fold
     return (
       <Box key={o.key} flexDirection="column" marginBottom={gap} flexShrink={0}>
+        {fold ? (
+          // Two targets, as an epic's: the mark folds, the rest opens its detail.
+          <Box height={1}>
+            <Text>{lead}</Text>
+            {fold.onPress ? (
+              <Button key={fold.key} plain onPress={fold.onPress}>
+                <Text>{fold.mark}</Text>
+              </Button>
+            ) : (
+              <Text dimColor>{fold.mark}</Text>
+            )}
+            <Button key={o.buttonKey} plain onPress={o.onPress}>
+              <Text wrap="truncate-end">
+                <Text color="suggestion">{`${`#${i.number}`.padStart(o.numWidth - 1)} `}</Text>
+                {title}
+                {o.who && <Text dimColor>{o.who}</Text>}
+                {o.count !== undefined && <Text dimColor>{o.count.padStart(6)}</Text>}
+              </Text>
+            </Button>
+          </Box>
+        ) : (
         <Button key={o.buttonKey} plain autoFocus={o.autoFocus || undefined} onPress={o.onPress}>
           <Text wrap="truncate-end" bold={o.bold}>
             {lead}
@@ -1004,6 +1048,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             {o.who && <Text dimColor>{o.who}</Text>}
           </Text>
         </Button>
+        )}
         {/* One row: a line too long for the pane is cut, but would still
             take the height of its overflow. The indent keeps its width, so
             a cut line starts under the title like the others. */}
@@ -1769,15 +1814,24 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     if (ep.kind === 'error') rows.push(para('error', `Could not load the epics: ${ep.message}.`, { color: 'error' }))
     if (ep.kind === 'ok' && groups.length === 0) rows.push(para('none', `No open epics in ${slug(r)}.`, { dimColor: true }))
     const open = (x: Epic) => x.state === 'open' && folds.has(x.number)
+    // The tree under each unfolded epic, from what is loaded so far.
+    const kidsOf = ep.kind === 'ok' ? ep.kids : {}
+    const { lines: treeLines } = tree(
+      groups.flatMap(g => g.epics),
+      n => (n in kidsOf ? kidsOf[n] : undefined),
+      folds,
+      new Set(ep.kind === 'ok' ? ep.epicNumbers : []),
+    )
     // One number column for every group, so all titles line up.
     const numbers = groups.flatMap(g =>
-      g.epics.flatMap(x => [x.number, ...(open(x) ? openChildren(x.children ?? []).map(c => c.number) : [])]),
+      g.epics.flatMap(x => [x.number, ...(treeLines.get(x.number) ?? []).flatMap(l => (l.kind === 'child' ? [l.child.number] : []))]),
     )
     const numWidth = Math.max(0, ...numbers.map(n => `#${n}`.length)) + 1
     const num = (n: number) => `${`#${n}`.padStart(numWidth - 1)} `
     // Bar and count at the right of an epic's row: 15 columns.
     const titleWidth = Math.max(0, columns - 2 - numWidth - 15)
     const indent = ' '.repeat(2 + numWidth)
+    const drawn = new Map<number, number>()
     groups.forEach((g, gi) => {
       // The group's rule: the milestone's name bright, the rest dim.
       const name = g.title ?? 'No milestone'
@@ -1818,9 +1872,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               <Button
                 key={`fold-${x.number}`}
                 plain
-                onPress={() =>
-                  update($, unfolded, ns => (ns.includes(x.number) ? ns.filter(n => n !== x.number) : [...ns, x.number]))
-                }
+                onPress={() => foldIssue($, x.number)}
               >
                 <Text>{open(x) ? '− ' : '+ '}</Text>
               </Button>
@@ -1848,31 +1900,54 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>,
         )
         if (!open(x)) continue
-        // Folded open: its open children, then how many are closed.
-        const kids: RenderChildren[] = []
-        for (const c of openChildren(x.children ?? [])) {
+        // Folded open: the tree under it, each level two columns further in.
+        const under = treeLines.get(x.number) ?? []
+        const kids: RenderChildren[] = under.map((l, k) => {
+          const lead = 2 + 2 * l.depth
+          if (l.kind !== 'child') {
+            // A closing line sets itself apart from a row after it.
+            const after = under[k + 1]?.kind === 'child' ? gap : 0
+            const at = `${x.number}-${k}`
+            const text =
+              l.kind === 'closed'
+                ? `${' '.repeat(lead)}✓ ${l.closed} closed`
+                : `${' '.repeat(lead + numWidth)}${l.kind === 'unknown' ? 'children unknown' : l.kind === 'none' ? 'no children' : 'Loading the children…'}`
+            return (
+              <Box key={`${l.kind}-${at}`} flexShrink={0} marginBottom={after}>
+                {line(`${l.kind}-line-${at}`, text, l.kind === 'closed' ? { color: 'inactive' } : { dimColor: true })}
+              </Box>
+            )
+          }
+          const c = l.child
+          // An issue shown twice needs another address the second time.
+          const times = (drawn.get(c.number) ?? 0) + 1
+          drawn.set(c.number, times)
+          const at = times === 1 ? `${c.number}` : `${c.number}@${times}`
           const st = standing(c)
-          kids.push(
-            issueRow(c, {
-              key: `child-row-${c.number}`,
-              buttonKey: `child-${c.number}`,
-              numWidth,
-              lead: 2,
-              // Hollow beside the filled ● for yours: someone else's.
-              mark: st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : st === 'taken' ? '○ ' : '  ',
-              markColor: st === 'mine' ? 'success' : undefined,
-              dim: st === 'blocked',
-              who: st === 'taken' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : '',
-              blockedBy: st === 'blocked' ? c.blockedBy : undefined,
-              onPress: () => openIssue($, EPICS_PANE, c.number),
+          return issueRow(c, {
+            key: `child-row-${at}`,
+            buttonKey: `child-${at}`,
+            numWidth,
+            lead,
+            // Hollow beside the filled ● for yours: someone else's.
+            mark: st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : st === 'taken' ? '○ ' : '  ',
+            markColor: st === 'mine' ? 'success' : undefined,
+            dim: st === 'blocked',
+            who: st === 'taken' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : '',
+            blockedBy: st === 'blocked' ? c.blockedBy : undefined,
+            ...(l.fold && {
+              fold:
+                l.fold === 'shown above'
+                  ? { mark: '↑ ', key: `fold-${at}` }
+                  : { mark: l.fold === 'unfolded' ? '− ' : '+ ', key: `fold-${at}`, onPress: () => foldIssue($, c.number) },
+              count: l.count ? `${l.count.closed}/${l.count.total}` : '',
+              ...(l.fold === 'shown above' && { note: 'shown above' }),
             }),
-          )
-        }
-        if (t.closed > 0) kids.push(line(`closed-${x.number}`, `  ✓ ${t.closed} closed`, { color: 'inactive' }))
-        if (x.children === null) kids.push(line(`unknown-${x.number}`, `${indent}children unknown`, { dimColor: true }))
-        else if (t.total === 0) kids.push(line(`none-${x.number}`, `${indent}no children`, { dimColor: true }))
+            onPress: () => openIssue($, EPICS_PANE, c.number),
+          })
+        })
         // The last child row brings its own empty line; a closing line needs one.
-        const endsInRow = t.closed === 0 && x.children !== null && t.total > 0
+        const endsInRow = under.at(-1)?.kind === 'child'
         rows.push(
           <Box key={`kids-${x.number}`} flexDirection="column" flexShrink={0} marginBottom={endsInRow ? 0 : gap}>
             {kids}
@@ -1880,9 +1955,11 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         )
       }
     })
-    const shown = groups.flatMap(g => g.epics)
-    const yours = shown.reduce((n, x) => n + tally(x.children ?? []).mine, 0)
-    const openShown = shown.filter(x => x.state === 'open').length
+    // Every open epic in the pick, at the top or under a parent; each child
+    // of yours once, however many epics hold it.
+    const shown = [...groups.flatMap(g => g.epics), ...(ep.kind === 'ok' ? ep.held : [])].filter(x => x.state === 'open')
+    const yours = new Set(shown.flatMap(x => (x.children ?? []).filter(c => c.state === 'open' && standing(c) === 'mine').map(c => c.number))).size
+    const openShown = shown.length
     const g = groups.length > 0
     return (
       <Box flexDirection="column" height={height}>

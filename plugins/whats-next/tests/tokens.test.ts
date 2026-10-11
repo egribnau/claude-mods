@@ -199,6 +199,27 @@ test('Work on this: the prompt it drafts, its toast and the Debug counter carry 
   noToken(said)
 })
 
+test('Epics: a sub-issue unfolded in the tree, and the Debug counter after, carry no token', GH, async ($, on) => {
+  const epic = { ...issue(20, 'Radar sweep'), labels: [{ name: 'epic', color: '' }] }
+  const said = world(on, {
+    answers: {
+      '/repos/boats/radar/issues': url => (url.includes('labels=') ? json(200, [epic]) : null),
+      '/repos/boats/radar/issues/20/sub_issues': () =>
+        json(200, [{ ...issue(14), sub_issues_summary: { total: 1, completed: 0, percent_completed: 0 } }]),
+      '/repos/boats/radar/issues/14/sub_issues': () => json(200, [issue(30, `Rotate ${TOKEN}`)]),
+    },
+  })
+  await $.command.run(RUN)
+  const ui = (await $.ui.mount({ ...PANE, requestId: 'next-epics', surface: 'terminal' })) as Ui
+  await ui.press({ key: 'fold-20' })
+  await ui.press({ key: 'fold-14' })
+  said.push(...(await texts(ui)))
+
+  expect(said.some(s => s.includes('#30 Rotate <token>'))).toBe(true)
+  expect(said.some(s => s.startsWith('↯ #14'))).toBe(true)
+  noToken(said)
+})
+
 test('withoutToken: answers and errors of every kind lose the token', async () => {
   const t = 'glpat-abcdefgh12345678'
   const raw = {

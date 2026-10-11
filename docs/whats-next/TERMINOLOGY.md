@@ -17,7 +17,7 @@ DRAWING.md.
 | milestone | A forge milestone of the repo. |
 | due date | The date an issue or a milestone is due, if it has one. |
 | epic | An issue with the Epic label (the label is a setting). |
-| child | An issue an epic holds. On Forgejo: an issue the epic depends on. On GitLab: an issue it links as related. On GitHub: a sub-issue. |
+| child | An issue an epic holds, or on GitHub any issue. On Forgejo: an issue the epic depends on. On GitLab: an issue it links as related, other epics left out (a related link has no direction). On GitHub: a sub-issue, of any issue. A child that has children of its own unfolds to them: on Forgejo a child that is an epic, on GitHub any child with sub-issues. |
 | blocker | An open issue that another one waits on. On Forgejo: a dependency. On GitLab EE: a blocking link. On GitHub: a "blocked by" relation. |
 | blocked by, blocks | The two sides of a blocker, as the issue detail lists them. |
 
@@ -50,7 +50,8 @@ free one is blocked.
 | picker | The milestone choice What's next and Epics share: a milestone, No milestone, or All. |
 | detail | An issue or a milestone shown in place of the list, left with Back. |
 | row | One issue, epic or milestone in a list. |
-| fold, unfold | Hide or show what is under an epic or a milestone. |
+| fold, unfold | Hide or show what is under an epic, a child with children, or a milestone. |
+| shown above | An issue already in the tree higher up, shown again under a second parent or in a loop, and not unfolded there. |
 | for-you line | What there is for you: how many are yours, blocked, available, or with others. |
 | bottom line | The last line of a pane. |
 

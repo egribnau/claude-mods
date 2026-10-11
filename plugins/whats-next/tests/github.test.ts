@@ -811,6 +811,45 @@ test('children: sub-issues of this repo, yours, closed, and blocked asked only w
 
 const EPICS_PANE = { ...PANE, requestId: 'next-epics', props: { ...PANE.props, title: 'Epics' } } as const
 
+test('children: each with its own sub-issue count, where GitHub gives one', async () => {
+  const route = (u: URL): Reply =>
+    u.pathname === '/repos/boats/radar/issues/20/sub_issues'
+      ? { status: 200, body: [{ ...sub(14), sub_issues_summary: { total: 3, completed: 1, percent_completed: 33 } }, sub(15)] }
+      : NOT_FOUND
+  const kids = await github(fakeSend(route), R, 't', null).children(20, 'alice')
+  expect(kids?.map(k => k.subIssues)).toEqual([{ closed: 1, total: 3 }, undefined])
+})
+
+test('github.com: sub-issues with sub-issues of their own fold in the tree, label or not, as deep as they go', GH, async ($, on) => {
+  const asked: World['asked'] = []
+  const clock = world(on, {
+    mine: [MINE],
+    open: OPEN,
+    milestones: [V12],
+    epics: [epicIssue(20, 'Radar sweep', 'open', ['Epic'], V12)],
+    subs: {
+      20: [{ ...sub(14), sub_issues_summary: { total: 2, completed: 1, percent_completed: 50 } }, sub(15)],
+      14: [{ ...sub(30), sub_issues_summary: { total: 1, completed: 0, percent_completed: 0 } }, sub(31, { state: 'closed' })],
+      30: [sub(40)],
+    },
+    asked,
+  })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  const subsAsked = () => asked?.filter(a => a.url.includes('/sub_issues')).map(a => new URL(a.url).pathname.split('/')[5])
+  await ui.press({ key: 'fold-20' })
+  // #14 has no Epic label: its count comes with it, nothing more is asked.
+  expect((await texts(ui)).find(t => t.startsWith('#14 '))).toMatch(/^#14 Issue 14 +1\/2$/)
+  expect(subsAsked()).toEqual(['20'])
+  await ui.press({ key: 'fold-14' })
+  await ui.press({ key: 'fold-30' })
+  const all = await texts(ui)
+  expect(all).toContain('        #40 Issue 40')
+  expect(all).toContain('    ✓ 1 closed')
+  expect(subsAsked()).toEqual(['20', '14', '30'])
+})
+
 test('github.com: an epic with its sub-issues in the Epics pane, with the bar and the tallies', GH, async ($, on) => {
   const asked: World['asked'] = []
   const clock = world(on, {

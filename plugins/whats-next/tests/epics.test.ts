@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { bar, groupsFor, openChildren, pickerOptions, summary, tally } from '../hooks/epics'
+import { bar, groupsFor, openChildren, pickerOptions, roots, summary, tally, tree, type TreeLine } from '../hooks/epics'
 import type { EpicChild } from '../types'
 
 const EPICS_PANE = {
@@ -737,6 +737,193 @@ test('tally and summary', () => {
 test('bar: closed children as filled cells', () => {
   expect(bar(3, 8)).toEqual({ filled: '▰▰▰', empty: '▱▱▱▱▱' })
   expect(bar(0, 0)).toEqual({ filled: '', empty: '▱▱▱▱▱▱▱▱' })
+})
+
+// An open epic with these children, open unless closed.
+const parent = (number: number, kids: number[], closedKids: number[] = []) => ({
+  number,
+  children: [...kids.map(n => child(n)), ...closedKids.map(n => child(n, { state: 'closed' }))],
+})
+
+test('roots: an epic held by an open epic in view is not at the top; a loop keeps its lowest', () => {
+  // 1 holds 2, 2 holds 3; 4 stands alone; 5 and 6 hold each other.
+  const got = roots([parent(1, [2, 9]), parent(2, [3]), parent(3, []), parent(4, []), parent(6, [5]), parent(5, [6])])
+  expect([...got].sort((a, b) => a - b)).toEqual([1, 4, 5])
+  // A closed child epic holds nothing up: 2 is closed under 1.
+  expect([...roots([parent(1, [], [2]), parent(2, [])])].sort()).toEqual([1, 2])
+})
+
+// What a tree line says, short: depth, mark, number and count.
+const say = (l: TreeLine) =>
+  l.kind === 'child'
+    ? `${' '.repeat(l.depth)}${l.fold === 'unfolded' ? '−' : l.fold === 'folded' ? '+' : l.fold === 'shown above' ? '↑' : '·'}${l.child.number}${l.count ? ` ${l.count.closed}/${l.count.total}` : ''}`
+    : `${' '.repeat(l.depth)}${l.kind}${l.kind === 'closed' ? ` ${l.closed}` : ''}`
+
+test('tree: an unfolded epic lists its open children; a child epic folds, with its count', () => {
+  const kids = new Map<number, EpicChild[] | null>([
+    [1, [child(2), child(3), child(4, { state: 'closed' })]],
+    [3, [child(5), child(6, { state: 'closed' })]],
+    [5, [child(7)]],
+  ])
+  const top = [{ number: 1, title: 'E', state: 'open' as const, children: kids.get(1) ?? null }]
+  const epics = new Set([1, 3, 5])
+  const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
+
+  let t = tree(top, look, new Set([1]), epics)
+  expect(t.lines.get(1)?.map(say)).toEqual(['·2', '+3 1/2', 'closed 1'])
+  expect(t.missing).toEqual([])
+
+  // 3 unfolded: its children, and 5's loaded one level ahead.
+  t = tree(top, look, new Set([1, 3]), epics)
+  expect(t.lines.get(1)?.map(say)).toEqual(['·2', '−3 1/2', ' +5 0/1', ' closed 1', 'closed 1'])
+  // Folded, the epic shows nothing under it.
+  expect(tree(top, look, new Set([3]), epics).lines.get(1)).toEqual([])
+})
+
+test('tree: what is not loaded yet is missing, and shows as loading', () => {
+  const kids = new Map<number, EpicChild[] | null>([[1, [child(3)]]])
+  const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
+  const top = [{ number: 1, title: 'E', state: 'open' as const, children: kids.get(1) ?? null }]
+  // A child epic not loaded: its count is not known yet, so it is asked for.
+  let t = tree(top, look, new Set([1]), new Set([1, 3]))
+  expect(t.lines.get(1)?.map(say)).toEqual(['+3'])
+  expect(t.missing).toEqual([3])
+  t = tree(top, look, new Set([1, 3]), new Set([1, 3]))
+  expect(t.lines.get(1)?.map(say)).toEqual(['−3', ' loading'])
+  // Loaded and empty: nothing to fold. Unknown: said so.
+  kids.set(3, [])
+  expect(tree(top, look, new Set([1, 3]), new Set([1, 3])).lines.get(1)?.map(say)).toEqual(['·3'])
+  kids.set(3, null)
+  expect(tree(top, look, new Set([1, 3]), new Set([1, 3])).lines.get(1)?.map(say)).toEqual(['−3', ' unknown'])
+})
+
+test('tree: a sub-issue count from the forge folds any issue, without asking', () => {
+  const kids = new Map<number, EpicChild[] | null>([[1, [child(3, { subIssues: { closed: 1, total: 3 } }), child(4, { subIssues: { closed: 0, total: 0 } })]]])
+  const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
+  const top = [{ number: 1, title: 'E', state: 'open' as const, children: kids.get(1) ?? null }]
+  const t = tree(top, look, new Set([1]), new Set([1]))
+  expect(t.lines.get(1)?.map(say)).toEqual(['+3 1/3', '·4'])
+  expect(t.missing).toEqual([])
+  expect(tree(top, look, new Set([1, 3]), new Set([1])).missing).toEqual([3])
+})
+
+test('tree: an issue shown above is shown again, but not unfolded', () => {
+  // 1 holds 2 and 3, both hold 4; 4 holds 1 back: a loop.
+  const kids = new Map<number, EpicChild[] | null>([
+    [1, [child(2), child(3)]],
+    [2, [child(4)]],
+    [3, [child(4)]],
+    [4, [child(1)]],
+  ])
+  const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
+  const top = [{ number: 1, title: 'E', state: 'open' as const, children: kids.get(1) ?? null }]
+  const t = tree(top, look, new Set([1, 2, 3, 4]), new Set([1, 2, 3, 4]))
+  expect(t.lines.get(1)?.map(say)).toEqual(['−2 0/1', ' −4 0/1', '  ↑1 0/2', '−3 0/1', ' ↑4 0/1'])
+})
+
+// v1.2 holds the epic Tree (#80), which depends on the epic Sub (#81) and on
+// #82; Sub depends on #83 and the closed #84. Far (#85), an epic in v1.3,
+// is a child of Tree too, with #86 under it.
+const NESTED: World = {
+  milestones: [milestone('v1.2', '2026-10-31T00:00:00Z', 8, 9), milestone('v1.3', '2026-11-30T00:00:00Z', 6, 0)],
+  epics: [
+    epic(80, 'Tree', { milestone: 'v1.2' }),
+    epic(81, 'Sub', { milestone: 'v1.2' }),
+    epic(85, 'Far', { milestone: 'v1.3' }),
+  ],
+  deps: {
+    80: [epic(81, 'Sub', { milestone: 'v1.2' }), issue(82, 'Plain'), epic(85, 'Far', { milestone: 'v1.3' })],
+    81: [issue(83, 'Leaf', { assignees: ['alice'] }), issue(84, 'Done', { state: 'closed' })],
+    85: [issue(86, 'Far leaf')],
+  },
+}
+
+const keysOf = async (ui: { findAll: (q: { type: string }) => Promise<unknown[]> }) =>
+  ((await ui.findAll({ type: 'Button' })) as { key: string }[]).map(b => b.key)
+
+test('a child epic shows under its parent, not at the top, and folds with its own count', TOKEN, async ($, on) => {
+  world(on, NESTED)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  let keys = await keysOf(ui)
+  expect(keys).toContain('epic-80')
+  expect(keys).not.toContain('epic-81')
+  // Both open epics in the pick count, and #83 is yours.
+  expect(await texts(ui)).toContain('2 epics · ')
+  expect(await texts(ui)).toContain('1 yours')
+
+  await ui.press({ key: 'fold-80' })
+  keys = await keysOf(ui)
+  expect(keys.indexOf('fold-81')).toBeGreaterThan(-1)
+  expect(keys.indexOf('fold-81')).toBeLessThan(keys.indexOf('child-81'))
+  const all = await texts(ui)
+  expect(all.find(t => t.startsWith('#81 '))).toMatch(/^#81 Sub +1\/2$/)
+  expect(all.find(t => t.startsWith('#85 '))).toMatch(/^#85 Far +0\/1$/)
+  expect(all.some(t => t.includes('#83'))).toBe(false)
+
+  await ui.press({ key: 'fold-81' })
+  const deeper = await texts(ui)
+  // Two columns further in than #81's own row, then #81's siblings again.
+  expect(deeper.filter(t => /^ +.? ?#8[2-6] /.test(t) || t.includes('✓'))).toEqual(['    ● #83 Leaf', '    ✓ 1 closed', '    #82 Plain'])
+  await ui.press({ key: 'fold-81' })
+  expect((await texts(ui)).some(t => t.includes('#83'))).toBe(false)
+})
+
+test('a child epic outside the pick is asked for once its parent unfolds, and once only', TOKEN, async ($, on) => {
+  const asked: string[] = []
+  world(on, NESTED, asked)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  // Forgejo asks a child's dependencies once to see what blocks it; its
+  // children are asked once more, when its parent unfolds, and never again.
+  const of85 = () => asked.filter(u => u.endsWith('/issues/85/dependencies')).length
+  const before = of85()
+  await ui.press({ key: 'fold-80' })
+  expect(of85()).toBe(before + 1)
+  await ui.press({ key: 'fold-85' })
+  await ui.press({ key: 'fold-85' })
+  await ui.press({ key: 'fold-85' })
+  expect(of85()).toBe(before + 1)
+  expect((await texts(ui)).some(t => t.includes('#86'))).toBe(true)
+})
+
+test('what is unfolded stays so after a Refresh and after Back from a detail', TOKEN, async ($, on) => {
+  world(on, NESTED)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'fold-80' })
+  await ui.press({ key: 'fold-81' })
+  await ui.press({ key: 'refresh' })
+  expect((await texts(ui)).some(t => t.includes('#83 Leaf'))).toBe(true)
+  await ui.press({ key: 'child-83' })
+  await ui.press({ key: 'back' })
+  expect((await texts(ui)).some(t => t.includes('#83 Leaf'))).toBe(true)
+})
+
+test('an epic in a loop shows once at the top, and again under the other as shown above', TOKEN, async ($, on) => {
+  world(on, {
+    milestones: [milestone('v1.2', '2026-10-31T00:00:00Z', 8, 9)],
+    epics: [epic(91, 'Ping', { milestone: 'v1.2' }), epic(90, 'Pong', { milestone: 'v1.2' })],
+    deps: { 90: [epic(91, 'Ping')], 91: [epic(90, 'Pong')] },
+  })
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  let keys = await keysOf(ui)
+  expect(keys).toContain('epic-90')
+  expect(keys).not.toContain('epic-91')
+  await ui.press({ key: 'fold-90' })
+  await ui.press({ key: 'fold-91' })
+  keys = await keysOf(ui)
+  // Shown above: no fold mark to press, but the row opens its detail.
+  expect(keys).toContain('child-90')
+  expect(keys).not.toContain('fold-90@2')
+  const found = await nodes(ui)
+  expect(found.find(t => t.text === '↑ ')?.props.dimColor).toBe(true)
+  expect(found.filter(t => t.text === 'shown above').some(t => t.props.dimColor)).toBe(true)
+  // A child epic is not blocked by its own children.
+  expect((await texts(ui)).some(t => t.startsWith('blocked by'))).toBe(false)
+  await ui.press({ key: 'child-90' })
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 })
 
 const MS = [

@@ -129,6 +129,9 @@ export type EpicChild = {
   milestone: string | null
   created: string
   blockedBy: number[]
+  // How many sub-issues it has, closed and in all, where the forge says so
+  // with the issue (GitHub): its count without asking for its children.
+  subIssues?: { closed: number; total: number }
 }
 
 // An issue with the Epic label. Its children are the issues it depends on;
@@ -148,7 +151,10 @@ export type EpicGroup = { title: string | null; due: string | null; closed: numb
 export type Epics =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'ok'; groups: EpicGroup[]; openEpics: number }
+  // `held`: the open epics in the pick shown under a parent epic, not at the
+  // top of a group. `kids`: the children loaded of any issue, by number, for
+  // the tree. `epicNumbers`: the repo's open epics.
+  | { kind: 'ok'; groups: EpicGroup[]; openEpics: number; held: Epic[]; kids: Record<number, EpicChild[] | null>; epicNumbers: number[] }
   | { kind: 'error'; message: string }
 
 // A milestone as the Milestones pane shows it: its due date and how many of

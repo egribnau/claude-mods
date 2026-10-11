@@ -58,6 +58,106 @@ export function forYou(t: Tally): { text: string; color?: string }[] {
   return parts
 }
 
+// The open epics in view that show at the top of their group: each one no
+// open epic in view holds as a child. An epic in a loop of epics, held only
+// from within the loop, would show nowhere: the lowest such number shows at
+// the top, and what it reaches under it.
+export function roots(open: readonly { number: number; children: readonly EpicChild[] | null }[]): Set<number> {
+  const inView = new Map(open.map(e => [e.number, e]))
+  const under = (n: number) =>
+    (inView.get(n)?.children ?? []).filter(c => c.state === 'open' && inView.has(c.number)).map(c => c.number)
+  const held = new Set(open.flatMap(e => under(e.number)))
+  const top = new Set(open.filter(e => !held.has(e.number)).map(e => e.number))
+  const reached = new Set<number>()
+  const walk = (n: number) => {
+    if (reached.has(n)) return
+    reached.add(n)
+    under(n).forEach(walk)
+  }
+  top.forEach(walk)
+  for (const n of [...inView.keys()].sort((a, b) => a - b)) {
+    if (reached.has(n)) continue
+    top.add(n)
+    walk(n)
+  }
+  return top
+}
+
+// How a row with children is folded: its mark, or shown above, where an
+// issue already in the tree shows again and does not unfold.
+export type Folding = 'folded' | 'unfolded' | 'shown above'
+
+// One line under an unfolded issue, `depth` levels below the epic at the
+// top: an open child, with its fold and its count when it has children;
+// how many children are closed; or that its children are unknown, none, or
+// still loading.
+export type TreeLine =
+  | { kind: 'child'; child: EpicChild; depth: number; fold: Folding | null; count: { closed: number; total: number } | null }
+  | { kind: 'closed'; depth: number; closed: number }
+  | { kind: 'unknown' | 'none' | 'loading'; depth: number }
+
+// The tree under each open epic at the top, in the order the pane draws
+// them: the lines under it, none while it is folded. `kids(n)` is what is
+// loaded of issue n's children: undefined when not yet. An issue has
+// children when the forge counts sub-issues for it, else when it is an
+// epic (`epics`) not known to have none. `missing`: the issues whose
+// children are needed and not loaded: those unfolded, and those drawn
+// folded whose count is not known, one level ahead.
+export function tree(
+  top: readonly Epic[],
+  kids: (n: number) => readonly EpicChild[] | null | undefined,
+  unfolded: ReadonlySet<number>,
+  epics: ReadonlySet<number>,
+): { lines: Map<number, TreeLine[]>; missing: number[] } {
+  const seen = new Set<number>()
+  const missing = new Set<number>()
+  const under = (children: readonly EpicChild[] | null | undefined, depth: number, n: number): TreeLine[] => {
+    if (children === undefined) {
+      missing.add(n)
+      return [{ kind: 'loading', depth }]
+    }
+    if (children === null) return [{ kind: 'unknown', depth }]
+    if (children.length === 0) return [{ kind: 'none', depth }]
+    const lines: TreeLine[] = []
+    // A child's own children never count as what blocks it.
+    const unblocked = children.map(c => {
+      const own = new Set((kids(c.number) ?? []).map(k => k.number))
+      if (own.size === 0 || !c.blockedBy.some(n => own.has(n))) return c
+      const blockedBy = c.blockedBy.filter(n => !own.has(n))
+      return { ...c, blockedBy, blocked: blockedBy.length > 0 }
+    })
+    for (const c of openChildren(unblocked)) {
+      const own = kids(c.number)
+      const has = c.subIssues ? c.subIssues.total > 0 : epics.has(c.number) && own?.length !== 0
+      if (!has) {
+        seen.add(c.number)
+        lines.push({ kind: 'child', child: c, depth, fold: null, count: null })
+        continue
+      }
+      if (!c.subIssues && own === undefined) missing.add(c.number)
+      const t = own ? tally(own) : null
+      const count = c.subIssues ?? (t ? { closed: t.closed, total: t.total } : null)
+      if (seen.has(c.number)) {
+        lines.push({ kind: 'child', child: c, depth, fold: 'shown above', count })
+        continue
+      }
+      seen.add(c.number)
+      const open = unfolded.has(c.number)
+      lines.push({ kind: 'child', child: c, depth, fold: open ? 'unfolded' : 'folded', count })
+      if (open) lines.push(...under(own, depth + 1, c.number))
+    }
+    const closed = children.filter(c => c.state === 'closed').length
+    if (closed > 0) lines.push({ kind: 'closed', depth, closed })
+    return lines
+  }
+  const lines = new Map<number, TreeLine[]>()
+  for (const e of top) {
+    seen.add(e.number)
+    if (e.state === 'open') lines.set(e.number, unfolded.has(e.number) ? under(e.children, 0, e.number) : [])
+  }
+  return { lines, missing: [...missing] }
+}
+
 // A milestone, open or closed: its due date, how many of its issues are
 // closed of all, and for Milestone detail its text, its page on the forge
 // and when it closed (null when the forge does not say).

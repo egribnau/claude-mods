@@ -193,7 +193,8 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         .map(i => ({ number: i.number, title: i.title, state: i.state === 'closed' ? 'closed' : 'open', milestone: i.milestone?.title ?? null }))
     },
 
-    // An epic's children are its sub-issues in this repo. Each open one not
+    // An issue's children are its sub-issues in this repo, an epic's or any
+    // other's, each with how many sub-issues it has itself. Each open one not
     // assigned to `me` is checked for what blocks it, with a request only
     // when it says open issues block it.
     async children(n: number, me: string | null): Promise<EpicChild[] | null> {
@@ -223,6 +224,8 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
               milestone: row.milestone,
               created: row.created,
               blockedBy,
+              // Its own count, for the tree, without asking for its sub-issues.
+              ...(c.sub_issues_summary && { subIssues: { closed: c.sub_issues_summary.completed, total: c.sub_issues_summary.total } }),
             }
           }),
       )
@@ -400,6 +403,8 @@ type RawIssue = {
   pull_request?: unknown
   // How many open issues block it (`blocked_by`), where GitHub has dependencies.
   issue_dependencies_summary?: { blocked_by?: number } | null
+  // How many sub-issues it has, closed (`completed`) and in all, in any repo.
+  sub_issues_summary?: { total: number; completed: number } | null
 }
 
 // An issue that blocks another, or is blocked by it.

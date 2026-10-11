@@ -748,6 +748,9 @@ test('GitLab Free: the Epics pane shows the epic in its milestone, x/y closed, i
   expect(rows).toEqual(['  ● #37 Issue 37', '    #33 Issue 33', `  ○ #44 ${'Issue 44'.padEnd(37)} jdoe`, '  ✓ 1 closed'])
   // Another project's issue and the peer epic are no children.
   expect(all.some(t => t.includes('#5 ') || t.includes('#25'))).toBe(false)
+  // A related link has no direction: on GitLab no child folds, the tree is one level.
+  const folds = ((await epics.findAll({ type: 'Button' })) as Found[]).map(b => b.key).filter(k => k.startsWith('fold-'))
+  expect(folds).toEqual(['fold-20'])
   const bug = ((await epics.findAll({ type: 'Text' })) as Found[]).find(t => t.text === 'bug')
   expect(bug?.props.color).toBe('#d9534f')
   expect(all.some(t => ERROR.test(t))).toBe(false)
