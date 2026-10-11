@@ -83,6 +83,21 @@ export function roots(open: readonly { number: number; children: readonly EpicCh
   return top
 }
 
+// A milestone's issues as its tree starts: its open epics that no other open
+// epic in it holds, the issues no open epic in it holds, and its closed epics.
+export function inMilestone<T extends EpicChild & { children?: EpicChild[] | null }>(
+  issues: readonly T[],
+): { epics: T[]; plain: T[]; closedEpics: T[] } {
+  const open = issues.filter(i => i.children !== undefined && i.state === 'open')
+  const top = roots(open.map(e => ({ number: e.number, children: e.children ?? null })))
+  const held = new Set(open.flatMap(e => (e.children ?? []).map(c => c.number)))
+  return {
+    epics: open.filter(e => top.has(e.number)),
+    plain: issues.filter(i => i.children === undefined && !held.has(i.number)),
+    closedEpics: issues.filter(i => i.children !== undefined && i.state === 'closed'),
+  }
+}
+
 // How a row with children is folded: its mark, or shown above, where an
 // issue already in the tree shows again and does not unfold.
 export type Folding = 'folded' | 'unfolded' | 'shown above'

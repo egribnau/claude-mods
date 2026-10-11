@@ -198,12 +198,15 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
       return raw ? raw.filter(d => d.state === 'open').map(d => d.number) : null
     },
 
-    // An epic's children are the issues it depends on.
+    // An epic's children are the issues it depends on, other epics left
+    // out: an epic that depends on another waits for it, as any issue does.
     async children(n: number, me: string | null): Promise<EpicChild[] | null> {
       const raw = await deps(n)
       if (!raw) return null
       return Promise.all(
-        raw.map(async (c): Promise<EpicChild> => {
+        raw
+          .filter(c => !(c.labels ?? []).some(l => l.name === label))
+          .map(async (c): Promise<EpicChild> => {
           const assignees = (c.assignees ?? []).map(a => a.login)
           const open = c.state !== 'closed'
           const mine = me !== null && assignees.includes(me)

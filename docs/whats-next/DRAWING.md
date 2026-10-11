@@ -79,3 +79,7 @@ of the row, which opens its detail. Tab and the arrows stop on each.
   second line reads `shown above`, dim
 - under an unfolded row its children, two columns further in; at any depth
   the same rows, marks and counts
+- a section folds on its rule, which is one target: `+ Closed · 3 ───`.
+  Description in the milestone detail (0.64.0), folded, shows its
+  first 3 lines and `… n more lines`; with 3 lines or fewer its rule has no
+  mark

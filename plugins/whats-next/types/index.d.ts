@@ -152,9 +152,8 @@ export type Epics =
   | { kind: 'idle' }
   | { kind: 'loading' }
   // `held`: the open epics in the pick shown under a parent epic, not at the
-  // top of a group. `kids`: the children loaded of any issue, by number, for
-  // the tree. `epicNumbers`: the repo's open epics.
-  | { kind: 'ok'; groups: EpicGroup[]; openEpics: number; held: Epic[]; kids: Record<number, EpicChild[] | null>; epicNumbers: number[] }
+  // top of a group.
+  | { kind: 'ok'; groups: EpicGroup[]; openEpics: number; held: Epic[] }
   | { kind: 'error'; message: string }
 
 // A milestone as the Milestones pane shows it: its due date and how many of
@@ -207,8 +206,15 @@ declare module 'claude-code' {
       // With Debug on: the last action, the requests it sent the forge, and
       // the requests of the session so far.
       requests: { label: string; count: number; total: number } | null
-      // The epics folded open in the Epics pane, by number.
+      // The issues folded open in a tree, Epics and Milestones alike, by number.
       unfolded: number[]
+      // The children loaded of any issue in a tree, by number: null when the
+      // forge would not say.
+      treeKids: Record<number, EpicChild[] | null>
+      // In the milestone detail: whether Issues is folded shut, and whether
+      // Description is folded open; one for every milestone.
+      issuesFolded: boolean
+      descriptionUnfolded: boolean
       // The repo's open milestones, once loaded; null before.
       milestones: Milestone[] | null
       // The milestones folded open in the Milestones pane, by title.

@@ -220,6 +220,26 @@ test('Epics: a sub-issue unfolded in the tree, and the Debug counter after, carr
   noToken(said)
 })
 
+test('Milestones: a sub-issue in the tree of a milestone detail carries no token', GH, async ($, on) => {
+  const m = { number: 1, title: 'v1', description: '', html_url: 'https://github.com/boats/radar/milestone/1', due_on: null, open_issues: 1, closed_issues: 0, state: 'open' }
+  const epic = { ...issue(20, 'Radar sweep'), labels: [{ name: 'epic', color: '' }], milestone: m }
+  const said = world(on, {
+    answers: {
+      '/repos/boats/radar/milestones': url => (url.includes('state=closed') ? json(200, []) : json(200, [m])),
+      '/repos/boats/radar/issues': url => (url.includes('labels=') ? json(200, [epic]) : url.includes('assignee=') ? json(200, []) : json(200, [epic])),
+      '/repos/boats/radar/issues/20/sub_issues': () => json(200, [issue(30, `Rotate ${TOKEN}`)]),
+    },
+  })
+  await $.command.run(RUN)
+  const ui = (await $.ui.mount({ ...PANE, requestId: 'next-milestones', surface: 'terminal' })) as Ui
+  await ui.press({ key: 'milestone-v1' })
+  await ui.press({ key: 'fold-20' })
+  said.push(...(await texts(ui)))
+
+  expect(said.some(s => s.includes('#30 Rotate <token>'))).toBe(true)
+  noToken(said)
+})
+
 test('withoutToken: answers and errors of every kind lose the token', async () => {
   const t = 'glpat-abcdefgh12345678'
   const raw = {

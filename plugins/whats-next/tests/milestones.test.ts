@@ -440,18 +440,82 @@ const EPIC_WORK: World = {
   },
 }
 
-test('epics in a milestone come first, with their bar and what there is for you in them', TOKEN, async ($, on) => {
+test('epics in a milestone come first, folded, with their bar and what there is for you in them; their children only under them', TOKEN, async ($, on) => {
   const clock = world(on, EPIC_WORK)
   await clock.set(NOW)
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'ms-fold-GitHub' })
   const t = await texts(pane)
-  const rows = t.filter(x => /^ {2}[●○⊘ ] #\d/.test(x))
-  expect(rows[0]).toBe(`    #29 ${'GitHub support'.padEnd(27)} ▰▰▱▱▱▱▱▱   1/4`)
-  expect(rows.slice(1).map(x => x.slice(2, 7))).toEqual(['● #30', '  #33', '○ #36', '⊘ #40'])
+  const at29 = t.indexOf(`#29 ${'GitHub support'.padEnd(27)} ▰▰▱▱▱▱▱▱   1/4`)
+  expect(at29).toBeGreaterThan(-1)
+  expect(t[at29 - 1]).toBe('+ ')
+  // #30, #33 and #36 are #29's: not in the list of the milestone's issues.
+  expect(t.filter(x => /^ {2}[●○⊘ ] #\d/.test(x)).map(x => x.slice(2, 7))).toEqual(['⊘ #40'])
   const at = t.indexOf('▱▱▱▱▱▱')
   expect(t.slice(at + 1, at + 6)).toEqual(['   1/4', '        1 yours · 1 available', '1 yours', ' · ', '1 available'])
+})
+
+test('an epic in a milestone unfolds on its tree, its mark first so Tab stops on it', TOKEN, async ($, on) => {
+  const clock = world(on, EPIC_WORK)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'ms-fold-GitHub' })
+  const keys = ((await pane.findAll({ type: 'Button' })) as unknown as Btn[]).map(b => b.key)
+  expect(keys.indexOf('fold-29')).toBeLessThan(keys.indexOf('ms-issue-29'))
+  await pane.press({ key: 'fold-29' })
+  const t = await texts(pane)
+  expect(t.filter(x => /^ +[●○⊘ ] #\d/.test(x) || x.includes('✓')).map(x => x.trimEnd())).toEqual([
+    '    ● #30 GitHub token setting',
+    '      #33 Detect GitHub from the remote',
+    `    ○ #36 ${'GitHub rate limits'.padEnd(35)} jdoe`,
+    '    ✓ 1 closed',
+    '  ⊘ #40 Blocked by on GitHub',
+    '  ✓ 9 closed',
+  ])
+  expect(t.some(x => x.startsWith('        1 yours'))).toBe(false)
+  await pane.press({ key: 'ms-issue-30' })
+  expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
+})
+
+test('what is unfolded is shared with Epics, and holds over Refresh and Back', TOKEN, async ($, on) => {
+  const clock = world(on, EPIC_WORK)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const epics = await $.ui.mount({ ...MILESTONES_PANE, requestId: 'next-epics', surface: 'terminal' })
+  await epics.press({ key: 'fold-29' })
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'ms-fold-GitHub' })
+  const shown = async () => (await texts(pane)).some(x => x.includes('#30 GitHub token setting'))
+  expect(await shown()).toBe(true)
+  await pane.press({ key: 'refresh' })
+  expect(await shown()).toBe(true)
+  await pane.press({ key: 'ms-issue-30' })
+  await pane.press({ key: 'back' })
+  expect(await shown()).toBe(true)
+  await pane.press({ key: 'fold-29' })
+  expect(await shown()).toBe(false)
+})
+
+test('on Forgejo an epic another epic in the milestone depends on is no child: both at the top', TOKEN, async ($, on) => {
+  const SUB = issue(41, 'GitHub Enterprise', { milestone: 'GitHub', labels: ['epic'] })
+  const clock = world(on, {
+    ...EPIC_WORK,
+    issues: [SUB, ...(EPIC_WORK.issues ?? [])],
+    epics: [GITHUB_EPIC, SUB],
+    deps: { ...EPIC_WORK.deps, 29: [...(EPIC_WORK.deps?.[29] ?? []), SUB], 41: [issue(42, 'GHES version header', { milestone: 'GitHub' })] },
+  })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'ms-fold-GitHub' })
+  const keys = async () => ((await pane.findAll({ type: 'Button' })) as unknown as Btn[]).map(b => b.key)
+  expect(await keys()).toContain('fold-41')
+  await pane.press({ key: 'fold-29' })
+  // Under #29 only its three issues; #41 stays at the top.
+  expect((await keys()).filter(k => k === 'fold-41' || k.startsWith('fold-41@'))).toEqual(['fold-41'])
+  expect((await texts(pane)).some(x => x.startsWith('    ') && x.includes('#41'))).toBe(false)
 })
 
 test("the line under an epic in a milestone is one line, cut at its end", TOKEN, async ($, on) => {
@@ -617,6 +681,49 @@ test("a milestone detail's description, wrapped; none says so", TOKEN, async ($,
   expect(n.find(x => x.text === 'No description.')?.props.dimColor).toBe(true)
 })
 
+test('a milestone detail: Issues, its tree, unfolded at first, folds on its rule', TOKEN, async ($, on) => {
+  const clock = world(on, EPIC_WORK)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-GitHub' })
+  let t = await texts(pane)
+  const head = '− Issues · 8 open '
+  expect(t).toContain(head)
+  expect(t.indexOf(head)).toBeLessThan(t.findIndex(x => x.startsWith('── Description')))
+  expect(t.some(x => x.startsWith('#29 GitHub support'))).toBe(true)
+  expect(t.some(x => x.startsWith('  ⊘ #40'))).toBe(true)
+  await pane.press({ key: 'fold-29' })
+  expect((await texts(pane)).some(x => x.startsWith('    ● #30'))).toBe(true)
+  await pane.press({ key: 'issues-section' })
+  t = await texts(pane)
+  expect(t).toContain('+ Issues · 8 open ')
+  expect(t.some(x => x.includes('#29') || x.includes('#40'))).toBe(false)
+  // Shut for every milestone, and over Back.
+  await pane.press({ key: 'back' })
+  await pane.press({ key: 'milestone-Jira' })
+  expect(await texts(pane)).toContain('+ Issues · 6 open ')
+})
+
+test('a milestone detail: a description over three lines folds to three and how many more; unfolded, all of it', TOKEN, async ($, on) => {
+  const long = ['One.', '', 'Two.', '', 'Three.', '', 'Four.'].join('\n')
+  const clock = world(on, { milestones: [milestone('GitHub', '2026-10-13T00:00:00Z', 8, 9, 2, long)] })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-GitHub' })
+  let t = await texts(pane)
+  expect(t).toContain('+ Description ')
+  expect(t).toContain('Two.')
+  expect(t).not.toContain('Three.')
+  expect(t).toContain('… 4 more lines')
+  await pane.press({ key: 'description-section' })
+  t = await texts(pane)
+  expect(t).toContain('− Description ')
+  expect(t).toContain('Four.')
+  expect(t.some(x => x.includes('more lines'))).toBe(false)
+})
+
 test("Open in browser opens the milestone's page on Forgejo", TOKEN, async ($, on) => {
   const ran: string[] = []
   const clock = world(on, { ...REPO, ran })
@@ -705,7 +812,9 @@ test('read only: a milestone detail has no Close', TOKEN, async ($, on) => {
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
-  expect((await buttons(pane)).map(b => b.key)).toEqual(['back', 'refresh', 'open'])
+  // The actions, before the sections.
+  const keys = (await buttons(pane)).map(b => b.key)
+  expect(keys.slice(0, keys.indexOf('issues-section'))).toEqual(['back', 'refresh', 'open'])
 })
 
 test('Close sits after Open in browser and closes the milestone at once, open issues and all', TOKEN, async ($, on) => {
@@ -717,7 +826,7 @@ test('Close sits after Open in browser and closes the milestone at once, open is
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
   const keys = (await buttons(pane)).map(b => b.key)
-  expect(keys.slice(keys.indexOf('open'))).toEqual(['open', 'close'])
+  expect(keys.slice(keys.indexOf('open'), keys.indexOf('issues-section'))).toEqual(['open', 'close'])
   expect((await buttons(pane)).find(b => b.key === 'close')?.props.label).toBe('Close')
   await pane.press({ key: 'close' })
   expect(sent).toEqual([{ path: '/api/v1/repos/boats/radar/milestones/2', body: { state: 'closed' } }])
@@ -761,3 +870,4 @@ test('a refused Close keeps the detail open and says why, in red under the butto
   await pane.press({ key: 'milestone-GitHub' })
   expect(await texts(pane)).not.toContain('Could not close GitHub: token may not do this.')
 })
+

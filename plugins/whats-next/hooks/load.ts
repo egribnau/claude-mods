@@ -256,36 +256,41 @@ export async function epicGroups(t: Tracker, known: Memory, pick: string, me: st
 
 // The Epics pane as a tree: the groups of the pick with only the epics at
 // the top of the tree in them, and the open epics shown under a parent epic
-// instead (`held`). The children each unfolded issue needs are asked of the
-// tracker as the tree reaches them, once, and `kids` holds all loaded so far.
+// instead (`held`).
 export async function epicTree(
   t: Tracker,
   known: Memory,
   pick: string,
   me: string | null,
-  unfolded: ReadonlySet<number>,
-): Promise<{ groups: EpicGroup[]; held: Epic[]; kids: Record<number, EpicChild[] | null>; epicNumbers: number[] }> {
+): Promise<{ groups: EpicGroup[]; held: Epic[] }> {
   const all = await epicGroups(t, known, pick, me)
   const open = all.flatMap(g => g.epics).filter(e => e.state === 'open')
   const top = roots(open)
   const groups = all
     .map(g => ({ ...g, epics: g.epics.filter(e => e.state === 'closed' || top.has(e.number)) }))
     .filter(g => g.epics.length > 0)
-  const held = open.filter(e => !top.has(e.number))
-  const epicNumbers = known.epics.filter(e => e.state === 'open').map(e => e.number)
-  const epics = new Set(epicNumbers)
+  return { groups, held: open.filter(e => !top.has(e.number)) }
+}
+
+// Asks the tracker for the children each tree needs, as far as `unfolded`
+// reaches, each issue once, and remembers them. `trees`: the epics at the top
+// of each tree a pane draws (the Epics pane, a milestone). Returns every
+// child list loaded so far, by issue.
+export async function growTree(
+  t: Tracker,
+  known: Memory,
+  trees: readonly (readonly Epic[])[],
+  unfolded: ReadonlySet<number>,
+  me: string | null,
+): Promise<Record<number, EpicChild[] | null>> {
+  const epics = new Set(known.epics.filter(e => e.state === 'open').map(e => e.number))
   const kids = (n: number) => (known.children.has(n) ? (known.children.get(n) ?? null) : undefined)
-  // Each round loads what the last one found missing; each issue once.
+  // Each round loads what the last one found missing.
   for (;;) {
-    const { missing } = tree(
-      groups.flatMap(g => g.epics),
-      kids,
-      unfolded,
-      epics,
-    )
+    const missing = [...new Set(trees.flatMap(top => tree(top, kids, unfolded, epics).missing))]
     if (missing.length === 0) break
     const loaded = await Promise.all(missing.map(n => t.children(n, me).catch(() => null)))
     missing.forEach((n, k) => known.children.set(n, loaded[k] ?? null))
   }
-  return { groups, held, kids: Object.fromEntries(known.children), epicNumbers }
+  return Object.fromEntries(known.children)
 }
