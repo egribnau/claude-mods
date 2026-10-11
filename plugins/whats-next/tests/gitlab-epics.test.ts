@@ -588,8 +588,8 @@ test('milestones: closed of total from issues_statistics, a failed one 0/0', asy
   const t = gitlab(fakeSend(route({ milestones: [V12, SOMEDAY], stats: { 'v1.2': ok(stats(17, 9)), Someday: FAILS } }), asked), r, 'glpat-x', null, 'Epic')
 
   expect(await t.milestones()).toEqual([
-    { title: 'v1.2', due: '2026-10-31', closed: 9, total: 17, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/2', closedAt: null },
-    { title: 'Someday', due: null, closed: 0, total: 0, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/7', closedAt: null },
+    { title: 'v1.2', due: '2026-10-31', closed: 9, total: 17, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/2', closedAt: null, id: 4410102 },
+    { title: 'Someday', due: null, closed: 0, total: 0, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/7', closedAt: null, id: 4410199 },
   ])
   const asks = asked.filter(a => pathOf(a) === `${path}/issues_statistics`).map(a => new URL(a.url).searchParams.get('milestone'))
   expect(asks.sort()).toEqual(['Someday', 'v1.2'])

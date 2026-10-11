@@ -385,8 +385,8 @@ test('milestones: open ones with their due date and closed of all; none when ref
   const asked: Asked[] = []
   const t = github(fakeSend(listRoute('/repos/boats/radar/milestones', [[V12, milestone('someday', null, 4, 0, 0)]]), asked), R, 't', null)
   expect(await t.milestones()).toEqual([
-    { title: 'v1.2', due: '2026-10-31T07:00:00Z', closed: 1, total: 4, description: '', url: 'https://github.com/boats/radar/milestone/2', closedAt: null },
-    { title: 'someday', due: null, closed: 0, total: 0, description: '', url: 'https://github.com/boats/radar/milestone/4', closedAt: null },
+    { title: 'v1.2', due: '2026-10-31T07:00:00Z', closed: 1, total: 4, description: '', url: 'https://github.com/boats/radar/milestone/2', closedAt: null, id: 2 },
+    { title: 'someday', due: null, closed: 0, total: 0, description: '', url: 'https://github.com/boats/radar/milestone/4', closedAt: null, id: 4 },
   ])
   expect(asked.map(a => a.url)).toEqual([`${API}/milestones?state=open&per_page=100`])
   expect(await github(fakeSend(() => NOT_FOUND), R, 't', null).milestones()).toEqual([])
@@ -861,9 +861,9 @@ test('closedMilestones: the last closed first, at most n; none when refused', as
   const pages = [[shut('v1.0', '2026-08-01T10:00:00Z', 4), shut('v1.1', '2026-09-01T10:00:00Z', 5), shut('v0.9', '2026-07-01T10:00:00Z', 6), shut('v1.1.1', '2026-09-20T10:00:00Z', 7)]]
   const t = github(fakeSend(listRoute('/repos/boats/radar/milestones', pages), asked), R, 't', null)
   expect(await t.closedMilestones(3)).toEqual([
-    { title: 'v1.1.1', due: null, closed: 5, total: 5, description: '', url: 'https://github.com/boats/radar/milestone/7', closedAt: '2026-09-20T10:00:00Z' },
-    { title: 'v1.1', due: null, closed: 5, total: 5, description: '', url: 'https://github.com/boats/radar/milestone/5', closedAt: '2026-09-01T10:00:00Z' },
-    { title: 'v1.0', due: null, closed: 5, total: 5, description: '', url: 'https://github.com/boats/radar/milestone/4', closedAt: '2026-08-01T10:00:00Z' },
+    { title: 'v1.1.1', due: null, closed: 5, total: 5, description: '', url: 'https://github.com/boats/radar/milestone/7', closedAt: '2026-09-20T10:00:00Z', id: 7 },
+    { title: 'v1.1', due: null, closed: 5, total: 5, description: '', url: 'https://github.com/boats/radar/milestone/5', closedAt: '2026-09-01T10:00:00Z', id: 5 },
+    { title: 'v1.0', due: null, closed: 5, total: 5, description: '', url: 'https://github.com/boats/radar/milestone/4', closedAt: '2026-08-01T10:00:00Z', id: 4 },
   ])
   expect(asked.map(a => a.url)).toEqual([`${API}/milestones?state=closed&per_page=100`])
   expect(await github(fakeSend(() => NOT_FOUND), R, 't', null).closedMilestones(3)).toEqual([])

@@ -162,6 +162,10 @@ export type Milestone = {
   description?: string
   url?: string
   closedAt?: string | null
+  // The forge's id for it, to close or reopen it; on GitLab, the group it
+  // belongs to when it comes from a parent group.
+  id?: number
+  group?: string
 }
 
 // The milestone picker both panes share: what it offers (a milestone's option
@@ -206,6 +210,9 @@ declare module 'claude-code' {
       // The milestone open in its detail on the Milestones pane, by title;
       // null shows the list.
       milestoneOpen: string | null
+      // Why the forge refused to close or reopen the milestone in its detail;
+      // null when nothing was refused.
+      milestoneError: string | null
       // The last milestones closed, newest first, and whether Closed is folded open.
       closedMilestones: Milestone[]
       closedShown: boolean

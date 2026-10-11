@@ -54,6 +54,8 @@ export type Tracker = {
   // done, else why not.
   assign(n: number, assignees: string[]): Promise<string | null>
   close(n: number, closed: boolean): Promise<string | null>
+  // Milestone `m` closed or open again: null when done, else why not.
+  closeMilestone(m: MilestoneRow, closed: boolean): Promise<string | null>
 }
 
 // An error's message, without the host's `whats-next: $.http.fetch: ` in front.

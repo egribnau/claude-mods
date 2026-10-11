@@ -36,6 +36,7 @@ const unfolded = atom({ plugin: 'whats-next', key: 'unfolded' } as const, [])
 const milestones = atom({ plugin: 'whats-next', key: 'milestones' } as const, null)
 const milestonesUnfolded = atom({ plugin: 'whats-next', key: 'milestonesUnfolded' } as const, [])
 const milestoneOpen = atom({ plugin: 'whats-next', key: 'milestoneOpen' } as const, null)
+const milestoneError = atom({ plugin: 'whats-next', key: 'milestoneError' } as const, null)
 const msIssues = atom({ plugin: 'whats-next', key: 'milestoneIssues' } as const, {})
 const closedMilestones = atom({ plugin: 'whats-next', key: 'closedMilestones' } as const, [])
 const closedShown = atom({ plugin: 'whats-next', key: 'closedShown' } as const, false)
@@ -266,9 +267,25 @@ async function foldMilestone($: EngineInterface, title: string) {
 // issues are asked unless a fold already did.
 async function openMilestone($: EngineInterface, title: string | null) {
   await update($, milestoneOpen, () => title)
+  await update($, milestoneError, () => null)
   const r = await read($, repo)
   if (!r || title === null || title in (await read($, msIssues))) return
   await counted($, title, () => showMilestone($, r, title))
+}
+
+// Closes milestone `m`, or opens it again, then shows the list, read again,
+// where it moved to Closed or back. A refusal keeps the detail open, shown
+// under its actions.
+async function closeMilestone($: EngineInterface, m: Milestone, closed: boolean) {
+  const r = await read($, repo)
+  if (!r) return
+  const why = await tracker($, r).closeMilestone(m, closed)
+  if (why !== null) {
+    await update($, milestoneError, () => `Could not ${closed ? 'close' : 'reopen'} ${m.title}: ${why.replace(/\.$/, '')}.`)
+    return
+  }
+  await openMilestone($, null)
+  await refresh($)
 }
 
 // The picker's options from what is open, and the pick: the person's when it
@@ -1492,12 +1509,27 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )}
         </Box>,
       ]
-      // No Work on this, Assign or Close: a milestone is not work you pick up.
-      if (shownMs.url) {
-        const url = shownMs.url
+      // No Work on this or Assign: a milestone is not work you pick up. Close
+      // and Reopen as on Issue detail, not where the token is read only.
+      const url = shownMs.url
+      const canClose = shownMs.id !== undefined && s.actions.kind !== 'read-only'
+      const error = await read($, milestoneError)
+      if (url || canClose) {
         body.push(
-          <Box key="actions" height={1} flexShrink={0} marginTop={1}>
-            <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, url)} />
+          <Box key="actions" flexDirection="column" flexShrink={0} marginTop={1}>
+            <Box height={1}>
+              {url && <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, url)} />}
+              {url && canClose && <Text>{'  '}</Text>}
+              {canClose && (
+                <Button
+                  key="close"
+                  label={say(isClosed ? ICON.reopen : ICON.close, isClosed ? 'Reopen' : 'Close')}
+                  hotkey="c"
+                  onPress={() => counted($, `${isClosed ? 'reopen' : 'close'} ${shownMs.title}`, () => closeMilestone($, shownMs, !isClosed))}
+                />
+              )}
+            </Box>
+            {error && para('action-error', error, { color: 'error' })}
           </Box>,
         )
       }

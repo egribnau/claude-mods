@@ -487,8 +487,8 @@ test('milestones: active ones with their due date; none when refused', async () 
   const t = gitlab(fakeSend(listRoute(path, [[V12, milestone('Someday', null, 4410199)]]), asked), R, 'glpat-x', null)
 
   expect(await t.milestones()).toEqual([
-    { title: 'v1.2', due: '2026-10-31', closed: 0, total: 0, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/2', closedAt: null },
-    { title: 'Someday', due: null, closed: 0, total: 0, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/99', closedAt: null },
+    { title: 'v1.2', due: '2026-10-31', closed: 0, total: 0, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/2', closedAt: null, id: 4410102 },
+    { title: 'Someday', due: null, closed: 0, total: 0, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/99', closedAt: null, id: 4410199 },
   ])
   const u = new URL(asked[0]?.url ?? '')
   expect(u.searchParams.get('state')).toBe('active')
@@ -513,8 +513,8 @@ test('milestones: closed of all from issues_statistics, per milestone; one refus
     null,
   )
   expect(await t.milestones()).toEqual([
-    { title: 'v1.2', due: '2026-10-31', closed: 3, total: 8, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/2', closedAt: null },
-    { title: 'v1.3', due: '2026-11-30', closed: 0, total: 0, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/3', closedAt: null },
+    { title: 'v1.2', due: '2026-10-31', closed: 3, total: 8, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/2', closedAt: null, id: 4410102 },
+    { title: 'v1.3', due: '2026-11-30', closed: 0, total: 0, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/3', closedAt: null, id: 4410103 },
   ])
   expect(asked.slice(1).map(a => a.url).sort()).toEqual([
     `${PROJECT}/issues_statistics?milestone=v1.2`,
@@ -1111,8 +1111,8 @@ test('closedMilestones: the last changed first, at most n, counts asked for thos
     null,
   )
   expect(await t.closedMilestones(2)).toEqual([
-    { title: 'v1.1', due: null, closed: 5, total: 6, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/5', closedAt: null },
-    { title: 'v1.0', due: null, closed: 5, total: 6, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/4', closedAt: null },
+    { title: 'v1.1', due: null, closed: 5, total: 6, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/5', closedAt: null, id: 4410105 },
+    { title: 'v1.0', due: null, closed: 5, total: 6, description: '', url: 'https://gitlab.com/boats/radar/-/milestones/4', closedAt: null, id: 4410104 },
   ])
   const u = new URL(asked[0]?.url ?? '')
   expect(u.searchParams.get('state')).toBe('closed')
@@ -1121,4 +1121,32 @@ test('closedMilestones: the last changed first, at most n, counts asked for thos
     `${PROJECT}/issues_statistics?milestone=v1.0`,
     `${PROJECT}/issues_statistics?milestone=v1.1`,
   ])
+})
+
+test("a milestone closes and reopens with state_event, in the project or, a parent group's, in that group", async () => {
+  const asked: Asked[] = []
+  const t = gitlab(fakeSend(() => ({ status: 200, body: {} }), asked), R, 'glpat-x', null)
+  expect(await t.closeMilestone({ title: 'v1.2', due: null, closed: 0, total: 0, id: 4410102 }, true)).toBeNull()
+  expect(await t.closeMilestone({ title: 'v1.2', due: null, closed: 0, total: 0, id: 4410102 }, false)).toBeNull()
+  expect(await t.closeMilestone({ title: 'Q4', due: null, closed: 0, total: 0, id: 77, group: 'boats/crew' }, true)).toBeNull()
+  expect(asked.map(a => [a.method, a.url, a.body])).toEqual([
+    ['PUT', `${PROJECT}/milestones/4410102`, { state_event: 'close' }],
+    ['PUT', `${PROJECT}/milestones/4410102`, { state_event: 'activate' }],
+    ['PUT', 'https://gitlab.com/api/v4/groups/boats%2Fcrew/milestones/77', { state_event: 'close' }],
+  ])
+})
+
+test("a parent group's milestone says which group it is, from its page; refused there, that the token may not change it", async () => {
+  const path = '/api/v4/projects/boats%2Fradar/milestones'
+  const group = { ...milestone('Q4', null, 77), project_id: undefined, group_id: 9, web_url: 'https://gitlab.com/groups/boats/crew/-/milestones/3' }
+  const t = gitlab(fakeSend(listRoute(path, [[V12, group]])), R, 'glpat-x', null)
+  const [own, theirs] = await t.milestones()
+  expect(own?.group).toBeUndefined()
+  expect(theirs?.group).toBe('boats/crew')
+
+  const refused = gitlab(fakeSend(() => ({ status: 403, body: { message: '403 Forbidden' } })), R, 'glpat-x', null)
+  expect(await refused.closeMilestone({ title: 'Q4', due: null, closed: 0, total: 0, id: 77, group: 'boats/crew' }, true)).toBe(
+    'it belongs to the group boats/crew, and your token may not change it',
+  )
+  expect(await refused.closeMilestone({ title: 'v1.2', due: null, closed: 0, total: 0, id: 4410102 }, true)).toBe('403 Forbidden')
 })

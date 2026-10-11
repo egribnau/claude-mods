@@ -189,6 +189,19 @@ test('close and reopen: state closed or open', async () => {
   expect(asked.map(a => a.body)).toEqual([{ state: 'closed' }, { state: 'open' }])
 })
 
+test('a milestone closes and reopens by its number: state closed or open', async () => {
+  const asked: Asked[] = []
+  const route = (u: URL, method: string): Reply => (method === 'PATCH' && u.pathname === '/repos/boats/radar/milestones/2' ? { status: 200, body: {} } : NOT_FOUND)
+  const t = github(fakeSend(route, asked), R, 't', null)
+  const m = { title: 'v1.2', due: null, closed: 1, total: 4, id: 2 }
+  expect(await t.closeMilestone(m, true)).toBeNull()
+  expect(await t.closeMilestone(m, false)).toBeNull()
+  expect(asked.map(a => [a.method, a.url, a.body])).toEqual([
+    ['PATCH', `${API}/milestones/2`, { state: 'closed' }],
+    ['PATCH', `${API}/milestones/2`, { state: 'open' }],
+  ])
+})
+
 test("a refused write says GitHub's message with the status", async () => {
   const t = github(fakeSend(writeRoute({ status: 403, body: { message: 'Resource not accessible by personal access token' } })), R, 't', null)
   expect(await t.close(14, true)).toBe('HTTP 403, Resource not accessible by personal access token')

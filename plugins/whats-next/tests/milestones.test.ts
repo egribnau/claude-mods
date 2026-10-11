@@ -40,6 +40,11 @@ type World = {
   failIssues?: boolean
   // The commands run, each joined by spaces.
   ran?: string[]
+  // Whether the token may write: write:issue and push rights.
+  write?: boolean
+  // The changes sent; with `refuse`, Forgejo refuses each with that message.
+  sent?: { path: string; body: unknown }[]
+  refuse?: { status: number; message: string }
 }
 type Opened = { id: string; title?: string; focus?: true }
 
@@ -72,6 +77,24 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
     })
     if (url.pathname.endsWith('/version')) return reply(200, { version: '16.0.5+gitea-1.22.0' })
     if (url.pathname.endsWith('/user')) return reply(200, { login: 'alice' })
+    if (url.pathname.endsWith('/users/alice/tokens')) {
+      return reply(200, [{ token_last_eight: 'secret', scopes: w.write ? ['write:issue'] : ['read:issue'] }])
+    }
+    if (e.init?.method === 'PATCH') {
+      const body = JSON.parse(String(e.init.body ?? '{}')) as { state?: string }
+      w.sent?.push({ path: url.pathname, body })
+      if (w.refuse) return reply(w.refuse.status, { message: w.refuse.message })
+      // The milestone moves to the other list, as Forgejo now holds it.
+      const id = Number(/\/milestones\/(\d+)$/.exec(url.pathname)?.[1])
+      const all = [...(w.milestones ?? []), ...(w.closedMilestones ?? [])] as { id: number; state: string }[]
+      const m = all.find(x => x.id === id)
+      if (!m) return reply(404, { message: 'not found' })
+      const now = { ...m, state: body.state, closed_at: body.state === 'closed' ? '2026-10-09T12:00:00Z' : null }
+      const others = (list?: unknown[]) => (list ?? []).filter(x => (x as { id: number }).id !== id)
+      w.milestones = body.state === 'closed' ? others(w.milestones) : [...others(w.milestones), now]
+      w.closedMilestones = body.state === 'closed' ? [now, ...others(w.closedMilestones)] : others(w.closedMilestones)
+      return reply(200, now)
+    }
     const mine = (w.issues ?? []).filter(i => (i as { assignees: { login: string }[] }).assignees.some(a => a.login === 'alice'))
     if (url.pathname.endsWith('/repos/issues/search')) return reply(200, page === 0 ? mine : [])
     if (url.pathname.endsWith('/repos/boats/radar/issues')) {
@@ -91,7 +114,7 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
       return reply(200, page === 0 ? (shown ?? []) : [])
     }
     if (url.pathname.endsWith('/repos/boats/radar')) {
-      return reply(200, { full_name: 'boats/radar', open_issues_count: 9, permissions: { push: false } })
+      return reply(200, { full_name: 'boats/radar', open_issues_count: 9, permissions: { push: w.write === true } })
     }
     return reply(404, { message: 'not found' })
   })
@@ -602,7 +625,7 @@ test("Open in browser opens the milestone's page on Forgejo", TOKEN, async ($, o
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
   expect(await pane.find({ key: 'work' })).toBeUndefined()
-  expect(await pane.find({ key: 'close' })).toBeUndefined()
+  expect(await pane.find({ key: 'assign' })).toBeUndefined()
   await pane.press({ key: 'open' })
   expect(ran).toContain('open https://git.example.org/boats/radar/milestone/2')
 })
@@ -671,4 +694,70 @@ test('a closed milestone opens its detail too: closed n days ago, all closed', T
   expect(t).toContain(' 6/6 · all closed')
   await pane.press({ key: 'open' })
   expect(ran).toContain('open https://git.example.org/boats/radar/milestone/9')
+})
+
+type Btns = { findAll: (q: { type: string }) => Promise<unknown[]> }
+const buttons = async (ui: Btns) => ((await ui.findAll({ type: 'Button' })) as { key: string; props: { label?: string } }[])
+
+test('read only: a milestone detail has no Close', TOKEN, async ($, on) => {
+  const clock = world(on, REPO)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-GitHub' })
+  expect((await buttons(pane)).map(b => b.key)).toEqual(['back', 'refresh', 'open'])
+})
+
+test('Close sits after Open in browser and closes the milestone at once, open issues and all', TOKEN, async ($, on) => {
+  const sent: World['sent'] = []
+  const w: World = { ...WORK, milestones: [...(WORK.milestones ?? [])], write: true, sent }
+  const clock = world(on, w)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-GitHub' })
+  const keys = (await buttons(pane)).map(b => b.key)
+  expect(keys.slice(keys.indexOf('open'))).toEqual(['open', 'close'])
+  expect((await buttons(pane)).find(b => b.key === 'close')?.props.label).toBe('Close')
+  await pane.press({ key: 'close' })
+  expect(sent).toEqual([{ path: '/api/v1/repos/boats/radar/milestones/2', body: { state: 'closed' } }])
+  // Back on the list, read again: GitHub has left the open milestones for Closed.
+  expect(await pane.find({ key: 'back' })).toBeUndefined()
+  expect(await rowKeys(pane)).not.toContain('milestone-GitHub')
+  await pane.press({ key: 'closed-section' })
+  expect(await rowKeys(pane)).toContain('milestone-GitHub')
+})
+
+test('Reopen opens a closed milestone again, back among the open ones', TOKEN, async ($, on) => {
+  const sent: World['sent'] = []
+  const closedOnes = [shut('GitLab', '2026-10-09T10:00:00Z', 1, 11, 7), shut('Old', '2026-09-01T10:00:00Z', 0, 2, 8)]
+  const w: World = { ...CLOSED, closedMilestones: closedOnes, write: true, sent }
+  const clock = world(on, w)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'closed-section' })
+  await pane.press({ key: 'milestone-GitLab' })
+  expect((await buttons(pane)).find(b => b.key === 'close')?.props.label).toBe('Reopen')
+  await pane.press({ key: 'close' })
+  expect(sent).toEqual([{ path: '/api/v1/repos/boats/radar/milestones/7', body: { state: 'open' } }])
+  expect(await pane.find({ key: 'back' })).toBeUndefined()
+  expect(await rowKeys(pane)).toContain('milestone-GitLab')
+})
+
+test('a refused Close keeps the detail open and says why, in red under the buttons', TOKEN, async ($, on) => {
+  const w: World = { ...REPO, write: true, sent: [], refuse: { status: 403, message: 'token may not do this' } }
+  const clock = world(on, w)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-GitHub' })
+  await pane.press({ key: 'close' })
+  const line = (await nodes(pane)).find(x => x.text === 'Could not close GitHub: token may not do this.')
+  expect(line?.props.color).toBe('error')
+  await expect(pane.find({ key: 'back' })).resolves.toBeDefined()
+  // Back and in again: the refusal is gone.
+  await pane.press({ key: 'back' })
+  await pane.press({ key: 'milestone-GitHub' })
+  expect(await texts(pane)).not.toContain('Could not close GitHub: token may not do this.')
 })

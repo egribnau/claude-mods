@@ -48,8 +48,11 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
   }
 
   // A change to issue `n`: null when GitHub took it, else why not.
-  async function patch(n: number, body: object): Promise<string | null> {
-    const res = await send(`${api}/issues/${n}`, {
+  const patch = (n: number, body: object) => patchAt(`${api}/issues/${n}`, body)
+
+  // A change at `url`: null when GitHub took it, else why not.
+  async function patchAt(url: string, body: object): Promise<string | null> {
+    const res = await send(url, {
       method: 'PATCH',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -306,6 +309,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     // whoever may not be assigned.
     assign: (n, assignees) => patch(n, { assignees }),
     close: (n, closed) => patch(n, { state: closed ? 'closed' : 'open' }),
+    closeMilestone: (m, closed) => patchAt(`${api}/milestones/${m.id}`, { state: closed ? 'closed' : 'open' }),
   }
 }
 
@@ -355,6 +359,7 @@ const loginByToken = new Map<string, string>()
 type RawRepo = { has_issues?: boolean; open_issues_count?: number; private?: boolean; permissions?: { push?: boolean } }
 
 type RawMilestone = {
+  number: number
   title: string
   description?: string | null
   html_url: string
@@ -372,6 +377,7 @@ const toMilestone = (m: RawMilestone): MilestoneRow => ({
   description: m.description ?? '',
   url: m.html_url,
   closedAt: m.closed_at ?? null,
+  id: m.number,
 })
 
 // An issue as GitHub lists it. Pull requests are in the same lists, marked

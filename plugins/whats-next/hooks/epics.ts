@@ -69,6 +69,10 @@ export type MilestoneRow = {
   description?: string
   url?: string
   closedAt?: string | null
+  // The forge's id for it, to close or reopen it; on GitLab, the group it
+  // belongs to when it comes from a parent group.
+  id?: number
+  group?: string
 }
 
 // Open milestones, due first; one without a due date after those with one.

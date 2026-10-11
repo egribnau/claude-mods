@@ -51,12 +51,17 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       url: m.web_url,
       // GitLab does not say when a milestone closed.
       closedAt: null,
+      id: m.id,
+      ...(m.group_id ? { group: groupOf(m) } : {}),
     }
   }
 
   // A change to issue `n`: null when GitLab took it, else why not.
-  async function put(n: number, body: object): Promise<string | null> {
-    const res = await send(`${project}/issues/${n}`, {
+  const put = (n: number, body: object) => putAt(`${project}/issues/${n}`, body)
+
+  // A change at `url`: null when GitLab took it, else why not.
+  async function putAt(url: string, body: object): Promise<string | null> {
+    const res = await send(url, {
       method: 'PUT',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -343,6 +348,15 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       return put(n, found.length > 1 ? { assignee_ids: found } : { assignee_id: found[0] ?? 0 })
     },
     close: (n, closed) => put(n, { state_event: closed ? 'close' : 'reopen' }),
+    // A parent group's milestone is the group's to change, not the project's.
+    async closeMilestone(m, closed) {
+      const body = { state_event: closed ? 'close' : 'activate' }
+      if (!m.group) return putAt(`${project}/milestones/${m.id}`, body)
+      const why = await putAt(`${base}/groups/${encodeURIComponent(m.group)}/milestones/${m.id}`, body)
+      return why === null || !/^(HTTP )?(401|403|404)\b|forbidden|not found/i.test(why)
+        ? why
+        : `it belongs to the group ${m.group}, and your token may not change it`
+    },
   }
 }
 
@@ -367,7 +381,21 @@ type RawIssue = {
   // Both in seconds.
   time_stats?: { time_estimate?: number | null; total_time_spent?: number | null } | null
 }
-type RawMilestone = { title: string; description?: string | null; web_url: string; due_date?: string | null; updated_at?: string }
+type RawMilestone = {
+  id: number
+  title: string
+  description?: string | null
+  web_url: string
+  due_date?: string | null
+  updated_at?: string
+  group_id?: number
+}
+
+// The path of the group a group milestone belongs to, from its page; its id
+// where the page does not say.
+function groupOf(m: RawMilestone): string {
+  return /\/groups\/(.+?)\/-\/milestones\//.exec(m.web_url)?.[1] ?? String(m.group_id)
+}
 type RawStatistics = { statistics?: { counts?: { all?: number; closed?: number } | null } | null }
 
 // An issue linked to another, as GitLab lists the links: labels as plain

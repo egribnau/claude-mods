@@ -62,7 +62,7 @@ free one is blocked.
 | Back | Returns to the issue a detail was reached from, else to the list. |
 | Work on this | Assigns you if needed and drafts a prompt from the issue. |
 | Assign me, Unassign me | Adds or removes only you as assignee. |
-| Close, Reopen | Closes or reopens the issue. |
+| Close, Reopen | Closes or reopens the issue or milestone. |
 | Open in browser | Opens the issue's or milestone's page on the forge. |
 
 ## Setup

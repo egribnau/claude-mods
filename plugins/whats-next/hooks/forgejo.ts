@@ -23,6 +23,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     description: m.description ?? '',
     url: `https://${r.host}/${slug}/milestone/${m.id}`,
     closedAt: m.closed_at ?? null,
+    id: m.id,
   })
 
   // Every page of a list, 50 at a time; a page that fails names `what`.
@@ -52,8 +53,11 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
   const deps = (n: number) => fetchJson<RawDep[]>(`${api}/issues/${n}/dependencies`)
 
   // A change to issue `n`: null when Forgejo took it, else why not.
-  async function patch(n: number, body: object): Promise<string | null> {
-    const res = await send(`${api}/issues/${n}`, {
+  const patch = (n: number, body: object) => patchAt(`${api}/issues/${n}`, body)
+
+  // A change at `url`: null when Forgejo took it, else why not.
+  async function patchAt(url: string, body: object): Promise<string | null> {
+    const res = await send(url, {
       method: 'PATCH',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -237,6 +241,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
 
     assign: (n, assignees) => patch(n, { assignees }),
     close: (n, closed) => patch(n, { state: closed ? 'closed' : 'open' }),
+    closeMilestone: (m, closed) => patchAt(`${api}/milestones/${m.id}`, { state: closed ? 'closed' : 'open' }),
   }
 }
 

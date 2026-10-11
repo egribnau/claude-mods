@@ -78,6 +78,7 @@ function fake(f: Fake, calls: string[] = []): Tracker {
     issue: async () => fail('issue'),
     assign: async () => null,
     close: async () => null,
+    closeMilestone: async () => null,
   }
 }
 
