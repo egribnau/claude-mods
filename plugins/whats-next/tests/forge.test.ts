@@ -1,8 +1,20 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { detect, forgeName, tokenFor, type Forge } from '../hooks/forge'
+import { configureCommand, detect, forgeName, MARKETPLACE, tokenFor, type Forge } from '../hooks/forge'
 import type { Send } from '../hooks/tracker'
+
+// configureCommand
+
+test('configureCommand: names the marketplace What\'s Next was installed from', () => {
+  expect(configureCommand(['theme', 'whats-next@elsewhere.icons', 'other@mods.debug'])).toBe('/plugin configure whats-next@elsewhere')
+})
+
+test('configureCommand: run from a folder, or with no row of its own, it names the marketplace it is published in', () => {
+  expect(MARKETPLACE).toBe('egribnau-mods')
+  expect(configureCommand([])).toBe('/plugin configure whats-next@egribnau-mods')
+  expect(configureCommand(['whats-next@inline.icons', 'whats-next.compact', 'whats-nexter@elsewhere.icons'])).toBe('/plugin configure whats-next@egribnau-mods')
+})
 
 // tokenFor
 

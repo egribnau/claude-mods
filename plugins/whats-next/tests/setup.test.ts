@@ -341,6 +341,21 @@ for (const [version, shown] of [
   })
 }
 
+test('no token: the command to set it names the marketplace What\'s Next was installed from', async ($, on) => {
+  world(on, {})
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('config.list', () => ({
+    value: [{ key: 'whats-next@elsewhere.icons', label: 'Icons', kind: 'choice', value: 'text', options: ['ask', 'icons', 'text'], provider: { plugin: 'whats-next', tier: 'user' }, isLocked: false }],
+  }))
+
+  await $.session.start({ cwd: '/Users/jdoe/dev/radar', surface: 'terminal', isInteractive: true })
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(await texts(ui)).toContain('2. Run /plugin configure whats-next@elsewhere and paste it as Forgejo tokens, alone or as git.example.org=<token> next to tokens for other hosts.')
+})
+
 test('no token: links the token page and both ways to set it', async ($, on) => {
   const asked: World['asked'] = []
   world(on, { asked })

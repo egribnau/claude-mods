@@ -5,9 +5,10 @@ Personal Claude Code mods, distributed as a plugin marketplace.
 ## Install
 
 ```
-/plugin marketplace add https://git.example.org/alice/claude-mods.git
-/plugin install whats-next@egribnau-mods
+/plugin install whats-next --marketplace egribnau/claude-mods
 ```
+
+Answer `y` to add the marketplace, then pick a scope.
 
 ## Update an existing machine
 
@@ -40,7 +41,7 @@ What's Next has eight settings. **Compact** (`ask`, `on` or `off`): lists withou
 icons or as words; with `ask`, What's Next asks once, right after setup. **Forgejo tokens**: Forgejo or Gitea
 access tokens, kept in secure storage. A bare token is for every host; more hosts take `host=token`
 pairs separated by spaces (`git.example.org=<token> codeberg.org=<token>`), and a pair wins over a
-bare token. `/config` does not list it: set it with `/plugin configure whats-next@egribnau-mods`. A token needs `write:issue`,
+bare token. `/config` does not list it: set it with `/plugin configure whats-next@egribnau-mods` (setup names the marketplace What's Next was installed from). A token needs `write:issue`,
 `read:repository` and `read:user` (to know which issues are yours); with `read:issue` in place of
 `write:issue`, What's Next is read only and cannot assign or close. **GitLab.com token**: a gitlab.com access token, kept in secure storage.
 **Private GitLab token**: an access token for your own GitLab, any host but gitlab.com, kept in secure

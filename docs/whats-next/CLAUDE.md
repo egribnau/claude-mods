@@ -17,8 +17,10 @@ repo's CLAUDE.md.
 
 - `claude plugin test plugins/whats-next`, `claude plugin validate
   plugins/whats-next`, `tsc` with the tsconfig from the types file header,
-  and `docs/whats-next/check-tokens.sh` (every token setting is sensitive:
-  the test sandbox cannot read the manifest).
+  `docs/whats-next/check-tokens.sh` (every token setting is sensitive:
+  the test sandbox cannot read the manifest) and
+  `docs/whats-next/check-marketplace.sh` (the marketplace name is written
+  once, as `MARKETPLACE` in `hooks/forge.ts`, and matches the marketplace file).
 - `tests/tokens.test.ts` shows a token never leaks: keep it passing, and give
   a new place that shows forge text, or a new request, a test there.
 - `mock.clock(on)` is needed once the pane renders ages. `prompt.fill` hooks

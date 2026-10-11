@@ -81,6 +81,20 @@ function field(text: string, name: string): unknown {
 // GitLab one for gitlab.com and one for a private GitLab, and one for GitHub.
 export type TokenSetting = 'Forgejo tokens' | 'GitLab.com token' | 'Private GitLab token' | 'GitHub token'
 
+// The marketplace What's Next is published in, as the repo's
+// .claude-plugin/marketplace.json names it; docs/whats-next/check-marketplace.sh
+// holds the two to each other.
+export const MARKETPLACE = 'egribnau-mods'
+
+// The command that sets What's Next's tokens. `keys`: the session's /config
+// row keys, where What's Next's own read `whats-next@<marketplace>.<field>`
+// once installed. Run from a folder (`@inline`), or with no row of its own,
+// it names the marketplace What's Next is published in.
+export function configureCommand(keys: string[]): string {
+  const from = keys.map(k => /^whats-next@(.+)\.[^.]+$/.exec(k)?.[1]).find(m => m !== undefined && m !== 'inline' && m !== 'builtin')
+  return `/plugin configure whats-next@${from ?? MARKETPLACE}`
+}
+
 // The GitLab token setting for `host`: gitlab.com has its own.
 export function gitlabSetting(host: string): TokenSetting {
   return host.toLowerCase() === 'gitlab.com' ? 'GitLab.com token' : 'Private GitLab token'

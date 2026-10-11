@@ -3,7 +3,7 @@ import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } fro
 
 import type { Detail, Epic, Epics, IssueDetail, IssueRow, Milestone, Overview, Ref, Repo, Setup, TokenSource } from '../types'
 import { bar, dueFirst, forYou, openChildren, pickerOptions, standing, summary, tally } from './epics'
-import { detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
+import { configureCommand, detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
@@ -15,7 +15,6 @@ import { message, withoutToken, type Send, type Tracker } from './tracker'
 const PANE = 'next'
 const EPICS_PANE = 'next-epics'
 const MILESTONES_PANE = 'next-milestones'
-const CONFIGURE = '/plugin configure whats-next@egribnau-mods'
 // The command, and the one it falls back to when another has /next.
 const COMMAND = 'next'
 const FALLBACK_COMMAND = 'whats-next'
@@ -105,6 +104,9 @@ let configCompact = 'ask'
 let configLabel = 'epic'
 // The Debug setting: count What's Next's requests on a line under the bottom line.
 let configDebug = false
+// The command that sets a token, with the marketplace What's Next was
+// installed from once session.start has read it off /config.
+let configure = configureCommand([])
 
 // Nerd Font icons for the buttons (Material Design set).
 const ICON = {
@@ -684,8 +686,8 @@ function todo(s: Setup, r: Repo | null, t: Tracker | null): string[] {
   // GitLab has a setting per kind of host, so no host=token hint there.
   const set = [
     t?.name === 'GitLab'
-      ? `Run \`${CONFIGURE}\` and paste it as ${t.setting}.`
-      : `Run \`${CONFIGURE}\` and paste it as ${t?.setting ?? 'Forgejo tokens'}, alone or as \`${host}=<token>\` next to tokens for other hosts.`,
+      ? `Run \`${configure}\` and paste it as ${t.setting}.`
+      : `Run \`${configure}\` and paste it as ${t?.setting ?? 'Forgejo tokens'}, alone or as \`${host}=<token>\` next to tokens for other hosts.`,
   ]
   switch (s.kind) {
     case 'no-repo': {
@@ -2087,6 +2089,8 @@ export const register: Register = (on, options) => {
   configDebug = options.debug === true
 
   on('session.start', async ($, e, next) => {
+    // Which marketplace What's Next came from, for the command that sets a token.
+    configure = configureCommand(((await $.config.list().catch(() => [])) ?? []).map(r => r.key))
     // /next, unless another plugin, the person or an MCP server has it:
     // then /whats-next. A `next` whose plugin the engine does not name
     // cannot be told from another's, so it counts as taken.
