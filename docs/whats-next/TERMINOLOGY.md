@@ -83,7 +83,6 @@ free one is blocked.
 |---|---|
 | Loading … | Asked of the forge, no answer yet. |
 | unknown | The forge would not say (children unknown, issues unknown). |
-| no due date | What is said for a missing due date, where one is said. |
 
 ## Not used
 
@@ -92,4 +91,5 @@ free one is blocked.
 | up for grabs | available | Informal; replaced in 0.61.0. |
 | ready | available | Reads as "done"; replaced in 0.61.0. |
 | all children closed | all closed | One state, one word under an epic and a milestone; #45. |
+| no due date | nothing | A missing due date is not shown at all; #45. |
 | My issues | What's next, In progress | The pane was renamed in 0.24.0. |
