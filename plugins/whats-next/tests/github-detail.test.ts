@@ -313,7 +313,7 @@ test('github.com detail: the last comment, pull requests and commits; no Time li
   const all = await texts(ui)
 
   expect(all.some(t => t.includes('Issue 14'))).toBe(true)
-  expect(all.some(t => t.startsWith('── Last comment ── mvos · 2d ago'))).toBe(true)
+  expect(all.some(t => t.startsWith('── Last comment · mvos · 2d ago'))).toBe(true)
   expect(all).toContain('Also mention the desktop app.')
   for (const want of ['#61 ', 'Fix the crash', ' merged', '#63 ', 'Try another way']) {
     expect(all.some(t => t === want || t.includes(want))).toBe(true)
@@ -397,7 +397,7 @@ test("github.com detail: lists that lag a change still show it at once, Assign m
   await ui.press({ key: 'assign' })
   let all = await texts(ui)
   expect(all).not.toContain('● #14 Issue 14')
-  expect(all).toContain('  #14 Issue 14')
+  expect(all).toContain('○ #14 Issue 14')
 
   await ui.press({ key: 'pick-14' })
   await ui.press({ key: 'close' })

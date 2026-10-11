@@ -4,7 +4,7 @@ The words What's Next uses, one word per thing, in the panes, the README,
 the canvas, issues and code comments. A new word for an existing thing is
 not added; a word that is replaced is listed under Not used, with what
 replaced it. What a term means, not how or where it is drawn: that is
-DRAWING.md.
+DRAWING.md and DRAWING-issue.md.
 
 ## The tracker
 
@@ -14,6 +14,7 @@ DRAWING.md.
 | repo | The repo behind the current directory's `origin`; on GitLab, the project. |
 | issue | An issue of the repo. Pull and merge requests are never issues here. |
 | open, closed | An issue's or a milestone's state, as the forge says. |
+| all closed | Every issue of a milestone, or every child of an epic, closed. |
 | milestone | A forge milestone of the repo. |
 | due date | The date an issue or a milestone is due, if it has one. |
 | epic | An issue with the Epic label (the label is a setting). |
@@ -90,4 +91,5 @@ free one is blocked.
 |---|---|---|
 | up for grabs | available | Informal; replaced in 0.61.0. |
 | ready | available | Reads as "done"; replaced in 0.61.0. |
+| all children closed | all closed | One state, one word under an epic and a milestone; #45. |
 | My issues | What's next, In progress | The pane was renamed in 0.24.0. |

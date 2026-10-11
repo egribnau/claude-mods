@@ -646,7 +646,7 @@ test('gitlab.com detail: time logged of estimated, the last comment and the merg
 
   expect(all.some(t => t.includes('Issue 14'))).toBe(true)
   expect(all).toContain('1h 30m logged of 4h 0m estimated')
-  expect(all.some(t => t.startsWith('── Last comment ── mvos · 2d ago'))).toBe(true)
+  expect(all.some(t => t.startsWith('── Last comment · mvos · 2d ago'))).toBe(true)
   expect(all).toContain('Also mention the desktop app.')
   // A system note is never the last comment.
   expect(all.some(t => t.includes('added 1h 30m of time spent'))).toBe(false)

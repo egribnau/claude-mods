@@ -2,7 +2,7 @@ import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
 import type { Detail, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneIssue, Overview, Ref, Repo, Setup, TokenSource } from '../types'
-import { bar, dueFirst, forYou, inMilestone, openChildren, pickerOptions, standing, summary, tally, tree, type TreeLine } from './epics'
+import { bar, dueFirst, forYou, inMilestone, markOf, openChildren, pickerOptions, standing, summary, tally, tree, type Folding, type Mark, type Standing, type TreeLine } from './epics'
 import { configureCommand, detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { github } from './github'
@@ -340,7 +340,7 @@ async function showNext($: EngineInterface, r: Repo) {
   const pick = (await read($, picker))?.pick ?? 'all'
   const next = await whatsNext(tracker($, r), known, pick, !(await off($, 'deps')))
   await update($, overview, (): Overview => ({ kind: 'ok', ...next }))
-  // An issue that is closed, or now someone else's, closes: What's next shows.
+  // An issue that is closed, or now with others, closes: What's next shows.
   const shown = new Set([...known.mine, ...known.free].map(i => i.number))
   await update($, memberOf(picked, { requestId: PANE }), n => (n !== null && shown.has(n) ? n : null))
 }
@@ -837,7 +837,134 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       {line(`${key}-text`, text, { dimColor: true })}
     </Box>
   )
-  const rule = (key: string, name: string) => fixedLine(key, `── ${name} `.padEnd(columns, '─'))
+  // One part of a line made of parts: its words, dim unless it has a
+  // colour, or drawn as `node` where it is more than one text.
+  type Part = { text: string; color?: string; node?: RenderChildren }
+  // Parts joined by a dim ` · ` (DRAWING.md, Lines that hold several parts).
+  const joined = (parts: readonly Part[]): RenderChildren[] =>
+    parts.flatMap((p, k) => [
+      ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
+      p.node ?? (
+        <Text key={`part-${k}`} color={p.color} dimColor={!p.color}>
+          {p.text}
+        </Text>
+      ),
+    ])
+  // A line of parts `lead` columns in: one text, cut once at its end, so a
+  // narrow pane cuts its last parts and never squeezes them one by one.
+  const partsLine = (key: string, lead: number, parts: readonly Part[]) => (
+    <Text key={key} wrap="truncate-end">
+      {' '.repeat(lead)}
+      {joined(parts)}
+    </Text>
+  )
+  // A rule (DRAWING.md, Rules): `── ` dim, its name bold, what belongs to it
+  // after ` · `, and the line to the pane's edge, in one text. One that
+  // folds starts with its + or − instead, plain, and is one target.
+  const rule = (key: string, name: string, after: readonly Part[] = [], fold?: { key: string; open: boolean; onPress: () => unknown }) => {
+    const lead = fold ? `${fold.open ? '−' : '+'} ` : '── '
+    const used = lead.length + name.length + after.reduce((n, p) => n + 3 + p.text.length, 0) + 1
+    const text = (
+      <Text wrap="truncate-end">
+        <Text dimColor={!fold}>{lead}</Text>
+        <Text bold>{name}</Text>
+        {after.length > 0 && <Text dimColor>{' · '}</Text>}
+        {joined(after)}
+        <Text dimColor>{` ${'─'.repeat(Math.max(0, columns - used))}`}</Text>
+      </Text>
+    )
+    return (
+      <Box key={key} height={1} flexShrink={0}>
+        {fold ? (
+          <Button key={fold.key} plain onPress={fold.onPress}>
+            {text}
+          </Button>
+        ) : (
+          text
+        )}
+      </Box>
+    )
+  }
+  // A row's mark and the space after it (DRAWING-issue.md, Marks).
+  const markText = (m: Mark) => (
+    <Text key="mark" color={m.color} dimColor={m.dim}>
+      {`${m.glyph} `}
+    </Text>
+  )
+  // An issue's number at the right of its column, and a space: blue, grey
+  // once closed (DRAWING-issue.md, Number and title).
+  const numberText = (n: number, width: number, closed = false) => (
+    <Text key="number" color={closed ? 'inactive' : 'suggestion'}>{`${`#${n}`.padStart(width - 1)} `}</Text>
+  )
+  // How many are closed, of all, at the end of a row: the bar where the row
+  // has room for one, then the count, dim in 6 columns (DRAWING.md, Counts).
+  const barText = (closed: number, total: number): RenderChildren[] => {
+    const b = bar(closed, total)
+    return [
+      b.filled ? (
+        <Text key="filled" color="success">
+          {b.filled}
+        </Text>
+      ) : null,
+      b.empty ? (
+        <Text key="empty" dimColor>
+          {b.empty}
+        </Text>
+      ) : null,
+    ]
+  }
+  const countText = (closed: number, total: number, withBar: boolean): RenderChildren[] => [
+    ...(withBar ? barText(closed, total) : []),
+    <Text key="count" dimColor>
+      {`${closed}/${total}`.padStart(6)}
+    </Text>,
+  ]
+  // The bar and count take 15 columns at the end of a row, the count alone 6;
+  // a closed row ends in ✓ where an open one's count ends.
+  const COUNT = 15
+  const CLOSED_END = '✓'.padStart(COUNT - 1)
+  // A closed epic: one grey row, `lead` columns in, ending in ✓ where an open
+  // one's count ends; it opens its detail.
+  const closedRow = (key: string, buttonKey: string, lead: number, n: number, numWidth: number, title: string, onPress: () => unknown) => {
+    const width = Math.max(0, columns - lead - numWidth - COUNT)
+    return (
+      <Box key={key} flexShrink={0}>
+        <Button key={buttonKey} plain onPress={onPress}>
+          <Text wrap="truncate-end" color="inactive">
+            {`${' '.repeat(lead)}${`#${n}`.padStart(numWidth - 1)} ${fit(title, width).padEnd(width)} ${CLOSED_END}`}
+          </Text>
+        </Button>
+      </Box>
+    )
+  }
+  // How many children or issues under an unfolded row are closed: one grey
+  // line in the mark column, `lead` columns in.
+  const closedLine = (key: string, lead: number, n: number) => line(key, `${' '.repeat(lead)}✓ ${n} closed`, { color: 'inactive' })
+  // A row at the top of a tree that folds (DRAWING.md, Rows that fold): its
+  // mark, a target that folds it, then the rest of the row, `body`, a target
+  // that opens its detail.
+  const foldRow = (o: {
+    lead: number
+    mark: Mark
+    foldKey: string
+    onFold: () => unknown
+    openKey: string
+    onOpen: () => unknown
+    body: RenderChildren[]
+    color?: string
+  }) => (
+    <Box height={1}>
+      {o.lead > 0 && <Text>{' '.repeat(o.lead)}</Text>}
+      <Button key={o.foldKey} plain onPress={o.onFold}>
+        {markText(o.mark)}
+      </Button>
+      <Button key={o.openKey} plain onPress={o.onOpen}>
+        <Text wrap="truncate-end" color={o.color}>
+          {o.body}
+        </Text>
+      </Button>
+    </Box>
+  )
   // A wrapped paragraph in which `a command` shows as a command and an
   // https:// address as a link; the backticks themselves are not drawn.
   const para = (key: string, text: string, props: Record<string, unknown> = {}) => {
@@ -971,18 +1098,17 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const compact = ((await read($, compactChosen)) ?? configCompact) === 'on'
   const gap = compact ? 0 : 1
   const today = await $.clock.now()
-  // One issue as both lists show it: its mark, number and title on a button
-  // that opens it, and under it, dim, its milestone (unless it is the one
-  // picked), its labels in colour and its age, or what blocks it. `lead`
-  // indents it under an epic; `who` names someone else's at the right.
+  // One issue as every list shows it (DRAWING-issue.md): its mark, number
+  // and title on a button that opens it, and under it the facts line: dim,
+  // its milestone (unless it is the one picked), its labels in colour and its
+  // age, or what blocks it. `lead` indents it in a tree; `who` names whom it
+  // is with, dim at the right.
   type RowIssue = Pick<IssueRow, 'number' | 'title' | 'labels' | 'milestone' | 'created'>
   type RowLook = {
     key: string
     buttonKey: string
     numWidth: number
-    mark: string
-    markColor?: string
-    dim?: boolean
+    standing: Standing
     bold?: boolean
     autoFocus?: boolean
     lead?: number
@@ -990,53 +1116,61 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     blockedBy?: number[]
     // Leaves the milestone out of the facts, where the list is one milestone's.
     noMilestone?: boolean
-    // A row with children of its own, in the tree: its fold mark in place of
-    // the mark, a target of its own (none for one shown above, drawn dim),
-    // and how many of its children are closed, of all, at the right.
-    fold?: { mark: string; key: string; onPress?: () => unknown }
+    // A row with children of its own, in the tree: its fold mark, coloured by
+    // its standing, a target of its own (none for one shown above), and how
+    // many of its children are closed, of all, at the right.
+    fold?: { state: Folding; key: string; onPress?: () => unknown }
     count?: string
     // Said dim on the second line, in place of the facts.
     note?: string
     onPress: () => unknown
   }
+  // Whom a child is with, for the right of its row: the first assignee of
+  // one with others, or of one blocked that someone holds.
+  const whoOf = (c: { assignees: string[] }, st: Standing) =>
+    st === 'withOthers' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : ''
   const issueRow = (i: RowIssue, o: RowLook) => {
     const lead = ' '.repeat(o.lead ?? 0)
-    const opened = i.created ? `opened ${age(i.created, today)} ago` : ''
+    const dim = o.standing === 'blocked'
+    const opened: Part[] = i.created ? [{ text: `opened ${age(i.created, today)} ago` }] : []
     // What blocks it: its numbers blue, as issue numbers are, the words dim.
-    const blockers = (by: number[]) => [
-      <Text key="by" dimColor>
-        {'blocked by '}
-      </Text>,
-      ...by.flatMap((n, k) => [
-        ...(k > 0 ? [<Text key={`by-sep-${k}`} dimColor>{', '}</Text>] : []),
-        <Text key={`by-${n}`} color="suggestion">
-          {`#${n}`}
+    const blockers = (by: number[]): Part => ({
+      text: '',
+      node: [
+        <Text key="by" dimColor>
+          {'blocked by '}
         </Text>,
-      ]),
-    ]
-    const parts: RenderChildren[] = (
-      o.note
-        ? [o.note]
-        : o.blockedBy && o.blockedBy.length > 0
-        ? [blockers(o.blockedBy), opened]
-        : [o.noMilestone || pk?.pick === `m:${i.milestone}` ? null : i.milestone, i.labels.length > 0 ? labelTexts(i.labels) : null, opened]
-    ).filter(p => p !== null && p !== '')
-    const facts = parts.flatMap((p, k) => [
-      ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
-      ...(typeof p === 'string'
-        ? [
-            <Text key={`part-${k}`} dimColor>
-              {p}
-            </Text>,
+        ...by.flatMap((n, k) => [
+          ...(k > 0 ? [<Text key={`by-sep-${k}`} dimColor>{', '}</Text>] : []),
+          <Text key={`by-${n}`} color="suggestion">
+            {`#${n}`}
+          </Text>,
+        ]),
+      ],
+    })
+    const shownMilestone = !o.noMilestone && i.milestone !== null && pk?.pick !== `m:${i.milestone}`
+    const facts: Part[] = o.note
+      ? [{ text: o.note }]
+      : o.blockedBy && o.blockedBy.length > 0
+        ? [blockers(o.blockedBy), ...opened]
+        : [
+            ...(shownMilestone ? [{ text: i.milestone ?? '' }] : []),
+            ...(i.labels.length > 0 ? [{ text: '', node: labelTexts(i.labels) }] : []),
+            ...opened,
           ]
-        : (p as RenderChildren[])),
-    ])
     const room = columns - (o.lead ?? 0) - 2 - o.numWidth - (o.count !== undefined ? 6 : 0)
     const title =
       o.who || o.count !== undefined
         ? `${fit(i.title, room - (o.who ? o.who.length + 1 : 0)).padEnd(room - (o.who ? o.who.length + 1 : 0))}${o.who ? ' ' : ''}`
         : fit(i.title, room)
     const fold = o.fold
+    const mark = markOf(o.standing, fold?.state ?? null)
+    const rest = [
+      numberText(i.number, o.numWidth),
+      dim ? <Text key="title" dimColor>{title}</Text> : title,
+      o.who ? <Text key="who" dimColor>{o.who}</Text> : null,
+      o.count !== undefined ? <Text key="count" dimColor>{o.count.padStart(6)}</Text> : null,
+    ]
     return (
       <Box key={o.key} flexDirection="column" marginBottom={gap} flexShrink={0}>
         {fold ? (
@@ -1045,32 +1179,23 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Text>{lead}</Text>
             {fold.onPress ? (
               <Button key={fold.key} plain onPress={fold.onPress}>
-                <Text>{fold.mark}</Text>
+                {markText(mark)}
               </Button>
             ) : (
-              <Text dimColor>{fold.mark}</Text>
+              markText(mark)
             )}
             <Button key={o.buttonKey} plain onPress={o.onPress}>
-              <Text wrap="truncate-end">
-                <Text color="suggestion">{`${`#${i.number}`.padStart(o.numWidth - 1)} `}</Text>
-                {title}
-                {o.who && <Text dimColor>{o.who}</Text>}
-                {o.count !== undefined && <Text dimColor>{o.count.padStart(6)}</Text>}
-              </Text>
+              <Text wrap="truncate-end">{rest}</Text>
             </Button>
           </Box>
         ) : (
-        <Button key={o.buttonKey} plain autoFocus={o.autoFocus || undefined} onPress={o.onPress}>
-          <Text wrap="truncate-end" bold={o.bold}>
-            {lead}
-            <Text color={o.markColor} dimColor={o.dim}>
-              {o.mark}
+          <Button key={o.buttonKey} plain autoFocus={o.autoFocus || undefined} onPress={o.onPress}>
+            <Text wrap="truncate-end" bold={o.bold}>
+              {lead}
+              {markText(mark)}
+              {rest}
             </Text>
-            <Text color="suggestion">{`${`#${i.number}`.padStart(o.numWidth - 1)} `}</Text>
-            {o.dim ? <Text dimColor>{title}</Text> : title}
-            {o.who && <Text dimColor>{o.who}</Text>}
-          </Text>
-        </Button>
+          </Button>
         )}
         {/* One row: a line too long for the pane is cut, but would still
             take the height of its overflow. The indent keeps its width, so
@@ -1080,7 +1205,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Box key="indent" flexShrink={0}>
               <Text>{`${lead}${' '.repeat(2 + o.numWidth)}`}</Text>
             </Box>
-            <Text wrap="truncate-end">{facts}</Text>
+            {partsLine('facts', 0, facts)}
           </Box>
         )}
       </Box>
@@ -1103,13 +1228,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         // A closing line sets itself apart from a row after it.
         const after = under[k + 1]?.kind === 'child' ? gap : 0
         const at = `${o.at}-${k}`
-        const text =
-          l.kind === 'closed'
-            ? `${' '.repeat(lead)}✓ ${l.closed} closed`
-            : `${' '.repeat(lead + o.numWidth)}${l.kind === 'unknown' ? 'children unknown' : l.kind === 'none' ? 'no children' : 'Loading the children…'}`
+        const text = `${' '.repeat(lead + o.numWidth)}${l.kind === 'unknown' ? 'children unknown' : l.kind === 'none' ? 'no children' : 'Loading the children…'}`
         return (
           <Box key={`${l.kind}-${at}`} flexShrink={0} marginBottom={after}>
-            {line(`${l.kind}-line-${at}`, text, l.kind === 'closed' ? { color: 'inactive' } : { dimColor: true })}
+            {l.kind === 'closed' ? closedLine(`${l.kind}-line-${at}`, lead, l.closed) : line(`${l.kind}-line-${at}`, text, { dimColor: true })}
           </Box>
         )
       }
@@ -1124,23 +1246,48 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         buttonKey: `${o.button}-${at}`,
         numWidth: o.numWidth,
         lead,
-        // Hollow beside the filled ● for yours: someone else's.
-        mark: st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : st === 'taken' ? '○ ' : '  ',
-        markColor: st === 'mine' ? 'success' : undefined,
-        dim: st === 'blocked',
-        who: st === 'taken' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : '',
+        standing: st,
+        who: whoOf(c, st),
         blockedBy: st === 'blocked' ? c.blockedBy : undefined,
         ...(l.fold && {
           fold:
             l.fold === 'shown above'
-              ? { mark: '↑ ', key: `fold-${at}` }
-              : { mark: l.fold === 'unfolded' ? '− ' : '+ ', key: `fold-${at}`, onPress: () => foldIssue($, c.number) },
+              ? { state: l.fold, key: `fold-${at}` }
+              : { state: l.fold, key: `fold-${at}`, onPress: () => foldIssue($, c.number) },
           count: l.count ? `${l.count.closed}/${l.count.total}` : '',
           ...(l.fold === 'shown above' && { note: 'shown above' }),
         }),
         onPress: () => openIssue($, o.pane, c.number),
       })
     })
+
+  // An open epic at the top of a tree, in Epics and under a milestone: its
+  // fold mark, number, bold title, bar and count; folded, the line under it
+  // of what there is for you in it.
+  const epicRow = (x: Epic, o: { key: string; foldKey: string; openKey: string; lead: number; numWidth: number; open: boolean; pane: string }) => {
+    const t = tally(x.children ?? [])
+    const width = Math.max(0, columns - o.lead - 2 - o.numWidth - COUNT)
+    return (
+      <Box key={o.key} flexDirection="column" flexShrink={0} marginBottom={o.open ? 0 : gap}>
+        {foldRow({
+          lead: o.lead,
+          mark: markOf(null, o.open ? 'unfolded' : 'folded'),
+          foldKey: o.foldKey,
+          onFold: () => foldIssue($, x.number),
+          openKey: o.openKey,
+          onOpen: () => openIssue($, o.pane, x.number),
+          body: [
+            numberText(x.number, o.numWidth),
+            <Text key="title" bold>
+              {`${fit(x.title, width).padEnd(width)} `}
+            </Text>,
+            ...countText(t.closed, t.total, true),
+          ],
+        })}
+        {!o.open && partsLine(`under-${o.key}`, o.lead + 2 + o.numWidth, summary(x))}
+      </Box>
+    )
+  }
 
   // The right of the bottom line: What's Next's version, dim, kept whole on
   // a narrow pane.
@@ -1155,12 +1302,18 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const req = configDebug ? await read($, requests) : null
   const counter = req && (
     <Box key="requests" height={1} flexShrink={0}>
-      <Text dimColor>{`↯ ${req.label}: `}</Text>
-      <Text>{String(req.count)}</Text>
-      <Text dimColor>{' requests'}</Text>
+      <Text wrap="truncate-end">
+        <Text dimColor>{`↯ ${req.label}: `}</Text>
+        <Text>{String(req.count)}</Text>
+        <Text dimColor>{' requests'}</Text>
+      </Text>
       <Box flexGrow={1} />
-      <Text>{String(req.total)}</Text>
-      <Text dimColor>{' this session'}</Text>
+      <Box flexShrink={0}>
+        <Text>
+          <Text>{String(req.total)}</Text>
+          <Text dimColor>{' this session'}</Text>
+        </Text>
+      </Box>
     </Box>
   )
   // The milestone picker both panes share, and what it shows picked.
@@ -1458,18 +1611,19 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
       body.push(
         <Box key="head" flexDirection="column" flexShrink={0}>
+          {/* Closed: grey as a whole, number and title. */}
           {titleLines.map((t, k) => (
-            <Text key={`t-${k}`} bold wrap="truncate-end">
-              {k === 0 ? <Text color={closed ? 'inactive' : 'suggestion'}>{`#${i.number}`}</Text> : null}
-              {k === 0 ? t.slice(`#${i.number}`.length) : t}
+            <Text key={`t-${k}`} bold wrap="truncate-end" color={closed ? 'inactive' : undefined}>
+              {k === 0 && !closed ? <Text color="suggestion">{`#${i.number}`}</Text> : null}
+              {k === 0 && !closed ? t.slice(`#${i.number}`.length) : t}
             </Text>
           ))}
-          <Text wrap="truncate-end">
-            <Text dimColor>{`${i.state} · ${i.milestone ? i.milestone.title : 'no milestone'}`}</Text>
-            {milestoneDue && <Text dimColor>{' · '}</Text>}
-            {dueDate('milestone-due', milestoneDue, now, { form: 'short' })}
-            <Text dimColor>{` · ${comments}`}</Text>
-          </Text>
+          {partsLine('state', 0, [
+            { text: i.state },
+            { text: i.milestone ? i.milestone.title : 'no milestone' },
+            ...(milestoneDue ? [{ text: '', node: dueDate('milestone-due', milestoneDue, now, { form: 'short' }) }] : []),
+            { text: comments },
+          ])}
           <Text dimColor wrap="truncate-end">{`opened ${age(i.created, now)} ago by ${i.author} · updated ${age(i.updated, now)} ago`}</Text>
         </Box>,
       )
@@ -1540,7 +1694,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       if (last) {
         body.push(
           <Box key="gap-last" height={1} flexShrink={0} />,
-          rule('last', `Last comment ── ${last.author} · ${age(last.when, now)} ago`),
+          rule('last', 'Last comment', [{ text: last.author }, { text: `${age(last.when, now)} ago` }]),
         )
         lastLines.slice(0, lastShown).forEach((t, k) => body.push(line(`c-${k}`, t || ' ')))
         if (lastShown < lastLines.length) {
@@ -1605,43 +1759,11 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         return times === 1 ? `${n}` : `${n}@${times}`
       }
       const out: RenderChildren[] = []
-      const width = Math.max(0, columns - 4 - numWidth - 15)
       for (const c of tops) {
-        const t = tally(c.children ?? [])
-        const eb = bar(t.closed, t.total)
         const unfolded = epicFolds.has(c.number)
         const key = at(c.number)
-        out.push(
-          <Box key={`ms-epic-${key}`} flexDirection="column" flexShrink={0} marginBottom={unfolded ? 0 : gap}>
-            {/* Two targets, as on Epics: the mark folds, the rest opens its detail. */}
-            <Box height={1}>
-              <Text>{'  '}</Text>
-              <Button key={`fold-${key}`} plain onPress={() => foldIssue($, c.number)}>
-                <Text>{unfolded ? '− ' : '+ '}</Text>
-              </Button>
-              <Button key={`ms-issue-${key}`} plain onPress={() => openIssue($, MILESTONES_PANE, c.number)}>
-                <Text wrap="truncate-end">
-                  <Text color="suggestion">{`${`#${c.number}`.padStart(numWidth - 1)} `}</Text>
-                  <Text bold>{`${fit(c.title, width).padEnd(width)} `}</Text>
-                  {eb.filled && <Text color="success">{eb.filled}</Text>}
-                  {eb.empty && <Text dimColor>{eb.empty}</Text>}
-                  <Text dimColor>{`${t.closed}/${t.total}`.padStart(6)}</Text>
-                </Text>
-              </Button>
-            </Box>
-            {!unfolded && (
-              <Text key={`under-${key}`} wrap="truncate-end">
-                {' '.repeat(4 + numWidth)}
-                {summary({ number: c.number, title: c.title, state: 'open', children: c.children ?? null }).flatMap((part, k) => [
-                  ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
-                  <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
-                    {part.text}
-                  </Text>,
-                ])}
-              </Text>
-            )}
-          </Box>,
-        )
+        const asEpic: Epic = { number: c.number, title: c.title, state: 'open', children: c.children ?? null }
+        out.push(epicRow(asEpic, { key: `ms-epic-${key}`, foldKey: `fold-${key}`, openKey: `ms-issue-${key}`, lead: 2, numWidth, open: unfolded, pane: MILESTONES_PANE }))
         if (!unfolded) continue
         const under = lines.get(c.number) ?? []
         out.push(
@@ -1659,10 +1781,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             buttonKey: `ms-issue-${key}`,
             numWidth,
             lead: 2,
-            mark: st === 'mine' ? '● ' : st === 'blocked' ? '⊘ ' : st === 'taken' ? '○ ' : '  ',
-            markColor: st === 'mine' ? 'success' : undefined,
-            dim: st === 'blocked',
-            who: st === 'taken' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : '',
+            standing: st,
+            who: whoOf(c, st),
             blockedBy: st === 'blocked' ? c.blockedBy : undefined,
             noMilestone: true,
             onPress: () => openIssue($, MILESTONES_PANE, c.number),
@@ -1672,18 +1792,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       if (isClosed) {
         for (const c of closedEpics) {
           const key = at(c.number)
-          out.push(
-            <Box key={`ms-epic-${key}`} flexShrink={0}>
-              <Button key={`ms-issue-${key}`} plain onPress={() => openIssue($, MILESTONES_PANE, c.number)}>
-                <Text wrap="truncate-end" color="inactive">
-                  {`    ${`#${c.number}`.padStart(numWidth - 1)} ${fit(c.title, width).padEnd(width)} ${'✓'.padStart(14)}`}
-                </Text>
-              </Button>
-            </Box>,
-          )
+          out.push(closedRow(`ms-epic-${key}`, `ms-issue-${key}`, 4, c.number, numWidth, c.title, () => openIssue($, MILESTONES_PANE, c.number)))
         }
       }
-      if (ms.closed > 0) out.push(line(`closed-${ms.title}`, `  ✓ ${ms.closed} closed`, { color: 'inactive' }))
+      if (ms.closed > 0) out.push(closedLine(`closed-${ms.title}`, 2, ms.closed))
       return out
     }
 
@@ -1693,7 +1805,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const shownMs = inDetail === null ? undefined : [...(known ?? []), ...closedOnes].find(m => m.title === inDetail)
     if (shownMs) {
       const isClosed = !(known ?? []).includes(shownMs)
-      const b = bar(shownMs.closed, shownMs.total)
       const issues = issuesOf[shownMs.title]
       const plain = (issues ?? []).filter(c => c.children === undefined)
       const parts = issues ? forYou(tally(plain)) : []
@@ -1707,7 +1818,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         : when === null
           ? 'closed'
           : `closed ${when === 0 ? 'today' : when === 1 ? 'yesterday' : `${when} days ago`}`
-      const progress = `${shownMs.closed}/${shownMs.total} · ${shownMs.total > 0 && shownMs.closed === shownMs.total ? 'all closed' : `${shownMs.total - shownMs.closed} open`}`
+      // All closed is amber while the milestone is still open: close it.
+      const allClosed = shownMs.total > 0 && shownMs.closed === shownMs.total
+      const progress: Part[] = [
+        { text: `${shownMs.closed}/${shownMs.total}` },
+        allClosed ? { text: 'all closed', ...(isClosed ? {} : { color: 'warning' }) } : { text: `${shownMs.total - shownMs.closed} open` },
+      ]
       // Description, folded, shows its first three lines.
       const text = (shownMs.description ?? '').trim()
       const descLines = text === '' ? [] : wrap(text, columns)
@@ -1720,30 +1836,17 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               {t}
             </Text>
           ))}
-          <Text wrap="truncate-end">
-            <Text dimColor>{state}</Text>
-            <Text dimColor>{' · '}</Text>
-            {dueDate('due', shownMs.due, now, { form: isClosed ? 'short' : 'long', done: isClosed, orNone: true })}
-          </Text>
+          {partsLine('state', 0, [{ text: state }, { text: '', node: dueDate('due', shownMs.due, now, { form: isClosed ? 'short' : 'long', done: isClosed, orNone: true }) }])}
         </Box>,
         <Box key="progress" flexDirection="column" flexShrink={0} marginTop={1}>
           <Text wrap="truncate-end">
-            {b.filled && <Text color="success">{b.filled}</Text>}
-            {b.empty && <Text dimColor>{b.empty}</Text>}
-            <Text dimColor>{` ${progress}`}</Text>
+            {barText(shownMs.closed, shownMs.total)}
+            {' '}
+            {joined(progress)}
           </Text>
           {issues === undefined && line('ms-loading', 'Loading the issues…', { dimColor: true })}
           {issues === null && line('ms-unknown', 'issues unknown', { dimColor: true })}
-          {issues && (
-            <Text wrap="truncate-end">
-              {parts.flatMap((part, k) => [
-                ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
-                <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
-                  {part.text}
-                </Text>,
-              ])}
-            </Text>
-          )}
+          {issues && partsLine('for-you', 0, parts)}
         </Box>,
       ]
       // No Work on this or Assign: a milestone is not work you pick up. Close
@@ -1772,20 +1875,14 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       }
       // Two sections, each folding on its rule as Closed does: Issues, the
       // milestone's issues as a tree, unfolded at first; then Description.
-      const sectionRule = (key: string, head: string, onPress: () => unknown) => (
-        <Box key={`${key}-rule`} height={1} flexShrink={0}>
-          <Button key={key} plain onPress={onPress}>
-            <Text wrap="truncate-end">
-              <Text bold>{head}</Text>
-              <Text dimColor>{'─'.repeat(Math.max(0, columns - head.length))}</Text>
-            </Text>
-          </Button>
-        </Box>
-      )
       const issuesShut = await read($, issuesFolded)
       body.push(
         <Box key="gap-issues" height={1} flexShrink={0} />,
-        sectionRule('issues-section', `${issuesShut ? '+' : '−'} Issues · ${shownMs.total - shownMs.closed} open `, () => update($, issuesFolded, f => !f)),
+        rule('issues-section-rule', 'Issues', [{ text: `${shownMs.total - shownMs.closed} open` }], {
+          key: 'issues-section',
+          open: !issuesShut,
+          onPress: () => update($, issuesFolded, f => !f),
+        }),
       )
       if (!issuesShut) {
         const list: RenderChildren[] = []
@@ -1805,7 +1902,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       body.push(
         <Box key="gap-desc" height={1} flexShrink={0} />,
         descLines.length > 3
-          ? sectionRule('description-section', `${descOpen ? '−' : '+'} Description `, () => update($, descriptionUnfolded, o => !o))
+          ? rule('description-section-rule', 'Description', [], { key: 'description-section', open: descOpen, onPress: () => update($, descriptionUnfolded, o => !o) })
           : rule('desc', 'Description'),
       )
       if (descLines.length === 0) body.push(line('no-desc', 'No description.', { dimColor: true }))
@@ -1833,8 +1930,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
       )
     }
-    // Bar and count at the right of a row: 15 columns.
-    const titleWidth = Math.max(0, columns - 2 - 15)
+    // Bar and count at the right of a row.
+    const titleWidth = Math.max(0, columns - 2 - COUNT)
     // One number column for every milestone folded open, so all titles line up.
     const numbers = [...folds].flatMap(t => milestoneNumbers(issuesOf[t] ?? []))
     const numWidth = Math.max(0, ...numbers.map(n => `#${n}`.length)) + 1
@@ -1843,7 +1940,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // row ending in ✓, its closed epics grey under its open issues.
     const depsOn = !(await off($, 'deps'))
     const draw = (ms: Milestone, isClosed: boolean) => {
-      const b = bar(ms.closed, ms.total)
       const open = folds.has(ms.title)
       // Once asked: its open issues, its epics first, and what there is for
       // you among the issues that are not epics.
@@ -1855,56 +1951,42 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const parts = issues
         ? forYou(tally(plain))
         : seen
-          ? forYou({ closed: 0, total: 0, ...(seen.checked ? seen : { mine: seen.mine, free: 0, taken: 0, blocked: 0 }) })
+          ? forYou({ closed: 0, total: 0, ...(seen.checked ? seen : { yours: seen.yours, available: 0, withOthers: 0, blocked: 0 }) })
           : []
+      // Two targets, as an epic's: the mark folds, the rest opens its detail.
+      const fold = { foldKey: `ms-fold-${ms.title}`, onFold: () => foldMilestone($, ms.title), openKey: `milestone-${ms.title}`, onOpen: () => openMilestone($, ms.title) }
+      const mark = markOf(null, open ? 'unfolded' : 'folded', isClosed)
       if (isClosed) {
         rows.push(
-          <Box key={`ms-${ms.title}`} height={1} flexShrink={0}>
-            <Button key={`ms-fold-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
-              <Text color="inactive">{open ? '− ' : '+ '}</Text>
-            </Button>
-            <Button key={`milestone-${ms.title}`} plain onPress={() => openMilestone($, ms.title)}>
-              <Text wrap="truncate-end" color="inactive">
-                {`${fit(ms.title, titleWidth).padEnd(titleWidth)} ${'✓'.padStart(14)}`}
-              </Text>
-            </Button>
+          <Box key={`ms-${ms.title}`} flexShrink={0}>
+            {foldRow({ lead: 0, mark, ...fold, color: 'inactive', body: [`${fit(ms.title, titleWidth).padEnd(titleWidth)} ${CLOSED_END}`] })}
           </Box>,
         )
       } else {
+        // All closed is amber: the milestone is done, close it.
+        const allClosed = ms.total > 0 && ms.closed === ms.total
+        const due = dueDate('due', ms.due, now, { form: 'short', orNone: true })
+        const when: Part[] = [
+          { text: dueWords(ms.due, now, { form: 'short', orNone: true }) ?? '', node: due },
+          allClosed ? { text: 'all closed', color: 'warning' } : { text: `${ms.total - ms.closed} open` },
+        ]
         rows.push(
           <Box key={`ms-${ms.title}`} flexDirection="column" flexShrink={0} marginBottom={open ? 0 : gap}>
-            {/* Two targets, as an epic's: the mark folds, the rest opens its detail. */}
-            <Box height={1}>
-              <Button key={`ms-fold-${ms.title}`} plain onPress={() => foldMilestone($, ms.title)}>
-                <Text>{open ? '− ' : '+ '}</Text>
-              </Button>
-              <Button key={`milestone-${ms.title}`} plain onPress={() => openMilestone($, ms.title)}>
-                <Text wrap="truncate-end">
-                  <Text bold>{`${fit(ms.title, titleWidth).padEnd(titleWidth)} `}</Text>
-                  {b.filled && <Text color="success">{b.filled}</Text>}
-                  {b.empty && <Text dimColor>{b.empty}</Text>}
-                  <Text dimColor>{`${ms.closed}/${ms.total}`.padStart(6)}</Text>
-                </Text>
-              </Button>
-            </Box>
+            {foldRow({
+              lead: 0,
+              mark,
+              ...fold,
+              body: [
+                <Text key="title" bold>
+                  {`${fit(ms.title, titleWidth).padEnd(titleWidth)} `}
+                </Text>,
+                ...countText(ms.closed, ms.total, true),
+              ],
+            })}
             {/* Two lines, each cut once at its end: when and how much, then
                 what there is for you, where any of it is known. */}
-            <Text key={`when-${ms.title}`} wrap="truncate-end">
-              {'  '}
-              {dueDate('due', ms.due, now, { form: 'short', orNone: true })}
-              <Text dimColor>{` · ${ms.total - ms.closed} open`}</Text>
-            </Text>
-            {parts.length > 0 && (
-              <Text key={`for-you-${ms.title}`} wrap="truncate-end">
-                {'  '}
-                {parts.flatMap((part, k) => [
-                  ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
-                  <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
-                    {part.text}
-                  </Text>,
-                ])}
-              </Text>
-            )}
+            {partsLine(`when-${ms.title}`, 2, when)}
+            {parts.length > 0 && partsLine(`for-you-${ms.title}`, 2, parts)}
           </Box>,
         )
       }
@@ -1924,15 +2006,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     }
     for (const ms of dueFirst(known ?? [])) draw(ms, false)
     if (closedOnes.length > 0) {
-      const head = `${showClosed ? '−' : '+'} Closed · ${closedOnes.length} `
       rows.push(
         <Box key="closed-rule" flexShrink={0} marginBottom={showClosed ? 0 : gap}>
-          <Button key="closed-section" plain onPress={() => update($, closedShown, o => !o)}>
-            <Text wrap="truncate-end">
-              <Text bold>{head}</Text>
-              <Text dimColor>{'─'.repeat(Math.max(0, columns - head.length))}</Text>
-            </Text>
-          </Button>
+          {rule('closed-rule-line', 'Closed', [{ text: `${closedOnes.length}` }], {
+            key: 'closed-section',
+            open: showClosed,
+            onPress: () => update($, closedShown, o => !o),
+          })}
         </Box>,
       )
       if (showClosed) for (const ms of closedOnes) draw(ms, true)
@@ -1948,7 +2028,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
         {fixedLine('where-rule', '─'.repeat(columns))}
         <Box key="where" height={1} flexShrink={0}>
-          {count > 0 && <Text dimColor wrap="truncate-end">{`${count} ${count === 1 ? 'milestone' : 'milestones'} · ${openIssues} open`}</Text>}
+          {count > 0 && partsLine('counts', 0, [{ text: `${count} ${count === 1 ? 'milestone' : 'milestones'}` }, { text: `${openIssues} open` }])}
           <Box flexGrow={1} />
           {ours}
         </Box>
@@ -1975,78 +2055,24 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       g.epics.flatMap(x => [x.number, ...(treeLines.get(x.number) ?? []).flatMap(l => (l.kind === 'child' ? [l.child.number] : []))]),
     )
     const numWidth = Math.max(0, ...numbers.map(n => `#${n}`.length)) + 1
-    const num = (n: number) => `${`#${n}`.padStart(numWidth - 1)} `
-    // Bar and count at the right of an epic's row: 15 columns.
-    const titleWidth = Math.max(0, columns - 2 - numWidth - 15)
-    const indent = ' '.repeat(2 + numWidth)
     const drawn = new Map<number, number>()
     groups.forEach((g, gi) => {
-      // The group's rule: the milestone's name bright, the rest dim.
-      const name = g.title ?? 'No milestone'
-      const dueShown = g.title ? dueWords(g.due, now, { form: 'short' }) : null
-      const due = dueShown ? ` · ${dueShown}` : ''
-      const rest = g.title ? ` · ${g.closed}/${g.total} closed ` : ' '
+      // The group's rule: the milestone's name, its due date and how many of
+      // its issues are closed.
+      const due: Part[] = g.title && g.due ? [{ text: dueWords(g.due, now, { form: 'short' }) ?? '', node: dueDate('due', g.due, now, { form: 'short' }) }] : []
       rows.push(
         // After the first, an extra empty line sets the group apart from the last epic above.
-        <Box key={`group-${gi}`} height={1} flexShrink={0} marginTop={gi > 0 ? 1 : 0}>
-          <Text dimColor>{'── '}</Text>
-          <Text bold>{name}</Text>
-          {due && <Text dimColor>{' · '}</Text>}
-          {due && dueDate('due', g.due, now, { form: 'short' })}
-          <Text dimColor>{rest}</Text>
-          <Text dimColor wrap="truncate-end">{'─'.repeat(Math.max(0, columns - 3 - name.length - due.length - rest.length))}</Text>
+        <Box key={`group-${gi}`} flexShrink={0} marginTop={gi > 0 ? 1 : 0}>
+          {rule(`group-rule-${gi}`, g.title ?? 'No milestone', g.title ? [...due, { text: `${g.closed}/${g.total} closed` }] : [])}
         </Box>,
       )
       for (const x of g.epics) {
         // A closed epic has nothing to fold; its row opens its detail.
         if (x.state === 'closed') {
-          rows.push(
-            <Box key={`epic-${x.number}`} flexShrink={0}>
-              <Button key={`epic-${x.number}`} plain onPress={() => openIssue($, EPICS_PANE, x.number)}>
-                <Text wrap="truncate-end" color="inactive">
-                  {`  ${num(x.number)}${fit(x.title, titleWidth).padEnd(titleWidth)} ${'✓'.padStart(14)}`}
-                </Text>
-              </Button>
-            </Box>,
-          )
+          rows.push(closedRow(`epic-${x.number}`, `epic-${x.number}`, 2, x.number, numWidth, x.title, () => openIssue($, EPICS_PANE, x.number)))
           continue
         }
-        const t = tally(x.children ?? [])
-        const b = bar(t.closed, t.total)
-        rows.push(
-          <Box key={`epic-${x.number}`} flexDirection="column" flexShrink={0} marginBottom={open(x) ? 0 : gap}>
-            {/* Two targets: the mark folds, the rest of the row opens the epic. */}
-            <Box height={1}>
-              <Button
-                key={`fold-${x.number}`}
-                plain
-                onPress={() => foldIssue($, x.number)}
-              >
-                <Text>{open(x) ? '− ' : '+ '}</Text>
-              </Button>
-              <Button key={`epic-${x.number}`} plain onPress={() => openIssue($, EPICS_PANE, x.number)}>
-                <Text wrap="truncate-end">
-                  <Text color="suggestion">{num(x.number)}</Text>
-                  <Text bold>{`${fit(x.title, titleWidth).padEnd(titleWidth)} `}</Text>
-                  {b.filled && <Text color="success">{b.filled}</Text>}
-                  {b.empty && <Text dimColor>{b.empty}</Text>}
-                  <Text dimColor>{`${t.closed}/${t.total}`.padStart(6)}</Text>
-                </Text>
-              </Button>
-            </Box>
-            {!open(x) && (
-              <Box>
-                <Text>{indent}</Text>
-                {summary(x).flatMap((part, k) => [
-                  ...(k > 0 ? [<Text key={`sep-${k}`} dimColor>{' · '}</Text>] : []),
-                  <Text key={`part-${k}`} color={part.color} dimColor={!part.color}>
-                    {part.text}
-                  </Text>,
-                ])}
-              </Box>
-            )}
-          </Box>,
-        )
+        rows.push(epicRow(x, { key: `epic-${x.number}`, foldKey: `fold-${x.number}`, openKey: `epic-${x.number}`, lead: 0, numWidth, open: open(x), pane: EPICS_PANE }))
         if (!open(x)) continue
         // Folded open: the tree under it, each level two columns further in.
         const under = treeLines.get(x.number) ?? []
@@ -2063,7 +2089,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // Every open epic in the pick, at the top or under a parent; each child
     // of yours once, however many epics hold it.
     const shown = [...groups.flatMap(g => g.epics), ...(ep.kind === 'ok' ? ep.held : [])].filter(x => x.state === 'open')
-    const yours = new Set(shown.flatMap(x => (x.children ?? []).filter(c => c.state === 'open' && standing(c) === 'mine').map(c => c.number))).size
+    const yours = new Set(shown.flatMap(x => (x.children ?? []).filter(c => c.state === 'open' && standing(c) === 'yours').map(c => c.number))).size
     const openShown = shown.length
     const g = groups.length > 0
     return (
@@ -2075,8 +2101,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
         {fixedLine('where-rule', '─'.repeat(columns))}
         <Box key="where" height={1} flexShrink={0}>
-          {g && <Text dimColor>{`${openShown} ${openShown === 1 ? 'epic' : 'epics'} · `}</Text>}
-          {g && <Text color="success" wrap="truncate-end">{`${yours} yours`}</Text>}
+          {g && partsLine('counts', 0, [{ text: `${openShown} ${openShown === 1 ? 'epic' : 'epics'}` }, { text: `${yours} yours`, color: 'success' }])}
           <Box flexGrow={1} />
           {ours}
         </Box>
@@ -2097,19 +2122,16 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // the lines under them line up whatever the numbers. Numbers sit at
       // its right, their last digits in line.
       const numWidth = Math.max(...listed.map(i => `#${i.number}`.length), 0) + 1
-      // The mark says how a row stands for you: yours, blocked, or blank.
-      // Next has none of its own: it is bold and has the focus first.
-      const MARK = { progress: ['● ', 'success'], next: ['  ', undefined], queue: ['  ', undefined], blocked: ['⊘ ', undefined] } as const
-      // Next is bold and has the focus first, so Enter opens it at once.
-      const row = (i: IssueRow, section: keyof typeof MARK, blockedBy?: number[]) => {
-        const [mark, markColor] = MARK[section]
+      // The mark says how a row stands for you: yours in In progress,
+      // available in Next and the Queue, blocked at the Queue's end. Next is
+      // also bold and has the focus first, so Enter opens it at once.
+      const STANDING = { progress: 'yours', next: 'available', queue: 'available', blocked: 'blocked' } as const
+      const row = (i: IssueRow, section: keyof typeof STANDING, blockedBy?: number[]) => {
         return issueRow(i, {
           key: `issue-${i.number}`,
           buttonKey: `pick-${i.number}`,
           numWidth,
-          mark,
-          markColor,
-          dim: section === 'blocked',
+          standing: STANDING[section],
           bold: section === 'next',
           autoFocus: section === 'next',
           blockedBy,
@@ -2121,7 +2143,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           para('none', within ? `No open issues${within}.` : `No open issues in ${slug(r)}.`, { dimColor: true }),
         )
       } else {
-        rows.push(rule('in-progress', `In progress${within} (${m.inProgress.length})`))
+        rows.push(rule('in-progress', `In progress${within}`, [{ text: `${m.inProgress.length}` }]))
         if (m.inProgress.length === 0) {
           rows.push(
             <Box key="no-progress" flexDirection="column" marginBottom={1} flexShrink={0}>
@@ -2147,10 +2169,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )
         }
         // The Queue shows up to its limit; the issues past it are counted,
-        // in the heading and on one line under the free ones.
+        // in the heading and on one line under the available ones.
         if (later.length > 0) {
           const count = m.more > 0 ? `${later.length} of ${later.length + m.more}` : `${later.length}`
-          rows.push(rule('queue', `Queue${within} (${count})`))
+          rows.push(rule('queue', `Queue${within}`, [{ text: count }]))
           for (const i of m.queue) rows.push(row(i, 'queue'))
           if (m.more > 0) {
             rows.push(
@@ -2168,8 +2190,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const open = m.kind === 'ok' ? m.inProgress.length + (m.next ? 1 : 0) + m.queue.length + m.more + m.blocked.length : null
     const bottomLine = (
       <Box key="where" height={1} flexShrink={0}>
-        {m.kind === 'ok' && <Text dimColor>{`${open} open · `}</Text>}
-        {m.kind === 'ok' && <Text color="success" wrap="truncate-end">{`${m.inProgress.length} yours`}</Text>}
+        {m.kind === 'ok' && partsLine('counts', 0, [{ text: `${open} open` }, { text: `${m.inProgress.length} yours`, color: 'success' }])}
         <Box flexGrow={1} />
         {ours}
       </Box>
@@ -2255,7 +2276,7 @@ async function runNext($: EngineInterface, name: string, word: string) {
   if (o.inProgress.length + o.queue.length + o.blocked.length === 0 && !o.next) {
     return { text: `What's Next is ready for ${slug(r)}: no open issues.` }
   }
-  const then = o.next ? `next is #${o.next.number}` : o.blocked.length > 0 ? 'nothing ready' : 'nothing else open'
+  const then = o.next ? `next is #${o.next.number}` : o.blocked.length > 0 ? 'nothing available' : 'nothing else open'
   const filter = pk && pk.pick !== 'all' ? ` (${showing})` : ''
   return { text: `What's Next is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}${filter}.` }
 }

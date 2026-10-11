@@ -11,7 +11,7 @@ export const CHECK_LIMIT = 2 * QUEUE_LIMIT
 
 // Next among the unassigned issues, oldest first: the first with no open
 // dependencies; the ones skipped on the way are blocked. Past Next the walk
-// goes on: each issue is checked, a free one joins the Queue and a blocked
+// goes on: each issue is checked, an available one joins the Queue and a blocked
 // one the blocked rows, until the Queue holds QUEUE_LIMIT or CHECK_LIMIT
 // issues past Next were checked. `more` counts the issues not reached.
 export async function pickNext(

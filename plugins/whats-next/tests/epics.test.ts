@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { bar, groupsFor, inMilestone, openChildren, pickerOptions, roots, summary, tally, tree, type TreeLine } from '../hooks/epics'
+import { bar, groupsFor, inMilestone, markOf, openChildren, pickerOptions, roots, summary, tally, tree, type TreeLine } from '../hooks/epics'
 import type { EpicChild } from '../types'
 
 const EPICS_PANE = {
@@ -307,54 +307,58 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
 
   expect(await texts(ui)).toEqual([
+    rule('v1.2 · due 31 Oct · 9/17 closed'),
     '── ',
     'v1.2',
     ' · ',
     'due 31 Oct',
-    ' · 9/17 closed ',
-    '─'.repeat(50 - '── v1.2 · due 31 Oct · 9/17 closed '.length),
-    '+ ',
+    ' · ',
+    '9/17 closed',
+    ` ${'─'.repeat(50 - '── v1.2 · due 31 Oct · 9/17 closed '.length)}`,
+    '⊕ ',
     `#12 ${'Auth cleanup'.padEnd(29)} ▰▰▰▱▱▱▱▱   3/8`,
     '#12 ',
     `${'Auth cleanup'.padEnd(29)} `,
     '▰▰▰',
     '▱▱▱▱▱',
     '   3/8',
-    '      ',
+    '      2 yours · 1 blocked · 2 available',
     '2 yours',
     ' · ',
     '1 blocked',
     ' · ',
     '2 available',
-    '+ ',
+    '⊕ ',
     `#20 ${'Rate limits'.padEnd(29)} ▰▰▱▱▱▱▱▱   1/5`,
     '#20 ',
     `${'Rate limits'.padEnd(29)} `,
     '▰▰',
     '▱▱▱▱▱▱',
     '   1/5',
-    '      ',
+    '      1 yours · 1 blocked · 1 available',
     '1 yours',
     ' · ',
     '1 blocked',
     ' · ',
     '1 available',
-    '+ ',
+    '⊕ ',
     `#25 ${'Docs pass'.padEnd(29)} ▰▰▰▰▰▰▰▰   5/5`,
     '#25 ',
     `${'Docs pass'.padEnd(29)} `,
     '▰▰▰▰▰▰▰▰',
     '   5/5',
-    '      ',
-    'all children closed',
+    '      all closed',
+    'all closed',
     `   #3 ${'Project setup'.padEnd(29)} ${'✓'.padStart(14)}`,
     '─'.repeat(50),
-    '3 epics · ',
+    '3 epics · 3 yours',
+    '3 epics',
+    ' · ',
     '3 yours',
   ])
   const all = await nodes(ui)
   expect(all.find(t => t.text === 'v1.2')?.props.bold).toBe(true)
-  expect(all.find(t => t.text === 'all children closed')?.props.color).toBe('warning')
+  expect(all.find(t => t.text === 'all closed')?.props.color).toBe('warning')
   // A closed epic is grey, not dim: grey means closed.
   expect(all.find(t => t.text.startsWith('   #3 '))?.props.color).toBe('inactive')
   expect(all.find(t => t.text === '3 yours')?.props.color).toBe('success')
@@ -368,20 +372,21 @@ test('the fold mark folds an epic open: its children with their marks, the close
   await ui.press({ key: 'fold-20' })
   const all = await texts(ui)
   const at = all.indexOf(`#20 ${'Rate limits'.padEnd(29)} ▰▰▱▱▱▱▱▱   1/5`)
-  expect(all[at - 1]).toBe('− ')
+  expect(all[at - 1]).toBe('⊖ ')
   expect(at).toBeGreaterThan(-1)
   const rows = all.filter(t => /^ {2}. #\d+ /.test(t) || t.startsWith('  ✓'))
   expect(rows).toEqual([
     '  ● #37 Token refresh on 401',
-    '    #51 Rate limit settings page',
-    `  ○ #44 ${'Session store migration'.padEnd(37)} jdoe`,
+    '  ○ #51 Rate limit settings page',
+    `  ◌ #44 ${'Session store migration'.padEnd(37)} jdoe`,
     '  ⊘ #33 Retry on 502',
     '  ✓ 1 closed',
   ])
   const found = await nodes(ui)
   expect(found.find(t => t.text === '● ')?.props.color).toBe('success')
   expect(found.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
-  // Someone else's: ○ plain, their name dim at the right.
+  // With others: ◌ plain, their name dim at the right; available: ○ plain.
+  expect(found.find(t => t.text === '◌ ')?.props.color).toBeUndefined()
   expect(found.find(t => t.text === '○ ')?.props.color).toBeUndefined()
   expect(found.find(t => t.text === 'jdoe')?.props.dimColor).toBe(true)
   expect(found.find(t => t.text === '#33 ')?.props.color).toBe('suggestion')
@@ -390,7 +395,7 @@ test('the fold mark folds an epic open: its children with their marks, the close
   expect((await texts(ui)).some(t => t.includes('#37'))).toBe(false)
 })
 
-test("blocked wins over someone else's: a blocked child assigned to another shows ⊘, their name at the right", TOKEN, async ($, on) => {
+test("blocked wins over with others: a blocked child assigned to another shows ⊘, their name at the right", TOKEN, async ($, on) => {
   world(on, {
     ...REPO,
     deps: { ...REPO.deps, 20: [issue(33, 'Retry on 502', { assignees: ['jdoe'] })] },
@@ -510,7 +515,7 @@ test('no open milestone with epics: the epics without a milestone', TOKEN, async
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   const all = await texts(ui)
-  expect(all.slice(0, 4)).toEqual(['── ', 'No milestone', ' ', '─'.repeat(50 - '── No milestone '.length)])
+  expect(all.slice(0, 4)).toEqual([rule('No milestone'), '── ', 'No milestone', ` ${'─'.repeat(50 - '── No milestone '.length)}`])
   expect(all).toContain('no children')
 })
 
@@ -567,7 +572,7 @@ test('picking another milestone shows its epics', TOKEN, async ($, on) => {
   expect(await choices(ui)).toEqual([])
   expect(await label(ui)).toBe('v1.3 ▾')
   const all = await texts(ui)
-  expect(all.slice(0, 5)).toEqual(['── ', 'v1.3', ' · ', 'due 30 Nov', ' · 0/6 closed '])
+  expect(all.slice(0, 7)).toEqual([rule('v1.3 · due 30 Nov · 0/6 closed'), '── ', 'v1.3', ' · ', 'due 30 Nov', ' · ', '0/6 closed'])
   expect(all.some(t => t.startsWith('#60 Scripting'))).toBe(true)
   expect(all.some(t => t.includes('#12'))).toBe(false)
 })
@@ -581,7 +586,7 @@ test('All shows a group per milestone, No milestone last, and counts them all', 
   const all = await texts(ui)
   const names = all.filter((t, k) => all[k - 1] === '── ')
   expect(names).toEqual(['v1.2', 'v1.3', 'No milestone'])
-  expect(all.slice(-2)).toEqual(['5 epics · ', '3 yours'])
+  expect(all.slice(-4)).toEqual(['5 epics · 3 yours', '5 epics', ' · ', '3 yours'])
   const found = await nodes(ui)
   expect(found.filter(t => names.includes(t.text)).every(t => t.props.bold === true)).toBe(true)
   // An extra empty line sets each group after the first apart from the last epic above it.
@@ -608,7 +613,7 @@ test('the pick holds over a Refresh', TOKEN, async ($, on) => {
   await ui.press({ key: 'milestone-m:v1.3' })
   await ui.press({ key: 'refresh' })
   expect(await label(ui)).toBe('v1.3 ▾')
-  expect((await texts(ui))[1]).toBe('v1.3')
+  expect((await texts(ui))[2]).toBe('v1.3')
 })
 
 const count = (asked: string[], test: (u: URL) => boolean) => asked.filter(u => test(new URL(u))).length
@@ -658,7 +663,13 @@ test('who you are comes from the setup check, so a picker switch asks Forgejo no
 })
 
 const DEBUG = { options: { ...TOKEN.options, debug: true } }
-const counter = async (ui: Ui) => (await texts(ui)).slice(-5)
+// The Debug line's parts: each side is one text holding them.
+const counter = async (ui: Ui) => {
+  const t = (await texts(ui)).slice(-7)
+  expect(t[0]).toBe(t.slice(1, 4).join(''))
+  expect(t[4]).toBe(t.slice(5).join(''))
+  return [...t.slice(1, 4), ...t.slice(5)]
+}
 
 test('with Debug on, a line under the bottom line counts the requests of each action and the session', DEBUG, async ($, on) => {
   const asked: string[] = []
@@ -722,7 +733,7 @@ test('openChildren: yours, available, others, blocked; closed ones left out', ()
 
 test('tally and summary', () => {
   const kids = [child(1, { mine: true }), child(2, { blocked: true }), child(3), child(4, { state: 'closed' })]
-  expect(tally(kids)).toEqual({ closed: 1, total: 4, mine: 1, free: 1, taken: 0, blocked: 1 })
+  expect(tally(kids)).toEqual({ closed: 1, total: 4, yours: 1, available: 1, withOthers: 0, blocked: 1 })
   expect(summary({ number: 9, title: 'E', state: 'open', children: kids }).map(p => p.text)).toEqual([
     '1 yours',
     '1 blocked',
@@ -862,7 +873,7 @@ test('on Forgejo an epic another epic depends on is no child: both at the top, t
   expect((await texts(ui)).find(t => t.startsWith('#80 '))).toMatch(/0\/1$/)
   await ui.press({ key: 'fold-80' })
   const all = await texts(ui)
-  expect(all.filter(t => /^ {2}. #8\d /.test(t))).toEqual(['    #82 Plain'])
+  expect(all.filter(t => /^ {2}. #8\d /.test(t))).toEqual(['  ○ #82 Plain'])
   // #81 folds at the top only.
   expect((await keysOf(ui)).filter(k => k.startsWith('fold-81'))).toEqual(['fold-81'])
   // Nothing is asked for an epic outside the pick.
@@ -973,4 +984,21 @@ test('once Refresh closes the Epics and Milestones panes, the title row names Wh
   w.milestones = []
   await next.press({ key: 'refresh' })
   expect(await texts(next)).toContain("What's next")
+})
+
+// The marks (DRAWING-issue.md, Marks): the shape says whether a row folds,
+// the colour how it stands for you; green is for yours alone.
+test('markOf: one shape per standing on a row that does not fold, ⊕ and ⊖ coloured by standing on one that does', () => {
+  expect(markOf('yours', null)).toEqual({ glyph: '●', color: 'success' })
+  expect(markOf('blocked', null)).toEqual({ glyph: '⊘', dim: true })
+  expect(markOf('withOthers', null)).toEqual({ glyph: '◌' })
+  expect(markOf('available', null)).toEqual({ glyph: '○' })
+  expect(markOf('yours', 'folded')).toEqual({ glyph: '⊕', color: 'success' })
+  expect(markOf('blocked', 'unfolded')).toEqual({ glyph: '⊖', dim: true })
+  expect(markOf('withOthers', 'folded')).toEqual({ glyph: '⊕' })
+  expect(markOf('available', 'unfolded')).toEqual({ glyph: '⊖' })
+  expect(markOf('yours', 'shown above')).toEqual({ glyph: '↑', dim: true })
+  // An epic or milestone at the top has no standing: plain, grey once closed.
+  expect(markOf(null, 'folded')).toEqual({ glyph: '⊕' })
+  expect(markOf(null, 'unfolded', true)).toEqual({ glyph: '⊖', color: 'inactive' })
 })

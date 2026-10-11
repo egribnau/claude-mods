@@ -103,6 +103,13 @@ function world(on: On, w: World, asked: string[] = []) {
 type Ui = { findAll: (q: { type: string }) => Promise<{ text: string }[]> }
 const texts = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text)
 const rule = (name: string) => `── ${name} `.padEnd(50, '─')
+// A rule's text, then its parts: `── `, the name, ` · ` and each part after
+// it, and the line.
+const ruleTexts = (name: string, ...after: string[]) => {
+  const full = rule([name, ...after].join(' · '))
+  const used = 3 + name.length + after.reduce((n, x) => n + 3 + x.length, 0) + 1
+  return [full, '── ', name, ...after.flatMap(x => [' · ', x]), ` ${'─'.repeat(Math.max(0, 50 - used))}`]
+}
 
 // #42 is yours. Of the rest, #33 is oldest but blocked by #37, so #29 is
 // next; #60 is someone else's and left out.
@@ -132,7 +139,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     expect(await texts(ui)).toEqual([
       "What's next",
-      rule('In progress (1)'),
+      ...ruleTexts('In progress', '1'),
       '● #42 Issue 42',
       '● ',
       '#42 ',
@@ -143,18 +150,18 @@ for (const surface of ['terminal', 'desktop'] as const) {
       'bug',
       ' · ',
       'opened 2w ago',
-      rule('Next'),
-      '  #29 Issue 29',
-      '  ',
+      ...ruleTexts('Next'),
+      '○ #29 Issue 29',
+      '○ ',
       '#29 ',
       '      ',
       'docs · opened 3w ago',
       'docs',
       ' · ',
       'opened 3w ago',
-      rule('Queue (3)'),
-      '  #37 Issue 37',
-      '  ',
+      ...ruleTexts('Queue', '3'),
+      '○ #37 Issue 37',
+      '○ ',
       '#37 ',
       '      ',
       'v1.2 · prio/high · opened 7d ago',
@@ -163,8 +170,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
       'prio/high',
       ' · ',
       'opened 7d ago',
-      '  #51 Issue 51',
-      '  ',
+      '○ #51 Issue 51',
+      '○ ',
       '#51 ',
       '      ',
       'v1.2 · opened 6d ago',
@@ -182,7 +189,9 @@ for (const surface of ['terminal', 'desktop'] as const) {
       ' · ',
       'opened 4w ago',
       '─'.repeat(50),
-      '5 open · ',
+      '5 open · 1 yours',
+      '5 open',
+      ' · ',
       '1 yours',
     ])
     expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #29." }))
@@ -194,16 +203,17 @@ test('the mark says how a row stands for you; Next is bold; a blocked row dims i
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
-  expect(all.find(t => t.text === '  #29 Issue 29')?.props.bold).toBe(true)
-  // Yours is green; Next has no mark of its own; blocked is dim, never grey.
+  expect(all.find(t => t.text === '○ #29 Issue 29')?.props.bold).toBe(true)
+  // Yours is green; available, Next and the Queue, is ○ plain; blocked is dim, never grey.
   expect(all.find(t => t.text === '● ')?.props.color).toBe('success')
-  const marks = all.filter(t => t.text === '  ')
-  expect(marks.every(t => t.props.color === undefined)).toBe(true)
+  const marks = all.filter(t => t.text === '○ ')
+  expect(marks.length).toBe(3)
+  expect(marks.every(t => t.props.color === undefined && t.props.dimColor === undefined)).toBe(true)
   expect(all.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
   expect(all.find(t => t.text === '⊘ ')?.props.color).toBeUndefined()
   expect(all.find(t => t.text === '#33 ')?.props.color).toBe('suggestion')
   expect(all.find(t => t.text === 'Issue 33')?.props.dimColor).toBe(true)
-  expect(all.find(t => t.text === '  #37 Issue 37')?.props.dimColor).toBeUndefined()
+  expect(all.find(t => t.text === '○ #37 Issue 37')?.props.dimColor).toBeUndefined()
   // What blocks it: the numbers blue, the words dim.
   expect(all.find(t => t.text === 'blocked by ')?.props.dimColor).toBe(true)
   expect(all.find(t => t.text === '#37')?.props.color).toBe('suggestion')
@@ -245,14 +255,14 @@ test('the Queue holds 10 checked issues, a blocked one at the bottom, the rest c
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('   #1 Issue 1')
-  expect(all).toContain(rule('Queue (11 of 24)'))
+  expect(all).toContain('○  #1 Issue 1')
+  expect(all).toContain(rule('Queue · 11 of 24'))
   // Next, #1, has no mark of its own either: the Queue follows it.
-  const free = all.filter(t => /^ {2} ?#\d+ Issue \d+$/.test(t)).map(t => Number(/#(\d+)/.exec(t)?.[1]))
+  const free = all.filter(t => /^○ {1,2}#\d+ Issue \d+$/.test(t)).map(t => Number(/#(\d+)/.exec(t)?.[1]))
   expect(free).toEqual([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12])
   expect(all).toContain('  and 13 more')
   expect(all.indexOf('⊘  #3 Issue 3')).toBeGreaterThan(all.indexOf('  and 13 more'))
-  expect(all).toContain('25 open · ')
+  expect(all).toContain('25 open · 0 yours')
   // Next and the 11 issues past it are checked; #13 to #25 are not.
   const checked = asked.map(u => /\/issues\/(\d+)\/dependencies$/.exec(new URL(u).pathname)?.[1]).filter(Boolean)
   expect(checked).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'])
@@ -284,9 +294,9 @@ test('everything blocked: Nothing available, and what it waits on', TOKEN, async
 
   expect(all).toContain('Nothing available')
   expect(all).toContain('#33, #34, #37 wait on #35, #37')
-  expect(all).toContain(rule('Queue (3)'))
+  expect(all).toContain(rule('Queue · 3'))
   expect(all).toContain('blocked by #37, #35 · opened 3w ago')
-  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 0 in progress, nothing ready." }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 0 in progress, nothing available." }))
 })
 
 test('nothing assigned to you: says how to start', TOKEN, async ($, on) => {
@@ -295,9 +305,9 @@ test('nothing assigned to you: says how to start', TOKEN, async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain(rule('In progress (0)'))
+  expect(all).toContain(rule('In progress · 0'))
   expect(all).toContain('Nothing in progress. Assign yourself an issue to start.')
-  expect(all).toContain('  #29 Issue 29')
+  expect(all).toContain('○ #29 Issue 29')
   expect(all.some(t => t.startsWith('── Queue'))).toBe(false)
 })
 
@@ -379,7 +389,7 @@ test('the bottom line sits at the bottom of the pane, however long the list', TO
   expect((boxes[0] as unknown as { props: { height?: number } }).props.height).toBe(rows)
   const list = boxes.find(b => b.key === 'list') as unknown as { props: Record<string, unknown> }
   expect(list.props).toEqual(expect.objectContaining({ flexGrow: 1, flexShrink: 1, overflow: 'hidden' }))
-  expect((await texts(ui)).slice(-2)).toEqual(['30 open · ', '0 yours'])
+  expect((await texts(ui)).slice(-4)).toEqual(['30 open · 0 yours', '30 open', ' · ', '0 yours'])
 })
 
 // A list taller than the pane is cut at its bottom; the section rules and the
@@ -390,7 +400,7 @@ test('the bottom line counts the open issues, yours in green, and leaves the rep
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
   expect(all.some(t => t.text.includes('git.example.org') || t.text === 'boats/radar')).toBe(false)
-  expect(all.find(t => t.text === '5 open · ')?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === '5 open')?.props.dimColor).toBe(true)
   expect(all.find(t => t.text === '1 yours')?.props.color).toBe('success')
 })
 
@@ -442,7 +452,8 @@ test('on a narrow pane the counts are cut and the version keeps its place', TOKE
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Node[]
   expect(boxes.find(b => b.key === 'ours')?.props.flexShrink).toBe(0)
   const texts = (await ui.findAll({ type: 'Text' })) as unknown as Node[]
-  expect(texts.find(t => t.text === '1 yours')?.props.wrap).toBe('truncate-end')
+  // The counts are one text, cut once at its end.
+  expect(texts.find(t => t.text === '5 open · 1 yours')?.props.wrap).toBe('truncate-end')
 })
 
 test('a manifest that cannot be read leaves the version out', TOKEN, async ($, on) => {
@@ -478,8 +489,8 @@ test('long titles are cut to one line, and numbers of any width line up', TOKEN,
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 30 }, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('     #7 Issue 7')
-  const long1000 = all.find(t => t.startsWith('  #1000 A title far too'))
+  expect(all).toContain('○    #7 Issue 7')
+  const long1000 = all.find(t => t.startsWith('○ #1000 A title far too'))
   expect(long1000?.endsWith('…')).toBe(true)
   expect(long1000?.length).toBe(30)
 })
@@ -500,12 +511,12 @@ test('starts on the milestone due first, and every section keeps to it', TOKEN, 
   const all = await texts(ui)
 
   expect(await pickerLabel(ui)).toBe('v1.2 ▾')
-  expect(all).toContain(rule('In progress in v1.2 (1)'))
+  expect(all).toContain(rule('In progress in v1.2 · 1'))
   expect(all).toContain(rule('Next in v1.2'))
-  expect(all).toContain(rule('Queue in v1.2 (1)'))
-  expect(all).toContain('  #37 Issue 37')
+  expect(all).toContain(rule('Queue in v1.2 · 1'))
+  expect(all).toContain('○ #37 Issue 37')
   expect(all.some(t => t.includes('#29') || t.includes('#33'))).toBe(false)
-  expect(all.slice(-2)).toEqual(['3 open · ', '1 yours'])
+  expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
   // The milestone picked is not repeated under every issue.
   expect(all).toContain('bug · opened 2w ago')
   expect(all.some(t => t.startsWith('v1.2 · '))).toBe(false)
@@ -520,15 +531,15 @@ test('picking No milestone shows the issues without one, and All shows every one
   await ui.press({ key: 'milestone-none' })
   let all = await texts(ui)
   expect(await pickerLabel(ui)).toBe('No milestone ▾')
-  expect(all).toContain(rule('In progress without a milestone (0)'))
-  expect(all).toContain('  #29 Issue 29')
+  expect(all).toContain(rule('In progress without a milestone · 0'))
+  expect(all).toContain('○ #29 Issue 29')
   expect(all).toContain('⊘ #33 Issue 33')
 
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-all' })
   all = await texts(ui)
-  expect(all).toContain(rule('In progress (1)'))
-  expect(all).toContain(rule('Queue (3)'))
+  expect(all).toContain(rule('In progress · 1'))
+  expect(all).toContain(rule('Queue · 3'))
 })
 
 for (const rows of [60, 12]) {

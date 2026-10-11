@@ -5,7 +5,7 @@ import { message, type EpicRow, type OpenIssue, type Tracker } from './tracker'
 
 // What is remembered of a repo until the next Refresh or /next, so the picker
 // can switch without asking the tracker again: its open milestones, your
-// open issues, the free ones and those assigned to others (`listed`: whether
+// open issues, the available ones and those with others (`listed`: whether
 // the lists answered), the blockers checked so far, the epics, and the
 // children of each epic loaded so far.
 export type Memory = {
@@ -123,7 +123,7 @@ export async function loadRepo(
 export const inPick = (pick: string, milestone: string | null) =>
   pick === 'all' || (pick === 'none' ? milestone === null : pick === `m:${milestone}`)
 
-// What's next within the pick: yours in it are In progress; of the free ones
+// What's next within the pick: yours in it are In progress; of the available ones
 // in it, walked oldest first, the first with no open blockers is Next, and
 // the Queue after it is checked too, up to its limit. A tracker without
 // dependencies is not asked for blockers, so its Queue is only limited; nor
@@ -148,7 +148,7 @@ const blockersOf = (t: Tracker, known: Memory, deps: boolean) => async (n: numbe
 }
 
 // The open issues of milestone `title`, as epic children are: yours, free
-// and someone else's, each not yours checked for blockers as What's next
+// and with others, each not yours checked for blockers as What's next
 // checks its own, by number. An open epic among them carries its children,
 // asked once and shared with Epics, which never count as its blockers.
 // Its closed epics come last, for a closed milestone to show. null when the
@@ -210,7 +210,7 @@ export async function milestoneIssues(
 }
 
 // What there is for you in milestone `title`, from what is known without
-// asking the tracker: yours from the lists; free, someone else's and blocked
+// asking the tracker: yours from the lists; available, with others and blocked
 // count only once `checked`, when every issue in it that is not yours was
 // checked for blockers (or none can be: dependencies off, or the tracker
 // would not say). Epics are left out. null when the issues could not be listed.
@@ -218,7 +218,7 @@ export function milestoneKnown(
   known: Memory,
   title: string,
   deps: boolean,
-): { checked: boolean; mine: number; free: number; taken: number; blocked: number } | null {
+): { checked: boolean; yours: number; available: number; withOthers: number; blocked: number } | null {
   if (!known.listed) return null
   const epics = new Set(known.epics.filter(e => e.state === 'open').map(e => e.number))
   const inIt = <T extends { number: number; milestone: string | null }>(l: T[]) => l.filter(i => i.milestone === title && !epics.has(i.number))
@@ -228,9 +228,9 @@ export function milestoneKnown(
   const blocked = others.filter(o => blockedNow(o.i.number)).length
   return {
     checked: noneAsked || others.every(o => known.blockers.has(o.i.number)),
-    mine: inIt(known.mine).length,
-    free: others.filter(o => !o.taken && !blockedNow(o.i.number)).length,
-    taken: others.filter(o => o.taken && !blockedNow(o.i.number)).length,
+    yours: inIt(known.mine).length,
+    available: others.filter(o => !o.taken && !blockedNow(o.i.number)).length,
+    withOthers: others.filter(o => o.taken && !blockedNow(o.i.number)).length,
     blocked,
   }
 }

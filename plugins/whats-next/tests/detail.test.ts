@@ -215,7 +215,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     ]) {
       expect(all.some(t => t === want || t.includes(want))).toBe(true)
     }
-    expect(all.some(t => t.startsWith('── Last comment ── jdoe · 2d ago'))).toBe(true)
+    expect(all.some(t => t.startsWith('── Last comment · jdoe · 2d ago'))).toBe(true)
     await expect(ui.find({ key: 'work' })).resolves.toBeDefined()
     await expect(ui.find({ key: 'open' })).resolves.toBeDefined()
   })
@@ -385,10 +385,14 @@ test('the heading wraps over two lines at most; a longer title ends the second i
   expect(all.some(t => t.includes('every setting'))).toBe(false)
 })
 
-test('a closed issue\'s number is grey in its heading', TOKEN, async ($, on) => {
+test('a closed issue\'s heading is grey as a whole, number and title', TOKEN, async ($, on) => {
   world(on, { ...FULL, '/issues/29': { ...ISSUE, state: 'closed' } })
   const all = await found(await opened($))
-  expect(all.find(t => t.text === '#29')?.props.color).toBe('inactive')
+  const heading = all.find(t => t.text.startsWith('#29 '))
+  expect(heading?.props.color).toBe('inactive')
+  expect(heading?.props.bold).toBe(true)
+  // No blue number inside it.
+  expect(all.some(t => t.text === '#29' && t.props.color === 'suggestion')).toBe(false)
 })
 
 test('the lines with nothing to show are left out', TOKEN, async ($, on) => {

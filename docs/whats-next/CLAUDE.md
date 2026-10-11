@@ -7,9 +7,10 @@ repo's CLAUDE.md.
 
 | When you | Read |
 |---|---|
-| add or change how a pane draws something (a view, a line, a mark, a count, a due date) | `docs/whats-next/DRAWING.md`: a new view follows it, a change to a rule updates it |
+| add or change how a pane draws something (a view, a line, a count, a due date, a fold) | `docs/whats-next/DRAWING.md`: a new view follows it, a change to a rule updates it |
+| add or change how an issue is drawn (its mark, number, title, facts line, for-you line, a detail line naming one) | `docs/whats-next/DRAWING-issue.md`, the same way |
 | name a thing in a pane, the README, the canvas, an issue, a comment or code | `docs/whats-next/TERMINOLOGY.md`: one word per thing |
-| settle a drawing rule or a word in a design review | both, and write the decision into the right one at once |
+| settle a drawing rule or a word in a design review | all three, and write the decision into the right one at once |
 | add a token setting or a request, or show forge text in a new place | Testing and Hard rules below, and `tests/tokens.test.ts` |
 | change the marketplace name | `docs/whats-next/check-marketplace.sh` |
 

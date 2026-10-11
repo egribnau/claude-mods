@@ -1,19 +1,32 @@
 import type { Epic, EpicChild } from '../types'
 
-// Where an open child stands for you: yours, available, someone else's,
-// or blocked. Yours wins over blocked: you know what holds it up.
-export type Standing = 'mine' | 'free' | 'taken' | 'blocked'
+// How an open child stands for you: yours, available, with others, or
+// blocked. Yours wins over blocked: you know what holds it up.
+export type Standing = 'yours' | 'available' | 'withOthers' | 'blocked'
 
 export function standing(c: EpicChild): Standing {
-  if (c.mine) return 'mine'
+  if (c.mine) return 'yours'
   if (c.blocked) return 'blocked'
-  return c.assignees.length > 0 ? 'taken' : 'free'
+  return c.assignees.length > 0 ? 'withOthers' : 'available'
 }
 
-const ORDER: Record<Standing, number> = { mine: 0, free: 1, taken: 2, blocked: 3 }
+// The mark of a row (docs/whats-next/DRAWING-issue.md, Marks): its shape
+// says whether it folds, its colour how it stands for you. `st` null: a row
+// with no standing, an epic or milestone at the top of a tree; `closed`
+// draws it grey.
+export type Mark = { glyph: string; color?: string; dim?: boolean }
+export function markOf(st: Standing | null, fold: Folding | null, closed = false): Mark {
+  if (fold === 'shown above') return { glyph: '↑', dim: true }
+  const look = closed ? { color: 'inactive' } : st === 'yours' ? { color: 'success' } : st === 'blocked' ? { dim: true } : {}
+  if (fold) return { glyph: fold === 'unfolded' ? '⊖' : '⊕', ...look }
+  const glyph = st === 'yours' ? '●' : st === 'blocked' ? '⊘' : st === 'withOthers' ? '◌' : st === 'available' ? '○' : ' '
+  return { glyph, ...look }
+}
+
+const ORDER: Record<Standing, number> = { yours: 0, available: 1, withOthers: 2, blocked: 3 }
 
 // The open children in the order the pane lists them: yours, available,
-// someone else's, blocked; each by number.
+// with others, blocked; each by number.
 export function openChildren(children: readonly EpicChild[]): EpicChild[] {
   return children
     .filter(c => c.state === 'open')
@@ -23,7 +36,7 @@ export function openChildren(children: readonly EpicChild[]): EpicChild[] {
 export type Tally = { closed: number; total: number } & Record<Standing, number>
 
 export function tally(children: readonly EpicChild[]): Tally {
-  const t: Tally = { closed: 0, total: children.length, mine: 0, free: 0, taken: 0, blocked: 0 }
+  const t: Tally = { closed: 0, total: children.length, yours: 0, available: 0, withOthers: 0, blocked: 0 }
   for (const c of children) {
     if (c.state === 'closed') t.closed++
     else t[standing(c)]++
@@ -38,23 +51,23 @@ export function bar(closed: number, total: number, width = 8): { filled: string;
 }
 
 // The line under a folded epic: what there is for you in it, or that it is
-// done but still open. Each part has its colour.
+// done but still open (all closed, amber). Each part has its colour.
 export function summary(e: Epic): { text: string; color?: string }[] {
   if (e.children === null) return [{ text: 'children unknown' }]
   const t = tally(e.children)
   if (t.total === 0) return [{ text: 'no children' }]
-  if (t.closed === t.total) return [{ text: 'all children closed', color: 'warning' }]
+  if (t.closed === t.total) return [{ text: 'all closed', color: 'warning' }]
   return forYou(t)
 }
 
 // What there is for you among open issues: yours, blocked, available, or
-// when none of those, how many are someone else's. Each part has its colour.
+// when none of those, how many are with others. Each part has its colour.
 export function forYou(t: Tally): { text: string; color?: string }[] {
   const parts: { text: string; color?: string }[] = []
-  if (t.mine > 0) parts.push({ text: `${t.mine} yours`, color: 'success' })
+  if (t.yours > 0) parts.push({ text: `${t.yours} yours`, color: 'success' })
   if (t.blocked > 0) parts.push({ text: `${t.blocked} blocked` })
-  if (t.free > 0) parts.push({ text: `${t.free} available` })
-  if (parts.length === 0 && t.taken > 0) parts.push({ text: `${t.taken} with others` })
+  if (t.available > 0) parts.push({ text: `${t.available} available` })
+  if (parts.length === 0 && t.withOthers > 0) parts.push({ text: `${t.withOthers} with others` })
   return parts
 }
 

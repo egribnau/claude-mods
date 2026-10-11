@@ -292,8 +292,8 @@ test("what is known of a milestone without asking: without dependencies nothing 
   const calls: string[] = []
   const t = fake({ open: [free(row(40, '2026-10-04T00:00:00Z', 'v1'))], blockers: { 40: [33] } }, calls)
   const { memory } = await loadRepo(t, false)
-  expect(milestoneKnown(memory, 'v1', false)).toEqual({ checked: true, mine: 0, free: 1, taken: 0, blocked: 0 })
-  expect(milestoneKnown(memory, 'v1', true)).toEqual({ checked: false, mine: 0, free: 1, taken: 0, blocked: 0 })
+  expect(milestoneKnown(memory, 'v1', false)).toEqual({ checked: true, yours: 0, available: 1, withOthers: 0, blocked: 0 })
+  expect(milestoneKnown(memory, 'v1', true)).toEqual({ checked: false, yours: 0, available: 1, withOthers: 0, blocked: 0 })
   expect(calls.some(c => c.startsWith('blockers'))).toBe(false)
 })
 

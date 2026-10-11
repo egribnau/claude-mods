@@ -524,17 +524,17 @@ test("github.com: What's next shows your issue and the free ones, pull requests 
   const all = await texts(ui)
 
   expect(all[0]).toBe("What's next")
-  expect(all).toContain(rule('In progress (1)'))
+  expect(all).toContain(rule('In progress · 1'))
   expect(all).toContain('● #12 Issue 12')
   expect(all).toContain(rule('Next'))
-  expect(all).toContain('  #14 Issue 14')
-  expect(all).toContain(rule('Queue (1)'))
-  expect(all).toContain('  #21 Issue 21')
+  expect(all).toContain('○ #14 Issue 14')
+  expect(all).toContain(rule('Queue · 1'))
+  expect(all).toContain('○ #21 Issue 21')
   expect(all.some(t => t.includes('#15') || t.includes('#16'))).toBe(false)
   const bug = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'bug')
   // GitHub's colour, without '#', made readable as any label's is.
   expect(bug?.props.color).toBe(readable('d73a4a'))
-  expect(all.slice(-2)).toEqual(['3 open · ', '1 yours'])
+  expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14." }))
   // Only GitHub's API host is asked, always with the token; nothing blocks
   // these, so no dependencies are asked, and no epic has sub-issues to ask.
@@ -551,14 +551,14 @@ test('github.com: the milestone picker starts on the one due first and narrows t
   let all = await texts(ui)
   const label = async () => ((await ui.find({ key: 'milestone' })) as { props: Record<string, unknown> } | undefined)?.props.label
   expect(await label()).toBe('v1.2 ▾')
-  expect(all).toContain('  #14 Issue 14')
+  expect(all).toContain('○ #14 Issue 14')
   expect(all.some(t => t.includes('#21'))).toBe(false)
 
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-m:v1.3' })
   all = await texts(ui)
   expect(await label()).toBe('v1.3 ▾')
-  expect(all).toContain('  #21 Issue 21')
+  expect(all).toContain('○ #21 Issue 21')
   expect(all.some(t => t.includes('#12') || t.includes('#14'))).toBe(false)
 })
 
@@ -715,12 +715,12 @@ test('github.com: an issue with an open blocker waits, the next free one is Next
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(all).toContain('  #21 Issue 21')
+  expect(all).toContain('○ #21 Issue 21')
   expect(all).toContain('⊘ #14 Issue 14')
   expect(all.some(t => t.includes('#9'))).toBe(true)
   // #23, after Next, waits too, at the bottom of the Queue.
   expect(all).toContain('⊘ #23 Issue 23')
-  expect(all.indexOf('⊘ #23 Issue 23')).toBeGreaterThan(all.indexOf('  #22 Issue 22'))
+  expect(all.indexOf('⊘ #23 Issue 23')).toBeGreaterThan(all.indexOf('○ #22 Issue 22'))
   // Only #14 and #23, which GitHub says are blocked, cost a request: #21 and
   // #22 had none open.
   expect(asked?.filter(a => a.url.includes('/dependencies/')).map(a => new URL(a.url).pathname)).toEqual([
@@ -736,7 +736,7 @@ test('github.com: an issue whose blockers are all closed is pickable, with no re
 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await texts(ui)).toContain('  #14 Issue 14')
+  expect(await texts(ui)).toContain('○ #14 Issue 14')
   expect(asked?.some(a => a.url.includes('/dependencies/'))).toBe(false)
 })
 
@@ -845,9 +845,31 @@ test('github.com: sub-issues with sub-issues of their own fold in the tree, labe
   await ui.press({ key: 'fold-14' })
   await ui.press({ key: 'fold-30' })
   const all = await texts(ui)
-  expect(all).toContain('        #40 Issue 40')
+  expect(all).toContain('      ○ #40 Issue 40')
   expect(all).toContain('    ✓ 1 closed')
   expect(subsAsked()).toEqual(['20', '14', '30'])
+})
+
+// A row that folds keeps its standing (#45): the fold mark takes its colour.
+test('github.com: a sub-issue of yours with sub-issues of its own folds with a green ⊕', GH, async ($, on) => {
+  const clock = world(on, {
+    mine: [MINE],
+    open: OPEN,
+    milestones: [V12],
+    epics: [epicIssue(20, 'Radar sweep', 'open', ['Epic'], V12)],
+    subs: {
+      20: [{ ...sub(14, { assignees: ['alice'] }), sub_issues_summary: { total: 2, completed: 1, percent_completed: 50 } }, sub(15)],
+    },
+  })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'fold-20' })
+  expect(await ui.find({ key: 'fold-14' })).not.toBeNull()
+  const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
+  // The epic's own fold mark, unfolded, is plain; #14's, yours and folded, is green.
+  expect(found.filter(t => t.text === '⊖ ').map(t => t.props.color)).toEqual([undefined])
+  expect(found.filter(t => t.text === '⊕ ').map(t => t.props.color)).toEqual(['success'])
 })
 
 test('github.com: an epic with its sub-issues in the Epics pane, with the bar and the tallies', GH, async ($, on) => {
@@ -881,7 +903,7 @@ test('github.com: an epic with its sub-issues in the Epics pane, with the bar an
   await ui.press({ key: 'fold-20' })
   all = await texts(ui)
   expect(all).toContain('  ● #12 Issue 12')
-  expect(all).toContain('    #14 Issue 14')
+  expect(all).toContain('  ○ #14 Issue 14')
   expect(all).toContain('  ⊘ #15 Issue 15')
   expect(all).toContain('  ✓ 1 closed')
   expect(all.some(t => /could not|error|HTTP/i.test(t))).toBe(false)

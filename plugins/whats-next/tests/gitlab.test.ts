@@ -986,19 +986,19 @@ test("gitlab.com: What's next shows your issue and the free ones by iid", GL, as
   const all = await texts(ui)
 
   expect(all[0]).toBe("What's next")
-  expect(all).toContain(rule('In progress (1)'))
+  expect(all).toContain(rule('In progress · 1'))
   expect(all).toContain('● #12 Issue 12')
   expect(all).toContain(rule('Next'))
-  expect(all).toContain('  #14 Issue 14')
-  expect(all).toContain(rule('Queue (1)'))
-  expect(all).toContain('  #21 Issue 21')
+  expect(all).toContain('○ #14 Issue 14')
+  expect(all).toContain(rule('Queue · 1'))
+  expect(all).toContain('○ #21 Issue 21')
   // Someone else's is left out; the global ids are never shown.
   expect(all.some(t => t.includes('#15'))).toBe(false)
   expect(all.some(t => /#16\d{7}/.test(t))).toBe(false)
   // The label keeps its colour, given without '#'.
   const bug = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'bug')
   expect(bug?.props.color).toBe('#d9534f')
-  expect(all.slice(-2)).toEqual(['3 open · ', '1 yours'])
+  expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14." }))
 })
 
@@ -1014,16 +1014,16 @@ test('gitlab.com: the milestone picker starts on the one due first and narrows t
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   let all = await texts(ui)
   expect(await pickerLabel(ui)).toBe('v1.2 ▾')
-  expect(all).toContain(rule('In progress in v1.2 (1)'))
-  expect(all).toContain('  #14 Issue 14')
+  expect(all).toContain(rule('In progress in v1.2 · 1'))
+  expect(all).toContain('○ #14 Issue 14')
   expect(all.some(t => t.includes('#21'))).toBe(false)
 
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-m:v1.3' })
   all = await texts(ui)
   expect(await pickerLabel(ui)).toBe('v1.3 ▾')
-  expect(all).toContain(rule('In progress in v1.3 (0)'))
-  expect(all).toContain('  #21 Issue 21')
+  expect(all).toContain(rule('In progress in v1.3 · 0'))
+  expect(all).toContain('○ #21 Issue 21')
   expect(all.some(t => t.includes('#12') || t.includes('#14'))).toBe(false)
 })
 
@@ -1088,7 +1088,7 @@ test('gitlab.com Free: an epic with its related issues in the Epics pane, no blo
 
   expect(all.some(t => t.includes('Radar sweep'))).toBe(true)
   expect(all).toContain('  ● #12 Issue 12')
-  expect(all).toContain('    #14 Issue 14')
+  expect(all).toContain('  ○ #14 Issue 14')
   expect(all).toContain('  ✓ 1 closed')
   // Another epic is a peer, and another project's issue is left out.
   expect(all.some(t => t.includes('#23') || t.includes('#24'))).toBe(false)
