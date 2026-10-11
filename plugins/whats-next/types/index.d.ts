@@ -47,6 +47,8 @@ export type IssueRow = {
   // Each with its Forgejo colour, `rrggbb`, or '' for none.
   labels: { name: string; color: string }[]
   created: string
+  // Its own due date; null when it has none (GitHub issues never do).
+  due: string | null
   // The issue's page on Forgejo.
   url: string
   // Its description, as written.
@@ -128,6 +130,8 @@ export type EpicChild = {
   labels: { name: string; color: string }[]
   milestone: string | null
   created: string
+  // Its own due date; null when it has none.
+  due: string | null
   blockedBy: number[]
   // How many sub-issues it has, closed and in all, where the forge says so
   // with the issue (GitHub): its count without asking for its children.
@@ -140,7 +144,8 @@ export type EpicChild = {
 // carries its children (null when the tracker would not say).
 export type MilestoneIssue = EpicChild & { children?: EpicChild[] | null }
 
-export type Epic = { number: number; title: string; state: 'open' | 'closed'; children: EpicChild[] | null }
+// `due`: the epic's own due date, from the lists.
+export type Epic = { number: number; title: string; state: 'open' | 'closed'; due: string | null; children: EpicChild[] | null }
 
 // The epics of one milestone, or of none (`title` null), with the
 // milestone's due date and how many of its issues are closed.

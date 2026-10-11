@@ -239,7 +239,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       found.forEach(remember)
       return found
         .filter(i => isEpic(labels(i).map(l => l.name)))
-        .map(i => ({ number: i.iid, title: i.title, state: i.state === 'opened' ? 'open' : 'closed', milestone: i.milestone?.title ?? null }))
+        .map(i => ({ number: i.iid, title: i.title, state: i.state === 'opened' ? 'open' : 'closed', milestone: i.milestone?.title ?? null, due: i.due_date ?? null }))
     },
 
     async blockers(n: number): Promise<number[] | null> {
@@ -274,6 +274,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
             labels: names(c).map(name => ({ name, color: colour.get(name) ?? '' })),
             milestone: c.milestone?.title ?? null,
             created: c.created_at ?? '',
+            due: c.due_date ?? null,
             blockedBy,
           }
         }),
@@ -409,6 +410,7 @@ type RawLink = {
   assignees?: RawUser[] | null
   milestone?: { title: string } | null
   created_at?: string
+  due_date?: string | null
   author?: RawUser | null
   link_type: 'relates_to' | 'blocks' | 'is_blocked_by'
 }
@@ -424,6 +426,7 @@ const toRow = (i: RawIssue): IssueRow => ({
   milestone: i.milestone?.title ?? null,
   labels: labels(i),
   created: i.created_at,
+  due: i.due_date ?? null,
   url: i.web_url,
   body: i.description ?? '',
 })

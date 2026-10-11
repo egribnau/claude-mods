@@ -391,9 +391,9 @@ function listRoute(path: string, pages: unknown[][], opts: { bare?: boolean; fai
 
 const ISSUES = '/api/v4/projects/boats%2Fradar/issues'
 
-test('mine: your open issues by iid, with label colours without #', async () => {
+test('mine: your open issues by iid, with label colours without #, and their own due date', async () => {
   const asked: Asked[] = []
-  const mine = issue(12, '2026-09-25T09:00:00.000Z', { milestone: V12, labels: ['bug'], assignees: ['alice'] })
+  const mine = { ...issue(12, '2026-09-25T09:00:00.000Z', { milestone: V12, labels: ['bug'], assignees: ['alice'] }), due_date: '2026-10-14' }
   const t = gitlab(fakeSend(listRoute(ISSUES, [[mine]]), asked), R, 'glpat-x', null)
 
   expect(await t.mine()).toEqual([
@@ -403,6 +403,7 @@ test('mine: your open issues by iid, with label colours without #', async () => 
       milestone: 'v1.2',
       labels: [{ name: 'bug', color: 'd9534f' }],
       created: '2026-09-25T09:00:00.000Z',
+      due: '2026-10-14',
       url: 'https://gitlab.com/boats/radar/-/issues/12',
       body: 'Body of 12',
     },
@@ -431,6 +432,7 @@ test('open: every open issue by iid with its assignees, a plain string label wit
     milestone: null,
     labels: [{ name: 'docs', color: '' }],
     created: '2026-09-18T09:00:00.000Z',
+    due: null,
     url: 'https://gitlab.com/boats/radar/-/issues/14',
     body: '',
     assignees: [],
@@ -524,8 +526,9 @@ test('milestones: closed of all from issues_statistics, per milestone; one refus
 
 test('epics, blockers and children ask GitLab; links refused leave blockers and children unknown', async () => {
   const asked: Asked[] = []
-  const t = gitlab(fakeSend(listRoute(ISSUES, [[issue(20, '2026-09-01T00:00:00.000Z', { labels: ['Epic'] })]]), asked), R, 'glpat-x', null)
-  expect(await t.epics()).toEqual([{ number: 20, title: 'Issue 20', state: 'open', milestone: null }])
+  const epic = { ...issue(20, '2026-09-01T00:00:00.000Z', { labels: ['Epic'] }), due_date: '2026-10-20' }
+  const t = gitlab(fakeSend(listRoute(ISSUES, [[epic]]), asked), R, 'glpat-x', null)
+  expect(await t.epics()).toEqual([{ number: 20, title: 'Issue 20', state: 'open', milestone: null, due: '2026-10-20' }])
   expect(new URL(asked[0]?.url ?? '').searchParams.get('labels')).toBe('epic')
   expect(await t.blockers(12)).toBe(null)
   expect(await t.children(20, 'alice')).toBe(null)

@@ -218,10 +218,14 @@ test('each open milestone is a folded row, soonest due first, those without a du
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   const t = await texts(pane)
   expect(await rowKeys(pane)).toEqual(['milestone-v0.3.0', 'milestone-GitHub', 'milestone-Jira', 'milestone-Panes'])
-  expect(t).toContain('due 13 Oct')
-  expect(t).toContain('due 30 Nov')
-  expect(t).toContain('no due date')
-  expect(t).toContain('  due 13 Oct · 8 open')
+  expect(t).toContain('⧗ 13 Oct')
+  expect(t).toContain('⧗ 30 Nov')
+  // How many are open is read from the count; no due date shows nothing.
+  expect(t).toContain('  ⧗ 13 Oct')
+  expect(t.some(x => /^ {2}.*(\d+ open|due)/.test(x))).toBe(false)
+  // Panes has no due date and nothing known for you: no line under it.
+  const panes = t.indexOf(`${'Panes'.padEnd(33)} ▰▰▱▱▱▱▱▱   1/4`)
+  expect(t[panes + 5]).toBe('─'.repeat(50))
 })
 
 test('a milestone row has the bar and closed/total from its own counts', TOKEN, async ($, on) => {
@@ -236,7 +240,7 @@ test('a milestone row has the bar and closed/total from its own counts', TOKEN, 
   expect(t.slice(i + 1, i + 5)).toEqual([`${'GitHub'.padEnd(33)} `, '▰▰▰▰', '▱▱▱▱', '  9/17'])
 })
 
-test('two lines under a milestone, each cut at its end: when and how much, then what there is for you', TOKEN, async ($, on) => {
+test('one line under a milestone, cut at its end: its due date, then what there is for you', TOKEN, async ($, on) => {
   const clock = world(on, WORK)
   await clock.set(NOW)
   await $.command.run(RUN)
@@ -244,8 +248,7 @@ test('two lines under a milestone, each cut at its end: when and how much, then 
   await pane.press({ key: 'ms-fold-GitHub' })
   await pane.press({ key: 'ms-fold-GitHub' })
   const n = await nodes(pane)
-  expect(n.find(x => x.text === '  due 13 Oct · 8 open')?.props.wrap).toBe('truncate-end')
-  expect(n.find(x => x.text === '  1 yours · 1 blocked · 1 available')?.props.wrap).toBe('truncate-end')
+  expect(n.find(x => x.text === '  ⧗ 13 Oct · ● 1 · ○ 1 · ◌ 1 · ⊘ 1')?.props.wrap).toBe('truncate-end')
 })
 
 test('folded, line 2 shows only what is known: yours from the lists, the rest not until every issue not yours is checked', TOKEN, async ($, on) => {
@@ -257,10 +260,11 @@ test('folded, line 2 shows only what is known: yours from the lists, the rest no
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   const t = await texts(pane)
   // GitHub: What's next checked #33 and #40, not jdoe's #36, so only yours.
-  expect(t).toContain('  1 yours')
-  expect(t.some(x => x.includes('available') || x.includes('blocked'))).toBe(false)
-  // Jira: jdoe's #50 alone, never checked: no line 2, so GitHub's is the only one.
-  expect(t.filter(x => /^ {2}\d+ (yours|with others|blocked|available)/.test(x))).toEqual(['  1 yours'])
+  expect(t).toContain('  ⧗ 13 Oct · ● 1')
+  expect(t.some(x => /[○◌⊘] \d/.test(x))).toBe(false)
+  // Jira: jdoe's #50 alone, never checked: its due date alone.
+  expect(t).toContain('  ⧗ 30 Nov')
+  expect(t.filter(x => /^ {2}⧗ .* · /.test(x))).toEqual(['  ⧗ 13 Oct · ● 1'])
   expect(asked.length).toBe(before)
 })
 
@@ -271,8 +275,18 @@ test('folded, line 2 is whole once What\'s next has checked every issue not your
   await $.command.run(RUN)
   const before = asked.length
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
-  expect(await texts(pane)).toContain('  1 yours · 1 blocked · 1 available')
+  expect(await texts(pane)).toContain('  ⧗ 13 Oct · ● 1 · ○ 1 · ⊘ 1')
   expect(asked.length).toBe(before)
+})
+
+test('folded, a milestone whose issues could not be listed says so on its line, after its due date', TOKEN, async ($, on) => {
+  const clock = world(on, { ...WORK, failIssues: true })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  const t = await texts(pane)
+  expect(t).toContain('  ⧗ 13 Oct · issues unknown')
+  expect(t).toContain('  issues unknown')
 })
 
 test('a due date is red once passed and amber within 7 days', TOKEN, async ($, on) => {
@@ -281,9 +295,9 @@ test('a due date is red once passed and amber within 7 days', TOKEN, async ($, o
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   const n = await nodes(pane)
-  expect(n.find(x => x.text === 'due 1 Oct')?.props.color).toBe('error')
-  expect(n.find(x => x.text === 'due 13 Oct')?.props.color).toBe('warning')
-  expect(n.find(x => x.text === 'due 30 Nov')?.props.dimColor).toBe(true)
+  expect(n.find(x => x.text === '⧗ 1 Oct')?.props.color).toBe('error')
+  expect(n.find(x => x.text === '⧗ 13 Oct')?.props.color).toBe('warning')
+  expect(n.find(x => x.text === '⧗ 30 Nov')?.props.dimColor).toBe(true)
 })
 
 test('the fold mark folds a milestone open and shut', TOKEN, async ($, on) => {
@@ -351,7 +365,7 @@ test('unfolded, a milestone lists its open issues as epic children are, then how
   const rows = t.filter(x => /^ {2}[●○◌⊘] #\d/.test(x))
   expect(rows.map(x => x.slice(2, 6))).toEqual(['● #3', '○ #3', '◌ #3', '⊘ #4'])
   expect(t).toContain('jdoe')
-  expect(t).toContain('blocked by ')
+  expect(t.some(x => x.startsWith('⊘ #33 · '))).toBe(true)
   expect(t).toContain('  ✓ 9 closed')
   // The milestone is left out of the facts under each row.
   expect(t).not.toContain('GitHub')
@@ -362,12 +376,12 @@ test('once unfolded, line 2 under a milestone says all there is for you', TOKEN,
   await clock.set(NOW)
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
-  expect(await texts(pane)).not.toContain('  1 yours · 1 blocked · 1 available')
+  expect(await texts(pane)).not.toContain('  ⧗ 13 Oct · ● 1 · ○ 1 · ◌ 1 · ⊘ 1')
   await pane.press({ key: 'ms-fold-GitHub' })
   await pane.press({ key: 'ms-fold-GitHub' })
   const t = await texts(pane)
-  const at = t.indexOf('  1 yours · 1 blocked · 1 available')
-  expect(t.slice(at + 1, at + 6)).toEqual(['1 yours', ' · ', '1 blocked', ' · ', '1 available'])
+  const at = t.indexOf('  ⧗ 13 Oct · ● 1 · ○ 1 · ◌ 1 · ⊘ 1')
+  expect(t.slice(at + 1, at + 10)).toEqual(['⧗ 13 Oct', ' · ', '● 1', ' · ', '○ 1', ' · ', '◌ 1', ' · ', '⊘ 1'])
 })
 
 test('a row opens Issue detail, and Back returns to Milestones', TOKEN, async ($, on) => {
@@ -453,7 +467,7 @@ test('epics in a milestone come first, folded, with their bar and what there is 
   // #30, #33 and #36 are #29's: not in the list of the milestone's issues.
   expect(t.filter(x => /^ {2}[●○◌⊘] #\d/.test(x)).map(x => x.slice(2, 7))).toEqual(['⊘ #40'])
   const at = t.indexOf('▱▱▱▱▱▱')
-  expect(t.slice(at + 1, at + 6)).toEqual(['   1/4', '        1 yours · 1 available', '1 yours', ' · ', '1 available'])
+  expect(t.slice(at + 1, at + 8)).toEqual(['   1/4', '        ● 1 · ○ 1 · ◌ 1', '● 1', ' · ', '○ 1', ' · ', '◌ 1'])
 })
 
 test('an epic in a milestone unfolds on its tree, its mark first so Tab stops on it', TOKEN, async ($, on) => {
@@ -474,7 +488,7 @@ test('an epic in a milestone unfolds on its tree, its mark first so Tab stops on
     '  ⊘ #40 Blocked by on GitHub',
     '  ✓ 9 closed',
   ])
-  expect(t.some(x => x.startsWith('        1 yours'))).toBe(false)
+  expect(t.some(x => x.startsWith('        ● 1'))).toBe(false)
   await pane.press({ key: 'ms-issue-30' })
   expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
 })
@@ -525,7 +539,7 @@ test("the line under an epic in a milestone is one line, cut at its end", TOKEN,
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'ms-fold-GitHub' })
   const n = await nodes(pane)
-  expect(n.find(x => x.text === '        1 yours · 1 available')?.props.wrap).toBe('truncate-end')
+  expect(n.find(x => x.text === '        ● 1 · ○ 1 · ◌ 1')?.props.wrap).toBe('truncate-end')
 })
 
 test("an epic is not blocked by its own children, and opens its detail", TOKEN, async ($, on) => {
@@ -558,7 +572,8 @@ test('epics are left out of what there is for you in a milestone', TOKEN, async 
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'ms-fold-GitHub' })
-  expect(await texts(pane)).toContain('  1 yours · 1 blocked · 1 available')
+  // #29 would be one more available.
+  expect(await texts(pane)).toContain('  ⧗ 13 Oct · ● 1 · ○ 1 · ◌ 1 · ⊘ 1')
 })
 
 const shut = (title: string, at: string, open: number, closed: number, id = 9) => ({ ...milestone(title, null, open, closed, id), state: 'closed', closed_at: at })
@@ -651,7 +666,18 @@ test('the head of a milestone detail: open, and its due date in its colour', TOK
   await pane.press({ key: 'milestone-GitHub' })
   const n = await nodes(pane)
   expect(n.find(x => x.text === 'open')?.props.dimColor).toBe(true)
-  expect(n.find(x => x.text === 'due 13 Oct, in 4 days')?.props.color).toBe('warning')
+  expect(n.find(x => x.text === '⧗ 13 Oct, in 4 days')?.props.color).toBe('warning')
+})
+
+test('a milestone detail without a due date says nothing of it', TOKEN, async ($, on) => {
+  const clock = world(on, REPO)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'milestone-Panes' })
+  const t = await texts(pane)
+  expect(t).toContain('open')
+  expect(t.some(x => x.includes('due') || x.includes('⧗'))).toBe(false)
 })
 
 test("a milestone detail's progress: the bar, closed of all, how many open, and what there is for you", TOKEN, async ($, on) => {
@@ -662,8 +688,8 @@ test("a milestone detail's progress: the bar, closed of all, how many open, and 
   await pane.press({ key: 'milestone-GitHub' })
   const t = await texts(pane)
   expect(t).toContain('▰▰▰▰▱▱▱▱ 9/17 · 8 open')
-  const at = t.indexOf('1 yours')
-  expect(t.slice(at, at + 5)).toEqual(['1 yours', ' · ', '1 blocked', ' · ', '1 available'])
+  const at = t.indexOf('● 1 · ○ 1 · ◌ 1 · ⊘ 1')
+  expect(t.slice(at + 1, at + 8)).toEqual(['● 1', ' · ', '○ 1', ' · ', '◌ 1', ' · ', '⊘ 1'])
 })
 
 test("a milestone detail's description, wrapped; none says so", TOKEN, async ($, on) => {
@@ -774,7 +800,7 @@ test('Refresh keeps a milestone detail open and asks its issues again', TOKEN, a
   await pane.press({ key: 'milestone-GitHub' })
   await pane.press({ key: 'refresh' })
   expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
-  expect(await texts(pane)).toContain('1 yours')
+  expect(await texts(pane)).toContain('● 1')
   expect(DEPS(asked).filter(u => u.includes('/issues/36/'))).toHaveLength(2)
 })
 
@@ -811,9 +837,9 @@ test('an open milestone with every issue closed says all closed, amber, in its r
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   let n = await nodes(pane)
-  expect(n.map(x => x.text)).toContain('  due 20 Oct · all closed')
+  expect(n.map(x => x.text)).toContain('  ⧗ 20 Oct · all closed')
   expect(n.find(x => x.text === 'all closed')?.props.color).toBe('warning')
-  expect(n.some(x => x.text === '  due 20 Oct · 0 open')).toBe(false)
+  expect(n.some(x => /^ {2}.*0 open/.test(x.text))).toBe(false)
   await pane.press({ key: 'milestone-Done' })
   n = await nodes(pane)
   expect(n.map(x => x.text)).toContain('▰▰▰▰▰▰▰▰ 5/5 · all closed')

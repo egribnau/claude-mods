@@ -7,7 +7,7 @@ import type { EpicChild, IssueDetail, IssueRow } from '../types'
 // What's next and Epics against a fake tracker: no URLs, no Forgejo.
 
 function row(number: number, created: string, milestone: string | null = null): IssueRow {
-  return { number, title: `Issue ${number}`, milestone, labels: [], created, url: `fake:${number}`, body: '' }
+  return { number, title: `Issue ${number}`, milestone, labels: [], created, due: null, url: `fake:${number}`, body: '' }
 }
 
 function child(number: number, extra: Partial<EpicChild> = {}): EpicChild {
@@ -21,6 +21,7 @@ function child(number: number, extra: Partial<EpicChild> = {}): EpicChild {
     labels: [],
     milestone: null,
     created: '2026-10-01T00:00:00Z',
+    due: null,
     blockedBy: [],
     ...extra,
   }
@@ -140,7 +141,7 @@ test('without dependencies the Queue is only limited: 10, the rest counted, noth
 })
 
 test('a list that fails is named, and the rest still loads', async () => {
-  const issues = await loadRepo(fake({ failing: 'mine', epics: [{ number: 1, title: 'E', state: 'open', milestone: null }] }), true)
+  const issues = await loadRepo(fake({ failing: 'mine', epics: [{ number: 1, title: 'E', state: 'open', milestone: null, due: null }] }), true)
   expect(issues.issuesError).toBe('your issues: HTTP 500')
   expect(issues.memory.epics).toHaveLength(1)
   const epics = await loadRepo(fake({ failing: 'epics' }), true)
@@ -149,7 +150,7 @@ test('a list that fails is named, and the rest still loads', async () => {
 
 test('with epics off, the tracker is not asked for them', async () => {
   const calls: string[] = []
-  const { memory } = await loadRepo(fake({ epics: [{ number: 1, title: 'E', state: 'open', milestone: null }] }, calls), false)
+  const { memory } = await loadRepo(fake({ epics: [{ number: 1, title: 'E', state: 'open', milestone: null, due: null }] }, calls), false)
   expect(memory.epics).toEqual([])
   expect(calls).not.toContain('epics')
 })
@@ -159,9 +160,9 @@ test('Epics: grouped by milestone, open first, children asked once with who you 
   const t = fake(
     {
       epics: [
-        { number: 9, title: 'Closed epic', state: 'closed', milestone: 'v1' },
-        { number: 3, title: 'Open epic', state: 'open', milestone: 'v1' },
-        { number: 4, title: 'Loose epic', state: 'open', milestone: null },
+        { number: 9, title: 'Closed epic', state: 'closed', milestone: 'v1', due: null },
+        { number: 3, title: 'Open epic', state: 'open', milestone: 'v1', due: null },
+        { number: 4, title: 'Loose epic', state: 'open', milestone: null, due: null },
       ],
       children: { 3: [child(10, { mine: true, assignees: ['alice'] }), child(11, { state: 'closed' })] },
     },
@@ -308,7 +309,7 @@ test("a milestone's epic carries its children, asked once, and is not blocked by
   const t = fake(
     {
       open: [free(row(29, '2026-10-01T00:00:00Z', 'v1')), free(row(33, '2026-10-02T00:00:00Z', 'v1'))],
-      epics: [{ number: 29, title: 'Issue 29', state: 'open', milestone: 'v1' }],
+      epics: [{ number: 29, title: 'Issue 29', state: 'open', milestone: 'v1', due: null }],
       blockers: { 29: [33] },
       children: { 29: [child(33), child(34, { state: 'closed' })] },
     },
@@ -328,7 +329,7 @@ test("a milestone's epic carries its children, asked once, and is not blocked by
 test('an epic blocked by an issue outside it is blocked by that one only', async () => {
   const t = fake({
     open: [free(row(29, '2026-10-01T00:00:00Z', 'v1'))],
-    epics: [{ number: 29, title: 'Issue 29', state: 'open', milestone: 'v1' }],
+    epics: [{ number: 29, title: 'Issue 29', state: 'open', milestone: 'v1', due: null }],
     blockers: { 29: [33, 99] },
     children: { 29: [child(33)] },
   })

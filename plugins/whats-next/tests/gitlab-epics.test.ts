@@ -314,9 +314,9 @@ test('epics: the issues carrying the Epic label, compared without case, by iid',
   const got = await gitlab(fakeSend(route({ epics: answer }), asked), r, 'glpat-x', null, 'Epic').epics()
 
   expect(got).toEqual([
-    { number: 20, title: 'Rate limits', state: 'open', milestone: 'v1.2' },
-    { number: 3, title: 'Project setup', state: 'closed', milestone: 'v1.2' },
-    { number: 71, title: 'Ideas', state: 'open', milestone: null },
+    { number: 20, title: 'Rate limits', state: 'open', milestone: 'v1.2', due: null },
+    { number: 3, title: 'Project setup', state: 'closed', milestone: 'v1.2', due: null },
+    { number: 71, title: 'Ideas', state: 'open', milestone: null, due: null },
   ])
   const u = new URL(asked[0]?.url ?? '')
   expect(u.pathname).toBe(`${path}/issues`)
@@ -359,6 +359,7 @@ const CHILDREN: EpicChild[] = [
     labels: [],
     milestone: null,
     created: '2026-08-11T09:00:00.000Z',
+    due: null,
     blockedBy: [],
   },
   {
@@ -371,6 +372,7 @@ const CHILDREN: EpicChild[] = [
     labels: [],
     milestone: null,
     created: '2026-09-11T09:00:00.000Z',
+    due: null,
     blockedBy: [],
   },
   {
@@ -383,6 +385,7 @@ const CHILDREN: EpicChild[] = [
     labels: [{ name: 'bug', color: 'd9534f' }],
     milestone: 'v1.2',
     created: '2026-09-25T09:00:00.000Z',
+    due: null,
     blockedBy: [],
   },
   {
@@ -395,6 +398,7 @@ const CHILDREN: EpicChild[] = [
     labels: [],
     milestone: null,
     created: '2026-09-20T09:00:00.000Z',
+    due: null,
     blockedBy: [],
   },
   {
@@ -411,6 +415,7 @@ const CHILDREN: EpicChild[] = [
     ],
     milestone: null,
     created: '2026-10-03T09:00:00.000Z',
+    due: null,
     blockedBy: [],
   },
 ]
@@ -738,7 +743,7 @@ test('GitLab Free: the Epics pane shows the epic in its milestone, x/y closed, i
 
   expect(opened.some(p => p.id === 'next-epics')).toBe(true)
   let all = await texts(epics)
-  expect(all.slice(0, 7)).toEqual(['── v1.2 · due 31 Oct · 2/7 closed '.padEnd(50, '─'), '── ', 'v1.2', ' · ', 'due 31 Oct', ' · ', '2/7 closed'])
+  expect(all.slice(0, 7)).toEqual(['── v1.2 · ⧗ 31 Oct · 2/7 closed '.padEnd(50, '─'), '── ', 'v1.2', ' · ', '⧗ 31 Oct', ' · ', '2/7 closed'])
   // One of its four children is closed.
   expect(all).toContain(`#20 ${'Rate limits'.padEnd(29)} ▰▰▱▱▱▱▱▱   1/4`)
 
@@ -784,7 +789,7 @@ test("GitLab EE: an issue blocked by an is_blocked_by link waits in What's next"
   expect(all).toContain(rule('Next in v1.2'))
   expect(all).toContain('○ #29 Settings screen rework')
   expect(all).toContain('⊘ #33 Issue 33')
-  expect(all.some(t => t.startsWith('blocked by #29'))).toBe(true)
+  expect(all.some(t => t.startsWith('⊘ #29'))).toBe(true)
   expect(linkPaths(asked)).toContain('/api/v4/projects/boats%2Fradar/issues/33/links')
 })
 
@@ -795,7 +800,7 @@ test('GitLab EE: the blocked child shows blocked in Epics', GL, async ($, on) =>
   await epics.press({ key: 'fold-20' })
   const all = await texts(epics)
   expect(all).toContain('  ⊘ #33 Issue 33')
-  expect(all.some(t => t.startsWith('blocked by #29'))).toBe(true)
+  expect(all.some(t => t.startsWith('⊘ #29'))).toBe(true)
 })
 
 test("GitLab EE: the blocked issue's detail lists what blocks it", GL, async ($, on) => {

@@ -280,7 +280,7 @@ async function showTree($: EngineInterface, r: Repo) {
   const inDetail = await read($, milestoneOpen)
   for (const title of new Set([...(await read($, milestonesUnfolded)), ...(inDetail === null ? [] : [inDetail])])) {
     const issues = issuesOf[title]
-    if (issues) trees.push(inMilestone(issues).epics.map(e => ({ number: e.number, title: e.title, state: e.state, children: e.children ?? null })))
+    if (issues) trees.push(inMilestone(issues).epics.map(e => ({ number: e.number, title: e.title, state: e.state, due: e.due, children: e.children ?? null })))
   }
   const kids = await growTree(tracker($, r), memory, trees, new Set(await read($, unfolded)), me)
   await update($, treeKids, () => kids)
@@ -530,18 +530,13 @@ function dueLook(iso: string, now: number): { color?: string; dimColor?: boolean
 }
 
 // How a place shows its due date (docs/whats-next/DRAWING.md): the short form (30 Oct) or
-// the long one (30 Oct, in 19 days); `bare` leaves out the word due, `done`
-// draws it dim, `orNone` says no due date where there is none, and `width`
-// pads it to a column.
-type DueShown = { form: 'short' | 'long'; bare?: boolean; done?: boolean; orNone?: boolean; width?: number }
+// the long one (30 Oct, in 19 days); `bare` leaves out the ⧗ before it, `done`
+// draws it dim, and `width` pads it to a column. No due date shows nothing.
+type DueShown = { form: 'short' | 'long'; bare?: boolean; done?: boolean; width?: number }
 
 // The words of a due date as `o` shows it; null where nothing is shown.
 function dueWords(iso: string | null, now: number, o: DueShown): string | null {
-  const words = iso
-    ? `${o.bare ? '' : 'due '}${o.form === 'short' ? day(iso, now) : dueText(iso, now).text}`
-    : o.orNone
-      ? 'no due date'
-      : null
+  const words = iso ? `${o.bare ? '' : '⧗ '}${o.form === 'short' ? day(iso, now) : dueText(iso, now).text}` : null
   if (words === null) return o.width ? ''.padEnd(o.width) : null
   return o.width ? words.padEnd(o.width) : words
 }
@@ -850,6 +845,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Text>
       ),
     ])
+  // A due date as one part of a line: none where there is no due date, so
+  // a line never starts with ` · `.
+  const duePart = (key: string, iso: string | null, now: number, o: DueShown): Part[] =>
+    iso ? [{ text: dueWords(iso, now, o) ?? '', node: dueDate(key, iso, now, o) }] : []
   // A line of parts `lead` columns in: one text, cut once at its end, so a
   // narrow pane cuts its last parts and never squeezes them one by one.
   const partsLine = (key: string, lead: number, parts: readonly Part[]) => (
@@ -1099,11 +1098,11 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const gap = compact ? 0 : 1
   const today = await $.clock.now()
   // One issue as every list shows it (DRAWING-issue.md): its mark, number
-  // and title on a button that opens it, and under it the facts line: dim,
-  // its milestone (unless it is the one picked), its labels in colour and its
-  // age, or what blocks it. `lead` indents it in a tree; `who` names whom it
-  // is with, dim at the right.
-  type RowIssue = Pick<IssueRow, 'number' | 'title' | 'labels' | 'milestone' | 'created'>
+  // and title on a button that opens it, and under it the facts line: what
+  // blocks it, its due date, its milestone (unless it is the one picked), its
+  // labels in colour and its age. `lead` indents it in a tree; `who` names
+  // whom it is with, dim at the right.
+  type RowIssue = Pick<IssueRow, 'number' | 'title' | 'labels' | 'milestone' | 'created' | 'due'>
   type RowLook = {
     key: string
     buttonKey: string
@@ -1132,13 +1131,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const issueRow = (i: RowIssue, o: RowLook) => {
     const lead = ' '.repeat(o.lead ?? 0)
     const dim = o.standing === 'blocked'
-    const opened: Part[] = i.created ? [{ text: `opened ${age(i.created, today)} ago` }] : []
-    // What blocks it: its numbers blue, as issue numbers are, the words dim.
+    const opened: Part[] = i.created ? [{ text: `✎ ${age(i.created, today)}` }] : []
+    // What blocks it: ⊘ dim, its numbers blue, as issue numbers are.
     const blockers = (by: number[]): Part => ({
-      text: '',
+      text: `⊘ ${by.map(n => `#${n}`).join(', ')}`,
       node: [
         <Text key="by" dimColor>
-          {'blocked by '}
+          {'⊘ '}
         </Text>,
         ...by.flatMap((n, k) => [
           ...(k > 0 ? [<Text key={`by-sep-${k}`} dimColor>{', '}</Text>] : []),
@@ -1149,15 +1148,16 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       ],
     })
     const shownMilestone = !o.noMilestone && i.milestone !== null && pk?.pick !== `m:${i.milestone}`
+    // The facts line's recipe (DRAWING-issue.md, The facts line).
     const facts: Part[] = o.note
       ? [{ text: o.note }]
-      : o.blockedBy && o.blockedBy.length > 0
-        ? [blockers(o.blockedBy), ...opened]
-        : [
-            ...(shownMilestone ? [{ text: i.milestone ?? '' }] : []),
-            ...(i.labels.length > 0 ? [{ text: '', node: labelTexts(i.labels) }] : []),
-            ...opened,
-          ]
+      : [
+          ...(o.blockedBy && o.blockedBy.length > 0 ? [blockers(o.blockedBy)] : []),
+          ...duePart('due', i.due, today, { form: 'short' }),
+          ...(shownMilestone ? [{ text: i.milestone ?? '' }] : []),
+          ...(i.labels.length > 0 ? [{ text: '', node: labelTexts(i.labels) }] : []),
+          ...opened,
+        ]
     const room = columns - (o.lead ?? 0) - 2 - o.numWidth - (o.count !== undefined ? 6 : 0)
     const title =
       o.who || o.count !== undefined
@@ -1262,8 +1262,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     })
 
   // An open epic at the top of a tree, in Epics and under a milestone: its
-  // fold mark, number, bold title, bar and count; folded, the line under it
-  // of what there is for you in it.
+  // fold mark, number, bold title, bar and count; folded, the line under it:
+  // its due date, then what there is for you in it.
   const epicRow = (x: Epic, o: { key: string; foldKey: string; openKey: string; lead: number; numWidth: number; open: boolean; pane: string }) => {
     const t = tally(x.children ?? [])
     const width = Math.max(0, columns - o.lead - 2 - o.numWidth - COUNT)
@@ -1284,7 +1284,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             ...countText(t.closed, t.total, true),
           ],
         })}
-        {!o.open && partsLine(`under-${o.key}`, o.lead + 2 + o.numWidth, summary(x))}
+        {!o.open && partsLine(`under-${o.key}`, o.lead + 2 + o.numWidth, [...duePart('due', x.due, today, { form: 'short' }), ...summary(x)])}
       </Box>
     )
   }
@@ -1436,7 +1436,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         Token refresh on 401
       </Text>,
       <Text key={`a2-${spaced}`} dimColor>
-        {'      opened 1w ago'}
+        {'      ✎ 1w'}
       </Text>,
       ...(spaced ? [<Box key={`gap-${spaced}`} height={1} />] : []),
       <Text key={`b-${spaced}`}>
@@ -1444,7 +1444,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         Rate limit settings page
       </Text>,
       <Text key={`b2-${spaced}`} dimColor>
-        {'      opened 6d ago'}
+        {'      ✎ 6d'}
       </Text>,
     ]
     return (
@@ -1743,7 +1743,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // milestone), and how many of its issues are closed.
     const treeOf = (issues: readonly MilestoneIssue[]) => {
       const parts = inMilestone(issues)
-      const top = parts.epics.map((e): Epic => ({ number: e.number, title: e.title, state: e.state, children: e.children ?? null }))
+      const top = parts.epics.map((e): Epic => ({ number: e.number, title: e.title, state: e.state, due: e.due, children: e.children ?? null }))
       return { ...parts, lines: tree(top, kidsOf, epicFolds, openEpicNumbers).lines }
     }
     const milestoneNumbers = (issues: readonly MilestoneIssue[]) => {
@@ -1762,7 +1762,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       for (const c of tops) {
         const unfolded = epicFolds.has(c.number)
         const key = at(c.number)
-        const asEpic: Epic = { number: c.number, title: c.title, state: 'open', children: c.children ?? null }
+        const asEpic: Epic = { number: c.number, title: c.title, state: 'open', due: c.due, children: c.children ?? null }
         out.push(epicRow(asEpic, { key: `ms-epic-${key}`, foldKey: `fold-${key}`, openKey: `ms-issue-${key}`, lead: 2, numWidth, open: unfolded, pane: MILESTONES_PANE }))
         if (!unfolded) continue
         const under = lines.get(c.number) ?? []
@@ -1836,7 +1836,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               {t}
             </Text>
           ))}
-          {partsLine('state', 0, [{ text: state }, { text: '', node: dueDate('due', shownMs.due, now, { form: isClosed ? 'short' : 'long', done: isClosed, orNone: true }) }])}
+          {partsLine('state', 0, [{ text: state }, ...duePart('due', shownMs.due, now, { form: isClosed ? 'short' : 'long', done: isClosed })])}
         </Box>,
         <Box key="progress" flexDirection="column" flexShrink={0} marginTop={1}>
           <Text wrap="truncate-end">
@@ -1963,12 +1963,14 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>,
         )
       } else {
-        // All closed is amber: the milestone is done, close it.
+        // One line, as under a folded epic: its due date, then all closed,
+        // amber (the milestone is done, close it), or what there is for you.
+        // Folded, issues it could not list say so; folded open, the list does.
         const allClosed = ms.total > 0 && ms.closed === ms.total
-        const due = dueDate('due', ms.due, now, { form: 'short', orNone: true })
-        const when: Part[] = [
-          { text: dueWords(ms.due, now, { form: 'short', orNone: true }) ?? '', node: due },
-          allClosed ? { text: 'all closed', color: 'warning' } : { text: `${ms.total - ms.closed} open` },
+        const unknown = !open && (issues === null || (issues === undefined && memory !== null && !memory.listed))
+        const under: Part[] = [
+          ...duePart('due', ms.due, now, { form: 'short' }),
+          ...(allClosed ? [{ text: 'all closed', color: 'warning' }] : unknown ? [{ text: 'issues unknown' }] : parts),
         ]
         rows.push(
           <Box key={`ms-${ms.title}`} flexDirection="column" flexShrink={0} marginBottom={open ? 0 : gap}>
@@ -1983,10 +1985,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 ...countText(ms.closed, ms.total, true),
               ],
             })}
-            {/* Two lines, each cut once at its end: when and how much, then
-                what there is for you, where any of it is known. */}
-            {partsLine(`when-${ms.title}`, 2, when)}
-            {parts.length > 0 && partsLine(`for-you-${ms.title}`, 2, parts)}
+            {under.length > 0 && partsLine(`under-${ms.title}`, 2, under)}
           </Box>,
         )
       }
@@ -2059,7 +2058,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     groups.forEach((g, gi) => {
       // The group's rule: the milestone's name, its due date and how many of
       // its issues are closed.
-      const due: Part[] = g.title && g.due ? [{ text: dueWords(g.due, now, { form: 'short' }) ?? '', node: dueDate('due', g.due, now, { form: 'short' }) }] : []
+      const due: Part[] = g.title ? duePart('due', g.due, now, { form: 'short' }) : []
       rows.push(
         // After the first, an extra empty line sets the group apart from the last epic above.
         <Box key={`group-${gi}`} flexShrink={0} marginTop={gi > 0 ? 1 : 0}>

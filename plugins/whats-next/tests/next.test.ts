@@ -29,7 +29,7 @@ const RUN = {
 const TOKEN = { options: { token: 'secret', icons: 'text', compact: 'off' } }
 const NOW = Date.parse('2026-10-09T12:00:00Z')
 
-type Extra = { milestone?: string; labels?: string[]; assignees?: string[]; repo?: string; colors?: Record<string, string> }
+type Extra = { milestone?: string; labels?: string[]; assignees?: string[]; repo?: string; colors?: Record<string, string>; due?: string }
 
 function issue(number: number, created: string, extra: Extra = {}) {
   const repo = extra.repo ?? 'boats/radar'
@@ -38,6 +38,7 @@ function issue(number: number, created: string, extra: Extra = {}) {
     title: `Issue ${number}`,
     state: 'open',
     created_at: created,
+    due_date: extra.due ?? null,
     html_url: `https://git.example.org/${repo}/issues/${number}`,
     body: '',
     milestone: extra.milestone ? { title: extra.milestone } : null,
@@ -144,50 +145,50 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '● ',
       '#42 ',
       '      ',
-      'v1.2 · bug · opened 2w ago',
+      'v1.2 · bug · ✎ 2w',
       'v1.2',
       ' · ',
       'bug',
       ' · ',
-      'opened 2w ago',
+      '✎ 2w',
       ...ruleTexts('Next'),
       '○ #29 Issue 29',
       '○ ',
       '#29 ',
       '      ',
-      'docs · opened 3w ago',
+      'docs · ✎ 3w',
       'docs',
       ' · ',
-      'opened 3w ago',
+      '✎ 3w',
       ...ruleTexts('Queue', '3'),
       '○ #37 Issue 37',
       '○ ',
       '#37 ',
       '      ',
-      'v1.2 · prio/high · opened 7d ago',
+      'v1.2 · prio/high · ✎ 7d',
       'v1.2',
       ' · ',
       'prio/high',
       ' · ',
-      'opened 7d ago',
+      '✎ 7d',
       '○ #51 Issue 51',
       '○ ',
       '#51 ',
       '      ',
-      'v1.2 · opened 6d ago',
+      'v1.2 · ✎ 6d',
       'v1.2',
       ' · ',
-      'opened 6d ago',
+      '✎ 6d',
       '⊘ #33 Issue 33',
       '⊘ ',
       '#33 ',
       'Issue 33',
       '      ',
-      'blocked by #37 · opened 4w ago',
-      'blocked by ',
+      '⊘ #37 · ✎ 4w',
+      '⊘ ',
       '#37',
       ' · ',
-      'opened 4w ago',
+      '✎ 4w',
       '─'.repeat(50),
       '5 open · 1 yours',
       '5 open',
@@ -215,7 +216,7 @@ test('the mark says how a row stands for you; Next is bold; a blocked row dims i
   expect(all.find(t => t.text === 'Issue 33')?.props.dimColor).toBe(true)
   expect(all.find(t => t.text === '○ #37 Issue 37')?.props.dimColor).toBeUndefined()
   // What blocks it: the numbers blue, the words dim.
-  expect(all.find(t => t.text === 'blocked by ')?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
   expect(all.find(t => t.text === '#37')?.props.color).toBe('suggestion')
 })
 
@@ -275,7 +276,7 @@ test('a second line too long for the pane is cut at its end, its indent kept', T
   })
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await texts(ui)).some(t => t.startsWith('blocked by #20, #21, #22, #23, #24, #25'))).toBe(true)
+  expect((await texts(ui)).some(t => t.startsWith('⊘ #20, #21, #22, #23, #24, #25'))).toBe(true)
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
   const indents = boxes.filter(b => b.key === 'indent')
   expect(indents.length).toBeGreaterThan(0)
@@ -295,7 +296,7 @@ test('everything blocked: Nothing available, and what it waits on', TOKEN, async
   expect(all).toContain('Nothing available')
   expect(all).toContain('#33, #34, #37 wait on #35, #37')
   expect(all).toContain(rule('Queue · 3'))
-  expect(all).toContain('blocked by #37, #35 · opened 3w ago')
+  expect(all).toContain('⊘ #37, #35 · ✎ 3w')
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 0 in progress, nothing available." }))
 })
 
@@ -518,7 +519,7 @@ test('starts on the milestone due first, and every section keeps to it', TOKEN, 
   expect(all.some(t => t.includes('#29') || t.includes('#33'))).toBe(false)
   expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
   // The milestone picked is not repeated under every issue.
-  expect(all).toContain('bug · opened 2w ago')
+  expect(all).toContain('bug · ✎ 2w')
   expect(all.some(t => t.startsWith('v1.2 · '))).toBe(false)
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #37 (v1.2)." }))
 })
@@ -589,11 +590,45 @@ test('labels under an issue are text in their own colour, the rest of the line d
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
-  expect(found.some(t => t.text.startsWith('v1.2 · bug, docs · opened'))).toBe(true)
+  expect(found.some(t => t.text.startsWith('v1.2 · bug, docs · ✎ '))).toBe(true)
   expect(found.find(t => t.text === 'bug')?.props.color).toBe('#e57373')
   // A label without a colour stays dim, as does the rest of the line.
   expect(found.find(t => t.text === 'docs')?.props.dimColor).toBe(true)
   expect(found.find(t => t.text === 'v1.2')?.props.dimColor).toBe(true)
+})
+
+// The facts line's recipe (DRAWING-issue.md, The facts line).
+test('the facts line: what blocks it, its due date, milestone, labels and age, in that order; a blocked row keeps them all', TOKEN, async ($, on) => {
+  const clock = world(on, {
+    open: [
+      [
+        issue(33, '2026-09-11T09:00:00Z', { milestone: 'v1.2', labels: ['docs'], due: '2026-10-02T00:00:00Z' }),
+        issue(29, '2026-09-18T09:00:00Z', { milestone: 'v1.2', labels: ['bug'], due: '2026-10-14T00:00:00Z' }),
+        issue(37, '2026-10-02T09:00:00Z', { due: '2026-11-30T00:00:00Z' }),
+        issue(40, '2026-10-03T09:00:00Z'),
+      ],
+    ],
+    deps: { 33: [37] },
+  })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
+  const all = found.map(t => t.text)
+  expect(all).toContain('⊘ #37 · ⧗ 2 Oct · v1.2 · docs · ✎ 4w')
+  expect(all).toContain('⧗ 14 Oct · v1.2 · bug · ✎ 3w')
+  expect(all).toContain('⧗ 30 Nov · ✎ 7d')
+  // No due date: nothing, and the line starts with what comes next.
+  expect(all).toContain('✎ 6d')
+  expect(all.some(t => t.includes('due') || t.includes('opened'))).toBe(false)
+  // The due date in its colour: red once passed, amber within 7 days, dim otherwise.
+  expect(found.find(t => t.text === '⧗ 2 Oct')?.props.color).toBe('error')
+  expect(found.find(t => t.text === '⧗ 14 Oct')?.props.color).toBe('warning')
+  expect(found.find(t => t.text === '⧗ 30 Nov')?.props.dimColor).toBe(true)
+  // ⊘ dim, the number blue; the age dim.
+  expect(found.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
+  expect(found.find(t => t.text === '#37')?.props.color).toBe('suggestion')
+  expect(found.find(t => t.text === '✎ 4w')?.props.dimColor).toBe(true)
 })
 
 test('readable: a light colour stays, a dark one is lightened, keeping its hue', () => {
@@ -611,6 +646,7 @@ const row = (number: number): IssueRow => ({
   milestone: null,
   labels: [],
   created: '2026-09-01T00:00:00Z',
+  due: null,
   url: '',
   body: '',
 })

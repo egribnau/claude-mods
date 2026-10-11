@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { bar, groupsFor, inMilestone, markOf, openChildren, pickerOptions, roots, summary, tally, tree, type TreeLine } from '../hooks/epics'
+import { bar, forYou, groupsFor, inMilestone, markOf, openChildren, pickerOptions, roots, summary, tally, tree, type TreeLine } from '../hooks/epics'
 import type { EpicChild } from '../types'
 
 const EPICS_PANE = {
@@ -28,7 +28,7 @@ const RUN = {
 const TOKEN = { options: { token: 'secret', icons: 'text', compact: 'off' } }
 const NOW = Date.parse('2026-10-09T12:00:00Z')
 
-type Extra = { milestone?: string; labels?: string[]; assignees?: string[]; state?: 'open' | 'closed' }
+type Extra = { milestone?: string; labels?: string[]; assignees?: string[]; state?: 'open' | 'closed'; due?: string }
 
 function issue(number: number, title: string, extra: Extra = {}) {
   return {
@@ -36,6 +36,7 @@ function issue(number: number, title: string, extra: Extra = {}) {
     title,
     state: extra.state ?? 'open',
     created_at: '2026-09-01T09:00:00Z',
+    due_date: extra.due ?? null,
     html_url: `https://git.example.org/boats/radar/issues/${number}`,
     body: '',
     milestone: extra.milestone ? { title: extra.milestone } : null,
@@ -307,14 +308,14 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
 
   expect(await texts(ui)).toEqual([
-    rule('v1.2 · due 31 Oct · 9/17 closed'),
+    rule('v1.2 · ⧗ 31 Oct · 9/17 closed'),
     '── ',
     'v1.2',
     ' · ',
-    'due 31 Oct',
+    '⧗ 31 Oct',
     ' · ',
     '9/17 closed',
-    ` ${'─'.repeat(50 - '── v1.2 · due 31 Oct · 9/17 closed '.length)}`,
+    ` ${'─'.repeat(50 - '── v1.2 · ⧗ 31 Oct · 9/17 closed '.length)}`,
     '⊕ ',
     `#12 ${'Auth cleanup'.padEnd(29)} ▰▰▰▱▱▱▱▱   3/8`,
     '#12 ',
@@ -322,12 +323,12 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     '▰▰▰',
     '▱▱▱▱▱',
     '   3/8',
-    '      2 yours · 1 blocked · 2 available',
-    '2 yours',
+    '      ● 2 · ○ 2 · ⊘ 1',
+    '● 2',
     ' · ',
-    '1 blocked',
+    '○ 2',
     ' · ',
-    '2 available',
+    '⊘ 1',
     '⊕ ',
     `#20 ${'Rate limits'.padEnd(29)} ▰▰▱▱▱▱▱▱   1/5`,
     '#20 ',
@@ -335,12 +336,14 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     '▰▰',
     '▱▱▱▱▱▱',
     '   1/5',
-    '      1 yours · 1 blocked · 1 available',
-    '1 yours',
+    '      ● 1 · ○ 1 · ◌ 1 · ⊘ 1',
+    '● 1',
     ' · ',
-    '1 blocked',
+    '○ 1',
     ' · ',
-    '1 available',
+    '◌ 1',
+    ' · ',
+    '⊘ 1',
     '⊕ ',
     `#25 ${'Docs pass'.padEnd(29)} ▰▰▰▰▰▰▰▰   5/5`,
     '#25 ',
@@ -395,6 +398,43 @@ test('the fold mark folds an epic open: its children with their marks, the close
   expect((await texts(ui)).some(t => t.includes('#37'))).toBe(false)
 })
 
+// DRAWING-issue.md, The for-you line: one recipe under a folded epic and a milestone.
+test("the line under a folded epic: the epic's own due date in its colour, then what there is for you", TOKEN, async ($, on) => {
+  const clock = world(on, {
+    ...REPO,
+    epics: [
+      epic(20, 'Rate limits', { milestone: 'v1.2', due: '2026-10-14T00:00:00Z' }),
+      epic(12, 'Auth cleanup', { milestone: 'v1.2' }),
+      epic(25, 'Docs pass', { milestone: 'v1.2', due: '2026-10-01T00:00:00Z' }),
+    ],
+  })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  const all = await nodes(ui)
+  const said = all.map(t => t.text)
+  expect(said).toContain('      ⧗ 14 Oct · ● 1 · ○ 1 · ◌ 1 · ⊘ 1')
+  expect(all.find(t => t.text === '⧗ 14 Oct')?.props.color).toBe('warning')
+  // No due date: the line starts with what there is for you.
+  expect(said).toContain('      ● 2 · ○ 2 · ⊘ 1')
+  expect(said).toContain('      ⧗ 1 Oct · all closed')
+  expect(all.find(t => t.text === '⧗ 1 Oct')?.props.color).toBe('error')
+})
+
+test("a child's facts line has its own due date, after what blocks it", TOKEN, async ($, on) => {
+  const clock = world(on, {
+    ...REPO,
+    deps: { ...REPO.deps, 20: [issue(51, 'Rate limit settings page', { due: '2026-10-01T00:00:00Z' }), issue(33, 'Retry on 502', { due: '2026-11-30T00:00:00Z' })] },
+  })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'fold-20' })
+  const said = await texts(ui)
+  expect(said).toContain('⧗ 1 Oct · ✎ 5w')
+  expect(said).toContain('⊘ #37 · ⧗ 30 Nov · ✎ 5w')
+})
+
 test("blocked wins over with others: a blocked child assigned to another shows ⊘, their name at the right", TOKEN, async ($, on) => {
   world(on, {
     ...REPO,
@@ -418,9 +458,9 @@ test("children read like What's next: a second line with labels and age, or what
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   await ui.press({ key: 'fold-20' })
   const found = await nodes(ui)
-  expect(found.some(t => t.text === 'bug · opened 5w ago')).toBe(true)
+  expect(found.some(t => t.text === 'bug · ✎ 5w')).toBe(true)
   expect(found.find(t => t.text === 'bug')?.props.color).toBe('#e57373')
-  expect(found.some(t => t.text === 'blocked by #37 · opened 5w ago')).toBe(true)
+  expect(found.some(t => t.text === '⊘ #37 · ✎ 5w')).toBe(true)
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
   expect(boxes.find(b => b.key === 'child-row-51')?.props.marginBottom).toBe(1)
 })
@@ -572,7 +612,7 @@ test('picking another milestone shows its epics', TOKEN, async ($, on) => {
   expect(await choices(ui)).toEqual([])
   expect(await label(ui)).toBe('v1.3 ▾')
   const all = await texts(ui)
-  expect(all.slice(0, 7)).toEqual([rule('v1.3 · due 30 Nov · 0/6 closed'), '── ', 'v1.3', ' · ', 'due 30 Nov', ' · ', '0/6 closed'])
+  expect(all.slice(0, 7)).toEqual([rule('v1.3 · ⧗ 30 Nov · 0/6 closed'), '── ', 'v1.3', ' · ', '⧗ 30 Nov', ' · ', '0/6 closed'])
   expect(all.some(t => t.startsWith('#60 Scripting'))).toBe(true)
   expect(all.some(t => t.includes('#12'))).toBe(false)
 })
@@ -714,6 +754,7 @@ const child = (number: number, extra: Partial<EpicChild> = {}): EpicChild => ({
   labels: [],
   milestone: null,
   created: '2026-09-01T00:00:00Z',
+  due: null,
   blockedBy: [],
   mine: false,
   blocked: false,
@@ -734,15 +775,31 @@ test('openChildren: yours, available, others, blocked; closed ones left out', ()
 test('tally and summary', () => {
   const kids = [child(1, { mine: true }), child(2, { blocked: true }), child(3), child(4, { state: 'closed' })]
   expect(tally(kids)).toEqual({ closed: 1, total: 4, yours: 1, available: 1, withOthers: 0, blocked: 1 })
-  expect(summary({ number: 9, title: 'E', state: 'open', children: kids }).map(p => p.text)).toEqual([
-    '1 yours',
-    '1 blocked',
-    '1 available',
+  expect(summary({ number: 9, title: 'E', state: 'open', due: null, children: kids }).map(p => p.text)).toEqual(['● 1', '○ 1', '⊘ 1'])
+  expect(summary({ number: 9, title: 'E', state: 'open', due: null, children: [child(1, { assignees: ['jdoe'] })] })).toEqual([
+    { text: '◌ 1' },
   ])
-  expect(summary({ number: 9, title: 'E', state: 'open', children: [child(1, { assignees: ['jdoe'] })] })).toEqual([
-    { text: '1 with others' },
+  expect(summary({ number: 9, title: 'E', state: 'open', due: null, children: null })).toEqual([{ text: 'children unknown' }])
+})
+
+// DRAWING-issue.md, The for-you line.
+test("forYou: each standing's mark and count, in the order the rows are listed; yours green, the rest dim", () => {
+  expect(forYou({ closed: 1, total: 9, yours: 2, available: 2, withOthers: 3, blocked: 1 })).toEqual([
+    { text: '● 2', color: 'success' },
+    { text: '○ 2' },
+    { text: '◌ 3' },
+    { text: '⊘ 1' },
   ])
-  expect(summary({ number: 9, title: 'E', state: 'open', children: null })).toEqual([{ text: 'children unknown' }])
+  // With others shows beside the rest, not only when nothing else does.
+  expect(forYou({ closed: 0, total: 4, yours: 1, available: 0, withOthers: 3, blocked: 0 })).toEqual([{ text: '● 1', color: 'success' }, { text: '◌ 3' }])
+  expect(forYou({ closed: 2, total: 2, yours: 0, available: 0, withOthers: 0, blocked: 0 })).toEqual([])
+})
+
+test('summary: the lines with no count stay words', () => {
+  expect(summary({ number: 9, title: 'E', state: 'open', due: null, children: [] })).toEqual([{ text: 'no children' }])
+  expect(summary({ number: 9, title: 'E', state: 'open', due: null, children: [child(1, { state: 'closed' })] })).toEqual([
+    { text: 'all closed', color: 'warning' },
+  ])
 })
 
 test('bar: closed children as filled cells', () => {
@@ -785,7 +842,7 @@ test('tree: an unfolded epic lists its open children; a child epic folds, with i
     [3, [child(5), child(6, { state: 'closed' })]],
     [5, [child(7)]],
   ])
-  const top = [{ number: 1, title: 'E', state: 'open' as const, children: kids.get(1) ?? null }]
+  const top = [{ number: 1, title: 'E', state: 'open' as const, due: null, children: kids.get(1) ?? null }]
   const epics = new Set([1, 3, 5])
   const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
 
@@ -803,7 +860,7 @@ test('tree: an unfolded epic lists its open children; a child epic folds, with i
 test('tree: what is not loaded yet is missing, and shows as loading', () => {
   const kids = new Map<number, EpicChild[] | null>([[1, [child(3)]]])
   const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
-  const top = [{ number: 1, title: 'E', state: 'open' as const, children: kids.get(1) ?? null }]
+  const top = [{ number: 1, title: 'E', state: 'open' as const, due: null, children: kids.get(1) ?? null }]
   // A child epic not loaded: its count is not known yet, so it is asked for.
   let t = tree(top, look, new Set([1]), new Set([1, 3]))
   expect(t.lines.get(1)?.map(say)).toEqual(['+3'])
@@ -820,7 +877,7 @@ test('tree: what is not loaded yet is missing, and shows as loading', () => {
 test('tree: a sub-issue count from the forge folds any issue, without asking', () => {
   const kids = new Map<number, EpicChild[] | null>([[1, [child(3, { subIssues: { closed: 1, total: 3 } }), child(4, { subIssues: { closed: 0, total: 0 } })]]])
   const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
-  const top = [{ number: 1, title: 'E', state: 'open' as const, children: kids.get(1) ?? null }]
+  const top = [{ number: 1, title: 'E', state: 'open' as const, due: null, children: kids.get(1) ?? null }]
   const t = tree(top, look, new Set([1]), new Set([1]))
   expect(t.lines.get(1)?.map(say)).toEqual(['+3 1/3', '·4'])
   expect(t.missing).toEqual([])
@@ -836,7 +893,7 @@ test('tree: an issue shown above is shown again, but not unfolded', () => {
     [4, [child(1)]],
   ])
   const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
-  const top = [{ number: 1, title: 'E', state: 'open' as const, children: kids.get(1) ?? null }]
+  const top = [{ number: 1, title: 'E', state: 'open' as const, due: null, children: kids.get(1) ?? null }]
   const t = tree(top, look, new Set([1, 2, 3, 4]), new Set([1, 2, 3, 4]))
   expect(t.lines.get(1)?.map(say)).toEqual(['−2 0/1', ' −4 0/1', '  ↑1 0/2', '−3 0/1', ' ↑4 0/1'])
 })

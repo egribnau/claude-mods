@@ -19,7 +19,7 @@ it stands for you: green is for yours alone (#45, built 0.65.0).
 | State | Doesn't fold | Folded | Unfolded | Also said by |
 |---|---|---|---|---|
 | yours | `●` green | `⊕` green | `⊖` green | |
-| blocked | `⊘` dim, title dim | `⊕` dim, title dim | `⊖` dim, title dim | the facts line, `blocked by #n` |
+| blocked | `⊘` dim, title dim | `⊕` dim, title dim | `⊖` dim, title dim | the facts line, `⊘ #n` |
 | with others | `◌` plain | `⊕` plain | `⊖` plain | their name, dim, at the right of the title line |
 | available | `○` plain | `⊕` plain | `⊖` plain | on a row that folds: no name at the right |
 | shown above | | `↑` dim, not a target | | its second line, `shown above` |
@@ -89,11 +89,11 @@ blocks that show are joined by ` · `, dim, in one text cut once at its end.
 | # | Block | Shown when | Drawn as |
 |---|---|---|---|
 | 0 | shown above | the issue is already in the tree higher up | `shown above`, dim; the line is this alone |
-| 1 | blocked by | it stands blocked: open blockers, and not yours | `⊘ #24, #22`: the mark dim, the numbers blue, commas dim (decided in #45, not built yet: today `blocked by #24, #22`, with the milestone and labels left out) |
-| 2 | due date | it has one (Forgejo and GitLab send it with the lists; GitHub issues have none) | `⧗ 14 Oct`, short form, red once passed, amber within 7 days, dim otherwise (DRAWING.md, Due dates; decided in #45, not built yet) |
+| 1 | blocked by | it stands blocked: open blockers, and not yours | `⊘ #24, #22`: the mark dim, the numbers blue, commas dim (#45, built 0.66.0) |
+| 2 | due date | it has one (Forgejo and GitLab send it with the lists; GitHub issues have none) | `⧗ 14 Oct`, short form, red once passed, amber within 7 days, dim otherwise (DRAWING.md, Due dates; #45, built 0.66.0) |
 | 3 | milestone | it has one, and the list is not that milestone's (the picker shows it, or the row is under it) | `v0.3.0`, dim |
 | 4 | labels | it has any | each in its colour, commas dim |
-| 5 | age | always | `✎ 3d`: the pencil (U+270E, one cell), how long ago it was opened, dim (decided in #45, not built yet: today `opened 3d ago`) |
+| 5 | age | always | `✎ 3d`: the pencil (U+270E, one cell), how long ago it was opened, dim (#45, built 0.66.0) |
 
 Not on the line: when it was updated, how many comments; the detail
 shows both (#45). What the issue
@@ -106,40 +106,39 @@ An age is minutes, hours, days, weeks, months or years (`5m`, `3h`, `6d`,
 `3w`, `4mo`, `2y`), from `age`: on the facts line after `✎`, elsewhere
 followed by `ago`.
 
-Drawn by: `issueRow`, its parts through `partsLine`; labels by `labelTexts`.
+Drawn by: `issueRow`, its parts through `partsLine`; the due date by `duePart`; labels by `labelTexts`.
 
 | Where | Drawn as |
 |---|---|
-| What's next, every row | blocked by, milestone (not in a picked one), labels, age |
+| What's next, every row | blocked by, due date, milestone (not in a picked one), labels, age |
 | Epics, a child | the same |
-| Milestones, an issue under a milestone | blocked by, labels, age |
+| Milestones, an issue under a milestone | blocked by, due date, labels, age |
 | Issue detail, under the heading | `open · v0.3.0 · ⧗ 30 Oct · 3 comments`, then `opened 3d ago by jdoe · updated 1d ago` |
 
 ## The for-you line
 
 What there is for you among some open issues, parts joined by ` · `,
-from `forYou`: `n yours` green, then `n blocked` and `n available` dim; a
-part with nothing in it is left out. With none of those, `n with others`
-dim. With nothing at all, no line.
-
-Decided in #45, not built yet: signs, not words. Each part is the mark
-(DRAWING-issue.md, Marks) in the mark's colour, then its count:
-`● 2 · ○ 2 · ⊘ 1` in place of `2 yours · 1 blocked · 2 available`. With others shows whenever any issue is with others, `◌ 3`, not only
-when nothing else shows. The parts come in the order the rows are listed:
-yours, available, with others, blocked, `● 2 · ○ 2 · ◌ 3 · ⊘ 1`. The lines that stand alone (`children unknown`,
-`no children`, `all closed`, `issues unknown`) stay words: there is no
-count to put a sign before.
+from `forYou`: signs, not words (#45, built 0.66.0). Each part is the
+mark (Marks) then its count, `● 2` green, the others dim. The parts come
+in the order the rows are listed: yours, available, with others, blocked,
+`● 2 · ○ 2 · ◌ 3 · ⊘ 1`. A part with nothing in it is left out; with
+nothing at all, no line. With others shows whenever any issue is with
+others. The lines that stand alone (`children unknown`, `no children`,
+`all closed`, `issues unknown`) stay words: there is no count to put a
+sign before.
 
 The line under a folded epic and the line under a milestone are one
-recipe (decided in #45, not built yet):
+recipe (#45, built 0.66.0):
 
 | # | Block | Shown when | Drawn as |
 |---|---|---|---|
 | 1 | due date | it has one (an epic's own, from the lists; GitHub issues have none) | `⧗ 14 Oct`, short form, red, amber or dim |
 | 2 | for you | any of it is known | `● 2 · ○ 2 · ◌ 3 · ⊘ 1`; or `all closed`, amber; or alone `children unknown`, `no children`, `issues unknown` |
 
-A milestone without a due date no longer says `no due date` there; `n open`
-under a milestone goes, read from its count.
+A milestone without a due date says nothing of it there; how many of its
+issues are open is read from its count. Folded, a milestone whose issues
+could not be listed says `issues unknown`; folded open, the list under it
+says so.
 
 Under a folded epic, where all its children are closed: `all closed`,
 amber, as for every epic or milestone still open (DRAWING.md, Counts and
@@ -147,7 +146,7 @@ states; #45, built 0.65.0). With no children, `no children`; not known,
 `children unknown` (`summary`).
 
 Drawn by: `forYou` and `summary` (plugins/whats-next/hooks/epics.ts) say
-what; `partsLine` draws it, one text.
+what, `duePart` the due date before it; `partsLine` draws it, one text.
 
 | Where | Counts |
 |---|---|

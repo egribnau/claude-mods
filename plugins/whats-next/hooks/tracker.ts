@@ -11,8 +11,9 @@ export type Send = (url: string, init: Parameters<EngineInterface['http']['fetch
 // An open issue in the repo, with who it is assigned to: none makes it free.
 export type OpenIssue = IssueRow & { assignees: string[] }
 
-// An issue with the Epic label, open or closed, with its milestone's title.
-export type EpicRow = { number: number; title: string; state: 'open' | 'closed'; milestone: string | null }
+// An issue with the Epic label, open or closed, with its milestone's title
+// and its own due date.
+export type EpicRow = { number: number; title: string; state: 'open' | 'closed'; milestone: string | null; due: string | null }
 
 // What setup's check found past the repo: the tracker's version as shown,
 // once it answered, and how far setup got.

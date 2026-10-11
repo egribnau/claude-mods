@@ -190,7 +190,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       const found = await fetchAll<RawIssue>(`${api}/issues?state=all&labels=${encodeURIComponent(label)}`, 'epics')
       return found
         .filter(i => isIssue(i) && labelNames(i).some(l => l.toLowerCase() === label.toLowerCase()))
-        .map(i => ({ number: i.number, title: i.title, state: i.state === 'closed' ? 'closed' : 'open', milestone: i.milestone?.title ?? null }))
+        .map(i => ({ number: i.number, title: i.title, state: i.state === 'closed' ? 'closed' : 'open', milestone: i.milestone?.title ?? null, due: null }))
     },
 
     // An issue's children are its sub-issues in this repo, an epic's or any
@@ -223,6 +223,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
               labels: row.labels,
               milestone: row.milestone,
               created: row.created,
+              due: null,
               blockedBy,
               // Its own count, for the tree, without asking for its sub-issues.
               ...(c.sub_issues_summary && { subIssues: { closed: c.sub_issues_summary.completed, total: c.sub_issues_summary.total } }),
@@ -431,6 +432,7 @@ const toRow = (i: RawIssue): IssueRow => ({
   milestone: i.milestone?.title ?? null,
   labels: (i.labels ?? []).map(l => (typeof l === 'string' ? { name: l, color: '' } : { name: l.name, color: l.color ?? '' })),
   created: i.created_at,
+  due: null,
   url: i.html_url,
   body: i.body ?? '',
 })

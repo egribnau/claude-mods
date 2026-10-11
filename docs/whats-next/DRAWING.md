@@ -19,7 +19,7 @@ button labels only, never marks or states.
 | Colour | Means |
 |---|---|
 | blue | an issue number: "this is an issue" |
-| green | yours: the mark of an issue of yours (`●`, or `⊕`/`⊖` when it folds), `n yours`; and finished: the filled cells of a bar |
+| green | yours: the mark of an issue of yours (`●`, or `⊕`/`⊖` when it folds), `● n` on a for-you line, `n yours` on a bottom line; and finished: the filled cells of a bar |
 | amber | a warning: due within 7 days, `all closed` on an epic or milestone still open |
 | red | holds something up: a Blocked by number while open, a due date passed, a refusal |
 | grey | closed, and nothing else |
@@ -61,7 +61,7 @@ joins the table:
 | Epics pane, a child with children of its own | `1/3`, no bar |
 | Epics pane, under an unfolded epic or child | `✓ 3 closed`, grey |
 | Milestones pane, an open milestone | bar and `9/17` |
-| Milestones pane, the line under a milestone | `⧗ 30 Oct · 8 open`, or `⧗ 30 Oct · all closed`; decided in #45, not built yet: the same recipe as under a folded epic, `⧗ 30 Oct · ● 1 · ○ 2 · ◌ 3 · ⊘ 1` (`n open` read from the count), or `⧗ 30 Oct · all closed` (DRAWING-issue.md, The for-you line) |
+| Milestones pane, the line under a milestone | the same recipe as under a folded epic, `⧗ 30 Oct · ● 1 · ○ 2 · ◌ 3 · ⊘ 1` (how many are open read from the count), or `⧗ 30 Oct · all closed` (DRAWING-issue.md, The for-you line; #45, built 0.66.0) |
 | Milestones pane, a closed milestone | grey row, `✓` |
 | Milestones pane, an epic under a milestone | bar and `3/8` |
 | Milestones pane, a closed epic under a closed milestone | grey row, `✓` |
@@ -127,8 +127,8 @@ Two forms:
 `⧗ ` (U+29D7, the hourglass, one cell, plain Unicode; not the `⌛` emoji,
 which is two cells) goes before it, in the date's own colour, except where
 the place already says what it is: the picker's column of dates and the
-issue detail's Due line (decided in #45, not built yet: today the word
-`due `). `⚑` is kept for git tags, later.
+issue detail's Due line (#45, built 0.66.0). `⚑` is kept for git tags,
+later.
 
 The places that show a due date today; a new one picks its form by the
 same rule and joins the table:
@@ -138,17 +138,16 @@ same rule and joins the table:
 | Milestone picker (What's next, Epics) | short | `30 Oct`, no word before it |
 | Epics pane, a milestone's rule | short | `· ⧗ 30 Oct` |
 | Milestones pane, the line under a milestone | short | `⧗ 30 Oct`, first on the line |
-| Epics and Milestones, the line under a folded epic | short | `⧗ 14 Oct`, first on the line (decided in #45, not built yet: the epic's own due date, from the lists) |
+| Epics and Milestones, the line under a folded epic | short | `⧗ 14 Oct`, the epic's own due date from the lists, first on the line (#45, built 0.66.0) |
 | Issue detail, the issue's milestone | short | `· ⧗ 30 Oct` after the milestone's name |
-| An issue row's facts line, the issue's own due date | short | `· ⧗ 14 Oct`, after blocked by, before the milestone (DRAWING-issue.md, The facts line; #45, not built yet) |
+| An issue row's facts line, the issue's own due date | short | `· ⧗ 14 Oct`, after blocked by, before the milestone (DRAWING-issue.md, The facts line; #45, built 0.66.0) |
 | Issue detail, the issue's own due date | long | `30 Oct, in 19 days` on the Due line |
 | Milestone detail, an open milestone | long | `⧗ 30 Oct, in 19 days` |
 | Milestone detail, a closed milestone | short, dim | `⧗ 30 Oct`: once closed, how far off no longer matters |
 
-No due date: nothing is shown, anywhere (decided in #45, not built yet:
-today `no due date`, dim, under a milestone in the list and in the
-milestone detail). One text joins its parts, so leaving the first one out
-starts no line with `·`.
+No due date: nothing is shown, anywhere (#45, built 0.66.0). One text
+joins its parts, so leaving the first one out starts no line with `·`;
+`duePart` gives a line its due date as a part, or none.
 
 ## Rows that fold
 

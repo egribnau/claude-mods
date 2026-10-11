@@ -54,7 +54,7 @@ free one is blocked.
 | row | One issue, epic or milestone in a list. |
 | fold, unfold | Hide or show what is under an epic, a child with children, or a milestone. |
 | shown above | An issue already in the tree higher up, shown again under a second parent or in a loop, and not unfolded there. |
-| for-you line | What there is for you: how many are yours, blocked, available, or with others. |
+| for-you line | What there is for you: how many are yours, available, with others and blocked, each said by its mark and count. |
 | bottom line | The last line of a pane. |
 
 ## Actions

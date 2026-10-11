@@ -190,7 +190,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
       const found = await fetchAll<RawEpic>(`${api}/issues?state=all&type=issues&labels=${encodeURIComponent(label)}`, 'epics')
       return found
         .filter(i => (i.labels ?? []).some(l => l.name === label))
-        .map(i => ({ number: i.number, title: i.title, state: i.state === 'closed' ? 'closed' : 'open', milestone: i.milestone?.title ?? null }))
+        .map(i => ({ number: i.number, title: i.title, state: i.state === 'closed' ? 'closed' : 'open', milestone: i.milestone?.title ?? null, due: i.due_date ?? null }))
     },
 
     async blockers(n: number): Promise<number[] | null> {
@@ -222,6 +222,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
             labels: (c.labels ?? []).map(l => ({ name: l.name, color: l.color ?? '' })),
             milestone: c.milestone?.title ?? null,
             created: c.created_at ?? '',
+            due: c.due_date ?? null,
             blockedBy,
           }
         }),
@@ -266,6 +267,7 @@ type RawListed = {
   number: number
   title: string
   created_at: string
+  due_date?: string | null
   html_url: string
   body: string | null
   milestone: { title: string } | null
@@ -280,6 +282,7 @@ const toRow = (i: RawListed): IssueRow => ({
   milestone: i.milestone?.title ?? null,
   labels: (i.labels ?? []).map(l => ({ name: l.name, color: l.color ?? '' })),
   created: i.created_at,
+  due: i.due_date ?? null,
   url: i.html_url,
   body: i.body ?? '',
 })
@@ -292,6 +295,7 @@ type RawDep = {
   labels?: { name: string; color?: string }[] | null
   milestone?: { title: string } | null
   created_at?: string
+  due_date?: string | null
 }
 type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string }[] | null }
 type RawMilestone = {

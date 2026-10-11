@@ -60,15 +60,14 @@ export function summary(e: Epic): { text: string; color?: string }[] {
   return forYou(t)
 }
 
-// What there is for you among open issues: yours, blocked, available, or
-// when none of those, how many are with others. Each part has its colour.
+// What there is for you among open issues (DRAWING-issue.md, The for-you
+// line): each standing's mark and its count, in the order the rows are
+// listed, `● 2 · ○ 2 · ◌ 3 · ⊘ 1`; yours green, the rest dim. A standing
+// with none is left out.
 export function forYou(t: Tally): { text: string; color?: string }[] {
-  const parts: { text: string; color?: string }[] = []
-  if (t.yours > 0) parts.push({ text: `${t.yours} yours`, color: 'success' })
-  if (t.blocked > 0) parts.push({ text: `${t.blocked} blocked` })
-  if (t.available > 0) parts.push({ text: `${t.available} available` })
-  if (parts.length === 0 && t.withOthers > 0) parts.push({ text: `${t.withOthers} with others` })
-  return parts
+  return (Object.keys(ORDER) as Standing[])
+    .filter(st => t[st] > 0)
+    .map(st => ({ text: `${markOf(st, null).glyph} ${t[st]}`, ...(st === 'yours' && { color: 'success' }) }))
 }
 
 // The open epics in view that show at the top of their group: each one no

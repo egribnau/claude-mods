@@ -50,6 +50,7 @@ const toRow = (i: IssueDetail): IssueRow => ({
   milestone: i.milestone?.title ?? null,
   labels: i.labels,
   created: i.created,
+  due: i.due,
   url: i.url,
   body: i.body,
 })
@@ -188,6 +189,7 @@ export async function milestoneIssues(
       labels: i.labels,
       milestone: i.milestone,
       created: i.created,
+      due: i.due,
       blockedBy,
     })
   }
@@ -202,6 +204,7 @@ export async function milestoneIssues(
       labels: [],
       milestone: title,
       created: '',
+      due: e.due,
       blockedBy: [],
       children: null,
     })
@@ -239,10 +242,10 @@ export function milestoneKnown(
 // asked of the tracker once and remembered. `me` makes a child yours.
 export async function epicGroups(t: Tracker, known: Memory, pick: string, me: string | null): Promise<EpicGroup[]> {
   const loadOne = async (i: EpicRow): Promise<Epic> => {
-    const { number, title, state } = i
-    if (state === 'closed') return { number, title, state, children: null }
+    const { number, title, state, due } = i
+    if (state === 'closed') return { number, title, state, due, children: null }
     if (!known.children.has(number)) known.children.set(number, await t.children(number, me))
-    return { number, title, state, children: known.children.get(number) ?? null }
+    return { number, title, state, due, children: known.children.get(number) ?? null }
   }
   return Promise.all(
     groupsFor(pick, known.milestones, known.epics).map(async g => {

@@ -346,6 +346,7 @@ test('mine: asked by login, pull requests left out, labels keep their colour', a
       milestone: 'v1.2',
       labels: [{ name: 'bug', color: 'd73a4a' }],
       created: '2026-09-25T09:00:00Z',
+      due: null,
       url: 'https://github.com/boats/radar/issues/12',
       body: 'Body of 12',
     },
@@ -766,8 +767,8 @@ test('epics: open and closed issues with the Epic label, any case, pull requests
   ])
   const found = await github(fakeSend(route, asked), R, 't', null, 'Epic').epics()
   expect(found).toEqual([
-    { number: 20, title: 'Radar sweep', state: 'open', milestone: 'v1.2' },
-    { number: 19, title: 'Old sweep', state: 'closed', milestone: null },
+    { number: 20, title: 'Radar sweep', state: 'open', milestone: 'v1.2', due: null },
+    { number: 19, title: 'Old sweep', state: 'closed', milestone: null, due: null },
   ])
   expect(asked.map(a => a.url)).toEqual([`${API}/issues?state=all&labels=Epic&per_page=100`])
 })
@@ -897,7 +898,7 @@ test('github.com: an epic with its sub-issues in the Epics pane, with the bar an
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   let all = await texts(ui)
   expect(all.some(t => t.includes('Radar sweep') && t.includes('1/5'))).toBe(true)
-  for (const want of ['1 yours', '1 blocked', '1 available']) expect(all).toContain(want)
+  for (const want of ['● 1', '○ 1', '◌ 1', '⊘ 1']) expect(all).toContain(want)
   expect(all.some(t => t.includes('Old sweep'))).toBe(true)
 
   await ui.press({ key: 'fold-20' })
