@@ -10,7 +10,7 @@ import { gitlab } from './gitlab'
 import { day, dueSoon, dueText, duration, readable, wrap } from './issue'
 import { changesSince, epicGroups, loadRepo, milestoneIssues, milestoneKnown, noteChange, whatsNext, type Memory } from './load'
 import { waitingText } from './next'
-import { message, type Send, type Tracker } from './tracker'
+import { message, withoutToken, type Send, type Tracker } from './tracker'
 
 const PANE = 'next'
 const EPICS_PANE = 'next-epics'
@@ -58,15 +58,28 @@ const send =
 // The forge each host runs, as setup's check found it.
 const forges = new Map<string, Forge>()
 
-// The tracker behind repo `r`: GitLab or GitHub where setup found it, else Forgejo.
+// The tracker behind repo `r`: GitLab or GitHub where setup found it, else
+// Forgejo. A token goes only to the forge setup found at the host: with none
+// found, the Forgejo tracker gets no token. What it says never carries the token.
 const tracker = ($: EngineInterface, r: Repo): Tracker => {
   const forge = forges.get(r.host)
   return forge?.kind === 'gitlab'
-    ? gitlab(send($), r, gitlabToken(r.host).value, forge.version, configLabel)
+    ? trackerOf('gitlab', $, r, gitlabToken(r.host).value, forge.version)
     : forge?.kind === 'github'
-      ? github(send($), r, readToken('GitHub token', r.host).value, forge.version, configLabel)
-      : forgejo(send($), r, tokenFor(configTokens['Forgejo tokens'], r.host)?.value ?? null, configLabel)
+      ? trackerOf('github', $, r, readToken('GitHub token', r.host).value, forge.version)
+      : trackerOf('forgejo', $, r, forge?.kind === 'forgejo' ? readToken('Forgejo tokens', r.host).value : null)
 }
+
+// The tracker of one forge for repo `r`, with `token` cut out of what it says.
+const trackerOf = (kind: 'forgejo' | 'gitlab' | 'github', $: EngineInterface, r: Repo, token: string | null, version?: string | null): Tracker =>
+  withoutToken(
+    kind === 'gitlab'
+      ? gitlab(send($), r, token, version ?? null, configLabel)
+      : kind === 'github'
+        ? github(send($), r, token, version ?? null, configLabel)
+        : forgejo(send($), r, token, configLabel, version ?? undefined),
+    token,
+  )
 
 // Runs an action and records how many requests it sent, under `label`.
 async function counted<T>($: EngineInterface, label: string, action: () => Promise<T>): Promise<T> {
@@ -181,7 +194,7 @@ async function check($: EngineInterface): Promise<Repo | null> {
       ? { kind: 'no-repo', reason: 'not-git', dir }
       : url === null
         ? { kind: 'no-repo', reason: 'no-origin', dir }
-        : { kind: 'no-repo', reason: 'bad-origin', dir, origin: url }
+        : { kind: 'no-repo', reason: 'bad-origin', dir, origin: url.replace(/^([a-z+]+:\/\/)[^@/]*@/i, '$1') }
     await update($, setup, () => next)
     return null
   }
@@ -196,12 +209,7 @@ async function check($: EngineInterface): Promise<Repo | null> {
   const tok =
     forge.kind === 'gitlab' ? gitlabToken(r.host) : forge.kind === 'github' ? readToken('GitHub token', r.host) : readToken('Forgejo tokens', r.host)
   await update($, token, () => tok.from)
-  const c =
-    forge.kind === 'gitlab'
-      ? await gitlab(send($), r, tok.value, forge.version, configLabel).check()
-      : forge.kind === 'github'
-        ? await github(send($), r, tok.value, forge.version, configLabel).check()
-        : await forgejo(send($), r, tok.value, configLabel, forge.version).check()
+  const c = await trackerOf(forge.kind, $, r, tok.value, forge.version).check()
   await update($, version, () => c.version)
   await update($, setup, () => c.setup)
   return r

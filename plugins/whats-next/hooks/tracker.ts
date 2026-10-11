@@ -61,3 +61,32 @@ export type Tracker = {
 // An error's message, without the host's `whats-next: $.http.fetch: ` in front.
 export const message = (err: unknown) =>
   (err instanceof Error ? err.message : String(err)).replace(/^[\w-]+: \$\.[\w.]+: /, '')
+
+// Tracker `t` with `token` cut out of everything it answers and every error
+// it throws: a forge's refusal, or a page that is not JSON, may echo the
+// request back, and what a tracker says reaches the panes, toasts and the
+// prompt.
+export function withoutToken(t: Tracker, token: string | null): Tracker {
+  if (!token) return t
+  const cut = (v: unknown): unknown =>
+    typeof v === 'string'
+      ? v.split(token).join('<token>')
+      : Array.isArray(v)
+        ? v.map(cut)
+        : v && typeof v === 'object'
+          ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, cut(x)]))
+          : v
+  const sealed = Object.entries(t).map(([k, v]) => [
+    k,
+    typeof v === 'function'
+      ? async (...args: unknown[]) => {
+          try {
+            return cut(await (v as (...a: unknown[]) => Promise<unknown>)(...args))
+          } catch (err) {
+            throw new Error(cut(message(err)) as string)
+          }
+        }
+      : v,
+  ])
+  return Object.fromEntries(sealed) as Tracker
+}

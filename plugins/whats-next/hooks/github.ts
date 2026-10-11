@@ -23,7 +23,8 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
   const get = (url: string) => send(url, { method: 'GET', headers })
 
   // Every page of a list, 100 at a time, following the `next` link GitHub
-  // gives in the Link header; a page that fails names `what`.
+  // gives in the Link header; a page that fails names `what`. The token goes
+  // only to the API's own host: a link anywhere else fails the list.
   async function fetchAll<T>(url: string, what: string): Promise<T[]> {
     const found: T[] = []
     let at: string | null = `${url}${url.includes('?') ? '&' : '?'}per_page=100`
@@ -32,6 +33,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       if (!res.ok) throw new Error(`${what}: ${refusal(res)}`)
       found.push(...(JSON.parse(res.text) as T[]))
       at = nextLink(res.headers.link)
+      if (at !== null && !at.startsWith(`${base}/`)) throw new Error(`${what}: the next page is not on ${new URL(base).host}`)
     }
     return found
   }

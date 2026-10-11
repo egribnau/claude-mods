@@ -16,7 +16,11 @@ repo's CLAUDE.md.
 ## Testing
 
 - `claude plugin test plugins/whats-next`, `claude plugin validate
-  plugins/whats-next`, and `tsc` with the tsconfig from the types file header.
+  plugins/whats-next`, `tsc` with the tsconfig from the types file header,
+  and `docs/whats-next/check-tokens.sh` (every token setting is sensitive:
+  the test sandbox cannot read the manifest).
+- `tests/tokens.test.ts` shows a token never leaks: keep it passing, and give
+  a new place that shows forge text, or a new request, a test there.
 - `mock.clock(on)` is needed once the pane renders ages. `prompt.fill` hooks
   return `{ isFilled }` itself; ops like `process.run` and `http.fetch` return
   `{ value }`; a failing fetch is `{ deny: '...' }`. One `on(event)` per event

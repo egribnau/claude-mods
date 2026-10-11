@@ -49,7 +49,9 @@ pair there still counts for gitlab.com when GitLab.com token is empty. A GitLab 
 assign and close, or `read_api` to read only. **GitHub token**: a GitHub access token, kept in secure storage, for
 github.com and GitHub Enterprise; `host=token` pairs separated by spaces for more than one host. A fine-grained
 token needs the Issues permission (read and write to assign and close, read to read only), a classic one `repo`.
-What's Next reads no environment variables.
+What's Next reads no environment variables and no other tool's files. A token goes only to the host it is
+for, as the forge setup found there, and What's Next shows it nowhere: a forge's error that echoes it back
+shows `<token>` in its place.
 
 What's Next is for the terminal. A Code session in the Claude desktop app loads it but gets none of its
 settings: the secret token settings stay empty there, so the pane stops at the Token step. The desktop app
