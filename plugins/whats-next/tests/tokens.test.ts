@@ -221,6 +221,39 @@ test('Last closed: an issue whose title names the token, and the requests for wh
   noToken(said)
 })
 
+test('Issue detail: whom a blocker is with, and the requests for what a closed issue blocks, carry no token', GH, async ($, on) => {
+  const asked: { url: string; headers: Record<string, string> }[] = []
+  const ask = (body: unknown) => (url: string, h: Record<string, string>) => {
+    asked.push({ url, headers: h })
+    return json(200, body)
+  }
+  // The open issues come with GitHub's dependency summary: dependencies are on.
+  const listed = { ...issue(14), issue_dependencies_summary: { blocked_by: 1, blocking: 1 } }
+  const said = world(on, {
+    answers: {
+      '/repos/boats/radar/issues': url => json(200, new URL(url).searchParams.has('assignee') ? [] : [listed]),
+      '/repos/boats/radar/issues/14': (_url, _h, method) => (method === 'GET' ? json(200, { ...listed, state: 'closed' }) : null),
+      '/repos/boats/radar/issues/14/dependencies/blocked_by': ask([{ ...issue(24), assignees: [person(`anna-${TOKEN}`, 501)] }]),
+      '/repos/boats/radar/issues/14/dependencies/blocking': ask([issue(31)]),
+      '/repos/boats/radar/issues/24/dependencies/blocked_by': ask([]),
+      '/repos/boats/radar/issues/31/dependencies/blocked_by': ask([]),
+    },
+  })
+  const ui = await shown($)
+  await ui.press({ key: 'pick-14' })
+  said.push(...(await texts(ui)))
+
+  expect(said.some(s => s.trim() === 'anna-<token>')).toBe(true)
+  // #14 is closed: whether #31 still waits is asked, of GitHub's API host with the token.
+  expect(asked.some(a => a.url.includes('/issues/31/dependencies/blocked_by'))).toBe(true)
+  for (const a of asked) {
+    expect(new URL(a.url).host).toBe('api.github.com')
+    expect(a.url).not.toContain(TOKEN)
+    expect(a.headers.Authorization).toBe(`Bearer ${TOKEN}`)
+  }
+  noToken(said)
+})
+
 test('Prompt: the prompt it drafts, its toast and the Debug counter carry no token, even from an issue that names it', GH, async ($, on) => {
   const said = world(on, { title: `Rotate ${TOKEN}` })
   const ui = await shown($)

@@ -149,12 +149,13 @@ async function opened($: Engine, rows = 40) {
   return ui
 }
 
-test('under the title one line: the state, then who opened it and when; the milestone is a fact with its due date', TOKEN, async ($, on) => {
+test('under the title one line: who opened it and when, no state word; the milestone is a fact with its due date', TOKEN, async ($, on) => {
   const clock = world(on, FULL)
   await clock.set(NOW)
   const ui = await opened($)
   const all = await texts(ui)
-  expect(has(all, 'open · ✎ 3w alice')).toBe(true)
+  expect(all).toContain('  ✎ 3w alice')
+  expect(all.some(t => t.includes('open ·') || t.trim() === 'open')).toBe(false)
   expect(all.some(t => t.includes('comments') && t.includes('v0.3.0'))).toBe(false)
   expect(all).toContain('Milestone  ')
   expect(has(all, 'v0.3.0 · ⧗ 31 Oct')).toBe(true)
@@ -407,4 +408,38 @@ test('4 lines show whole, Description and a comment alike: … 1 more line would
   expect(all.some(t => t.startsWith('── Description'))).toBe(true)
   await expect(ui.find({ key: 'description-more' })).resolves.toBeUndefined()
   await expect(ui.find({ key: 'comment-more-0' })).resolves.toBeUndefined()
+})
+
+// The state by the marks (#72): an epic's own children do not block it, in
+// its heading and on the Epic line; what it blocks is ⊘, or ● when yours.
+const WITH_CHILD: Answers = {
+  ...FULL,
+  '/issues/30/dependencies': [{ ...LISTED, state: 'open', repository: { full_name: 'boats/radar' } }],
+}
+
+test('the Epic line has the epic\'s mark, its own children not counted as what blocks it', TOKEN, async ($, on) => {
+  world(on, WITH_CHILD)
+  const found = (await (await opened($)).findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
+  const at = found.findIndex(t => t.text === '#30')
+  expect(found[at - 1]?.text).toBe('○ ')
+  expect(found[at - 1]?.props.dimColor).toBeUndefined()
+})
+
+test("an epic's heading has its mark, its own children not counted as what blocks it", TOKEN, async ($, on) => {
+  world(on, WITH_CHILD)
+  const ui = await opened($)
+  await ui.press({ key: 'follow-30' })
+  const all = await texts(ui)
+  expect(all.some(t => t.startsWith('○ #30 Token handling'))).toBe(true)
+})
+
+test('what it blocks is ⊘ while it is open, a green ● when that one is yours', TOKEN, async ($, on) => {
+  world(on, {
+    ...FULL,
+    '/issues/29/blocks': [{ number: 31, title: 'Release notes', state: 'open', labels: [], assignees: [{ login: 'alice' }], repository: { full_name: 'boats/radar' } }],
+  })
+  const found = (await (await opened($)).findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
+  const at = found.findIndex(t => t.text === '#31')
+  expect(found[at - 1]?.text).toBe('● ')
+  expect(found[at - 1]?.props.color).toBe('success')
 })

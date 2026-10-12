@@ -206,15 +206,31 @@ async function parentOf(t: Tracker, known: Memory, n: number): Promise<number | 
 }
 
 // The issue `n` is a child of, as the issue detail names it: its number,
-// title and state, and whether it is an epic. null for none, or one that is
+// title and state, whether it is an epic, and what its mark needs: whom it
+// is assigned to and whether it is blocked. null for none, or one that is
 // not among the open issues and epics known.
-export async function parentRef(t: Tracker, known: Memory, n: number): Promise<(Ref & { epic: boolean }) | null> {
+export async function parentRef(t: Tracker, known: Memory, n: number, me: string | null, deps: boolean): Promise<(Ref & { epic: boolean }) | null> {
   const p = await parentOf(t, known, n)
   if (p === null) return null
   const epic = known.epics.find(e => e.number === p)
-  if (epic) return { number: p, title: epic.title, state: epic.state, epic: true }
   const issue = [...known.mine, ...known.free, ...known.taken].find(i => i.number === p)
-  return issue ? { number: p, title: issue.title, state: 'open', epic: false } : null
+  if (!epic && !issue) return null
+  // Yours, with others, or nobody's: as the lists hold it.
+  const taken = known.taken.find(i => i.number === p)
+  const assignees = epic ? (epic.assignees ?? []) : taken ? taken.assignees : me && known.mine.some(i => i.number === p) ? [me] : []
+  const state = epic ? epic.state : 'open'
+  const mine = me !== null && assignees.includes(me)
+  const blocked = state === 'open' && !mine ? await blockedOutside(t, known, p, await blockersOf(t, known, deps)(p)) : false
+  return { number: p, title: epic?.title ?? issue?.title ?? '', state, epic: epic !== undefined, assignees, blocked }
+}
+
+// Whether issue `n` waits on an open issue among `open`, its own children
+// left out: an epic on Forgejo depends on each of its children
+// (DRAWING-issue.md, Detail lines that name an issue).
+export async function blockedOutside(t: Tracker, known: Memory, n: number, open: number[] | null): Promise<boolean> {
+  if (!open || open.length === 0) return false
+  const children = known.epics.some(e => e.number === n) || t.nested ? ((await membersOf(t, known, n)) ?? []) : []
+  return open.some(b => !children.includes(b))
 }
 
 // The epics above issue `n`, nearest first: its epic, and on a forge where

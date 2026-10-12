@@ -683,17 +683,17 @@ test("the rest of a milestone's row opens its detail, in place of the list", TOK
   expect(n.find(x => x.text === 'GitHub')?.props.bold).toBe(true)
 })
 
-test('the head of a milestone detail: open, then its due date under Due, in its colour', TOKEN, async ($, on) => {
+test('the head of a milestone detail: open says nothing under the title, then its due date under Due, in its colour', TOKEN, async ($, on) => {
   const clock = world(on, REPO)
   await clock.set(NOW)
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
   const n = await nodes(pane)
-  // The state line holds one part, dim.
-  const at = n.findIndex(x => x.text === 'open' && x.props.dimColor === true)
+  // No state word: open is the absence of ✓.
+  expect(n.some(x => x.text.trim() === 'open')).toBe(false)
+  const at = n.findIndex(x => x.text === 'GitHub' && x.props.bold === true)
   expect(at).toBeGreaterThan(-1)
-  expect(n[at - 1]?.text).toBe('open')
   expect(n.some(x => x.text.includes('⧗'))).toBe(false)
   const key = n.findIndex(x => x.text === 'Due'.padEnd(11))
   expect(key).toBeGreaterThan(at)
@@ -711,7 +711,8 @@ test("a closed milestone's due date is short and dim", TOKEN, async ($, on) => {
   await pane.press({ key: 'closed-section' })
   await pane.press({ key: 'milestone-Done' })
   const n = await nodes(pane)
-  expect(n.map(x => x.text)).toContain('closed 3 days ago')
+  expect(n.map(x => x.text)).toContain('✓ Done')
+  expect(n.map(x => x.text)).toContain('3 days ago')
   const key = n.findIndex(x => x.text === 'Due'.padEnd(11))
   expect(n[key + 1]?.text).toBe('5 Oct')
   expect(n[key + 1]?.props.color).toBeUndefined()
@@ -725,7 +726,7 @@ test('a milestone detail without a due date says nothing of it', TOKEN, async ($
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-Panes' })
   const t = await texts(pane)
-  expect(t).toContain('open')
+  expect(t).toContain('Panes')
   expect(t.some(x => x.includes('Due') || x.includes('due') || x.includes('⧗'))).toBe(false)
 })
 
@@ -876,7 +877,7 @@ test("when the open issues could not be listed, a milestone detail's issues are 
   expect(n.find(x => x.text === 'issues unknown')?.props.dimColor).toBe(true)
 })
 
-test('a closed milestone opens its detail too: closed n days ago, all closed', TOKEN, async ($, on) => {
+test('a closed milestone opens its detail too: ✓ before its title, n days ago under it, all closed', TOKEN, async ($, on) => {
   const ran: string[] = []
   const clock = world(on, { ...CLOSED, ran })
   await clock.set(NOW)
@@ -885,7 +886,8 @@ test('a closed milestone opens its detail too: closed n days ago, all closed', T
   await pane.press({ key: 'closed-section' })
   await pane.press({ key: 'milestone-Forgejo dependencies' })
   const t = await texts(pane)
-  expect(t).toContain('closed 7 days ago')
+  expect(t).toContain('✓ Forgejo dependencies')
+  expect(t).toContain('7 days ago')
   expect(t).toContain('▰▰▰▰▰▰▰▰ 6/6 · all closed')
   await pane.press({ key: 'open' })
   expect(ran).toContain('open https://git.example.org/boats/radar/milestone/9')

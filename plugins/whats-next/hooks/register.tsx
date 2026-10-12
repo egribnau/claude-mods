@@ -8,7 +8,7 @@ import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
 import { day, dueSoon, dueText, duration, readable, wrap } from './issue'
-import { changesSince, epicTree, growTree, loadRepo, milestoneIssues, milestoneKnown, noteChange, parentRef, startingPick, whatsNext, type Memory } from './load'
+import { blockedOutside, changesSince, epicTree, growTree, loadRepo, milestoneIssues, milestoneKnown, noteChange, parentRef, startingPick, whatsNext, type Memory } from './load'
 import { measure } from './measure'
 import { waitingText } from './next'
 import { message, withoutToken, type Send, type Tracker } from './tracker'
@@ -417,23 +417,31 @@ const issuesRead = new Map<string, IssueDetail>()
 async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) {
   const key = `${r.host}/${slug(r)}#${n}`
   const known = issuesRead.get(key)
+  const s = await read($, setup)
+  const me = s.kind === 'ready' ? s.login : null
+  const features = s.kind === 'ready' ? s.features : { time: true, deps: true, epics: true }
   // The issue it is a child of, from what the lists know: one request the
   // first time, none once Next has asked.
-  const parentOf = async () => (memory ? await parentRef(tracker($, r), memory, n).catch(() => null) : null)
+  const parentOf = async () => (memory ? await parentRef(tracker($, r), memory, n, me, features.deps).catch(() => null) : null)
+  // Whether it waits on an open issue that is not its own child, for its mark.
+  const blockedOf = async (i: IssueDetail) => {
+    const open = (i.blockedBy ?? []).filter(x => x.state === 'open').map(x => x.number)
+    if (i.state !== 'open' || (me !== null && i.assignees.includes(me))) return false
+    return memory ? await blockedOutside(tracker($, r), memory, n, open).catch(() => open.length > 0) : open.length > 0
+  }
   if (known) {
-    const parent = await parentOf()
-    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue: known, parent }))
+    const [parent, blocked] = await Promise.all([parentOf(), blockedOf(known)])
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue: known, parent, blocked }))
     return
   }
   await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'loading', number: n }))
   try {
-    const s = await read($, setup)
-    const features = s.kind === 'ready' ? s.features : { time: true, deps: true, epics: true }
     const [issue, parent] = await Promise.all([tracker($, r).issue(n, features), parentOf()])
+    const blocked = await blockedOf(issue)
     issuesRead.set(key, issue)
     // Another issue opened while this one loaded wins.
     if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
-    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue, parent }))
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue, parent, blocked }))
   } catch (err) {
     if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
     await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'error', number: n, message: message(err) }))
@@ -983,6 +991,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
   }
   // A row's mark and the space after it (DRAWING-issue.md, Marks).
+  // Closed in a detail: a grey ✓ where the mark goes.
+  const CLOSED_MARK: Mark = { glyph: '✓', color: 'inactive' }
   const markText = (m: Mark) => (
     <Text key="mark" color={m.color} dimColor={m.dim}>
       {`${m.glyph} `}
@@ -1730,11 +1740,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const blocks = (i.blocks ?? []).filter(x => !(parent?.epic && x.number === parent.number))
       // Pull requests under the forge's word, and on GitLab its sign: !61 there is a merge request, #61 an issue.
       const gitlab = t?.name === 'GitLab'
-      // One issue or pull request on a line: number, title, state. Numbers
-      // sit at the right of one column, states at the right of the line, so
-      // titles start in one column. Closed is a grey ✓; an open blocker that
-      // is itself blocked says so, dim. All but pull request lines are
-      // buttons that open their issue here.
+      // One issue or pull request on a line: mark, number, title. An issue's
+      // mark as the lists draw it, closed a grey ✓; a pull request has none
+      // but ✓. Numbers sit at the right of one column, so titles start in one
+      // column; at the right whom it is with, or merged. No state word: the
+      // mark says it (DRAWING-issue.md, Detail lines that name an issue). All
+      // but pull request lines are buttons that open their issue here.
       type RefKind = 'parent' | 'blocker' | 'blocks' | 'pull'
       const numberOf = (x: Ref, kind: RefKind) => `${kind === 'pull' && gitlab ? '!' : '#'}${x.number}`
       const refs: [Ref, RefKind][] = [
@@ -1743,25 +1754,33 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         ...blocks.map((x): [Ref, RefKind] => [x, 'blocks']),
         ...(i.pulls ?? []).map((x): [Ref, RefKind] => [x, 'pull']),
       ]
-      const stateOf = (x: Ref) => (x.state === 'closed' ? '✓' : x.blocked ? 'blocked' : x.state)
+      const login = s.kind === 'ready' ? s.login : null
+      const refStanding = (x: Ref, kind: RefKind): Standing | null =>
+        kind === 'pull' || x.state !== 'open'
+          ? null
+          : standing({ mine: login !== null && (x.assignees ?? []).includes(login), blocked: x.blocked === true, assignees: x.assignees ?? [] })
+      const endOf = (x: Ref, kind: RefKind) => {
+        const st = refStanding(x, kind)
+        return kind === 'pull' ? (x.state === 'merged' ? 'merged' : '') : st ? whoOf({ assignees: x.assignees ?? [] }, st) : ''
+      }
       const refNum = Math.max(0, ...refs.map(([x, kind]) => numberOf(x, kind).length))
-      const refState = Math.max(0, ...refs.map(([x]) => stateOf(x).length))
+      const refEnd = Math.max(0, ...refs.map(([x, kind]) => endOf(x, kind).length))
       const refLine = (key: string, label: string, x: Ref, kind: RefKind) => {
-        const state = stateOf(x)
         const done = x.state === 'closed'
-        const room = columns - KEY - refNum - 1 - 1 - refState
+        const st = refStanding(x, kind)
+        const mark: Mark = done ? CLOSED_MARK : st ? markOf(st, null) : { glyph: ' ' }
+        const end = endOf(x, kind)
+        const room = columns - KEY - 2 - refNum - 1 - (refEnd > 0 ? refEnd + 1 : 0)
         const row = (
           <Text wrap="truncate-end">
-            <Text color={done ? 'inactive' : kind === 'blocker' ? 'error' : 'suggestion'}>{numberOf(x, kind).padStart(refNum)}</Text>
-            <Text color={done ? 'inactive' : undefined}>{` ${fit(x.title, room).padEnd(room)} `}</Text>
-            <Text
-              color={
-                done ? 'inactive' : x.blocked ? undefined : x.state === 'open' ? (kind === 'blocker' ? 'error' : undefined) : x.state === 'merged' ? 'merged' : undefined
-              }
-              dimColor={!done && (x.blocked || (x.state !== 'open' && x.state !== 'merged'))}
-            >
-              {state.padStart(refState)}
-            </Text>
+            {markText(mark)}
+            <Text color={done ? 'inactive' : 'suggestion'}>{numberOf(x, kind).padStart(refNum)}</Text>
+            <Text color={done ? 'inactive' : undefined} dimColor={st === 'blocked'}>{` ${fit(x.title, room).padEnd(room)}`}</Text>
+            {refEnd > 0 ? (
+              <Text color={x.state === 'merged' ? 'merged' : undefined} dimColor={x.state !== 'merged'}>
+                {` ${end.padStart(refEnd)}`}
+              </Text>
+            ) : null}
           </Text>
         )
         return keyed(
@@ -1813,17 +1832,23 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         )
       })
 
-      // The heading wraps over two lines at most; a longer title ends the
-      // second in ….
-      const headText = `#${i.number} ${i.title}`
-      const wrapped = wrap(headText, columns)
-      const titleLines =
-        wrapped.length > 2 ? [wrapped[0] ?? '', fit(headText.slice((wrapped[0] ?? '').length).trimStart(), columns)] : wrapped
       // Assign and close, when What's Next may: setup's Actions step says so.
       const acts = s.kind === 'ready' ? s.actions : ({ kind: 'read-only', reason: 'scope' } as const)
       const canAct = acts.kind !== 'read-only'
       const mine = s.kind === 'ready' && i.assignees.includes(s.login)
       const closed = i.state === 'closed'
+      // Its mark before the number, as the lists draw it; closed a grey ✓.
+      // Whom it is with at the right of the first line, dim.
+      const ownStanding = closed ? null : standing({ mine, blocked: d.blocked === true, assignees: i.assignees })
+      const ownMark: Mark = ownStanding ? markOf(ownStanding, null) : CLOSED_MARK
+      const who = ownStanding ? whoOf({ assignees: i.assignees }, ownStanding) : ''
+      // The heading wraps over two lines at most, under the number; a longer
+      // title ends the second in ….
+      const headText = `#${i.number} ${i.title}`
+      const headWidth = columns - 2 - (who ? who.length + 1 : 0)
+      const wrapped = wrap(headText, headWidth)
+      const titleLines =
+        wrapped.length > 2 ? [wrapped[0] ?? '', fit(headText.slice((wrapped[0] ?? '').length).trimStart(), headWidth)] : wrapped
       actions = [
         ...(canAct
           ? [
@@ -1858,17 +1883,20 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               : `Assign and close need a token with ${t?.writeScope ?? 'write:issue'}: the setup guide's steps make one.`
       prompt = <Button key="prompt" label={say(ICON.work, 'Prompt')} hotkey="p" onPress={() => workOn($, i, { pane: e.requestId, issue: i })} />
 
-      // Closed: grey as a whole, number and title. Under it the state and who
-      // opened it when (DRAWING-issue.md, The issue detail's heading).
+      // Closed: grey as a whole, number and title; blocked: the title dim.
+      // Under it who opened it when (DRAWING-issue.md, The issue detail's
+      // heading). No state word: the mark says it.
       titleLines.forEach((tl, k) =>
         body.push(
           <Text key={`t-${k}`} bold wrap="truncate-end" color={closed ? 'inactive' : undefined}>
+            {k === 0 ? markText(ownMark) : '  '}
             {k === 0 && !closed ? <Text color="suggestion">{`#${i.number}`}</Text> : null}
-            {k === 0 && !closed ? tl.slice(`#${i.number}`.length) : tl}
+            <Text dimColor={ownStanding === 'blocked'}>{k === 0 && !closed ? tl.slice(`#${i.number}`.length) : tl}</Text>
+            {k === 0 && who ? <Text dimColor bold={false}>{`${' '.repeat(Math.max(1, headWidth - tl.length + 1))}${who}`}</Text> : null}
           </Text>,
         ),
       )
-      body.push(partsLine('state', 0, [{ text: i.state }, { text: `✎ ${age(i.created, now)} ${i.author}` }]))
+      body.push(partsLine('opened', 2, [{ text: `✎ ${age(i.created, now)} ${i.author}` }]))
       if (d.error) body.push(gapRow('gap-error'), ...lines('action-error', d.error, { color: 'error' }))
       if (facts.length > 0) body.push(gapRow('gap-facts'), ...facts)
 
@@ -2049,14 +2077,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const parts = issues ? forYou(tally(plain)) : []
       // The heading wraps over two lines at most; a longer title ends the
       // second in ….
-      const wrapped = wrap(shownMs.title, columns)
-      const titleLines = wrapped.length > 2 ? [wrapped[0] ?? '', fit(shownMs.title.slice((wrapped[0] ?? '').length).trimStart(), columns)] : wrapped
-      const when = shownMs.closedAt ? Math.round((now - Date.parse(shownMs.closedAt)) / 86400000) : null
-      const state = !isClosed
-        ? 'open'
-        : when === null
-          ? 'closed'
-          : `closed ${when === 0 ? 'today' : when === 1 ? 'yesterday' : `${when} days ago`}`
+      // Closed: ✓ in front, as the lists draw closed; open has no sign.
+      const headText = isClosed ? `✓ ${shownMs.title}` : shownMs.title
+      const wrapped = wrap(headText, columns)
+      const titleLines = wrapped.length > 2 ? [wrapped[0] ?? '', fit(headText.slice((wrapped[0] ?? '').length).trimStart(), columns)] : wrapped
+      const when = isClosed && shownMs.closedAt ? Math.round((now - Date.parse(shownMs.closedAt)) / 86400000) : null
+      const closedWhen = when === null ? null : when === 0 ? 'today' : when === 1 ? 'yesterday' : `${when} days ago`
       // All closed is amber while the milestone is still open: close it.
       const allClosed = shownMs.total > 0 && shownMs.closed === shownMs.total
       const progress: Part[] = [
@@ -2068,8 +2094,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const descLines = text === '' ? [] : wrap(text, columns)
       const descOpen = await read($, descriptionUnfolded)
       const descShown = descOpen || descLines.length <= FOLD_AT ? descLines.length : 3
-      // The title, its state under it, then its due date as a fact under
-      // Due, in the issue detail's gutter (DRAWING-issue.md, The issue
+      // The title, when it closed under it, then its due date as a fact
+      // under Due, in the issue detail's gutter (DRAWING-issue.md, The issue
       // detail's heading): the long form while open, short and dim once closed.
       const body: RenderChildren[] = [
         ...titleLines.map((tl, k) => (
@@ -2077,7 +2103,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             {tl}
           </Text>
         )),
-        partsLine('state', 0, [{ text: state }]),
+        ...(closedWhen ? [partsLine('state', 0, [{ text: closedWhen }])] : []),
       ]
       if (shownMs.due) {
         body.push(

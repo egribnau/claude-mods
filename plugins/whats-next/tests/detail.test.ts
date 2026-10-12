@@ -191,7 +191,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(all).not.toContain("What's next")
     for (const want of [
       '#29 Docs: config keys',
-      'open · ✎ 3w alice',
+      '✎ 3w alice',
       'Due        ',
       '14 Oct, in 5 days',
       'Milestone  ',
@@ -225,6 +225,9 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(order.every(k => all.includes(k))).toBe(true)
     expect(order.map(k => all.indexOf(k))).toEqual(order.map(k => all.indexOf(k)).sort((a, b) => a - b))
     expect(all.some(t => t.startsWith('opened '))).toBe(false)
+    // No state word: #29 waits on #24, its mark says so.
+    expect(all.some(t => t.trim() === 'open' || t.includes('open · '))).toBe(false)
+    expect(all.some(t => t.startsWith('⊘ #29 Docs: config keys'))).toBe(true)
     await expect(ui.find({ key: 'prompt' })).resolves.toBeDefined()
     await expect(ui.find({ key: 'open' })).resolves.toBeDefined()
   })
@@ -258,12 +261,13 @@ const FOLLOW: Answers = {
 type Found = { text: string; props: Record<string, unknown> }
 const found = async (ui: Ui) => (await ui.findAll({ type: 'Text' })) as unknown as Found[]
 
-test('an open blocker is red; a closed one is a grey ✓, not struck through; numbers share one column', TOKEN, async ($, on) => {
+test('an open blocker is blue after its mark; a closed one is a grey ✓, not struck through; numbers share one column', TOKEN, async ($, on) => {
   world(on, FULL)
   const ui = await opened($)
   const all = await found(ui)
   const num = (n: string) => all.find(t => t.text === n)
-  expect(num('#24')?.props.color).toBe('error')
+  expect(num('#24')?.props.color).toBe('suggestion')
+  expect(all.some(t => t.props.color === 'error' && t.text.startsWith('#'))).toBe(false)
   expect(num('#19')?.props.color).toBe('inactive')
   expect(num('#31')?.props.color).toBe('suggestion')
   const closed = all.find(t => t.text.startsWith(' Drop FORGEJO_TOKEN'))
@@ -283,13 +287,32 @@ test('a number shorter than the others sits at the right of the column', TOKEN, 
   expect((await texts(ui)).includes(' #7')).toBe(true)
 })
 
-test('an open blocker that is itself blocked says blocked, dim, its number still red', TOKEN, async ($, on) => {
+test('an open blocker that is itself blocked is ⊘ and dim, its number blue, no word', TOKEN, async ($, on) => {
   world(on, FOLLOW)
   const ui = await opened($)
   const all = await found(ui)
-  const word = all.find(t => t.text.trim() === 'blocked')
-  expect(word?.props.dimColor).toBe(true)
-  expect(all.find(t => t.text === '#24')?.props.color).toBe('error')
+  const at = all.findIndex(t => t.text === '#24')
+  expect(all[at - 1]?.text).toBe('⊘ ')
+  expect(all[at - 1]?.props.dimColor).toBe(true)
+  expect(all[at]?.props.color).toBe('suggestion')
+  expect(all[at + 1]?.props.dimColor).toBe(true)
+  expect(all.some(t => t.text.trim() === 'blocked')).toBe(false)
+})
+
+test('a blocker with someone on it is ◌, their name at the right; one of yours is a green ●', TOKEN, async ($, on) => {
+  world(on, {
+    ...FULL,
+    '/issues/29/dependencies': [
+      { number: 24, title: 'Settings screen rework', state: 'open', assignees: [{ login: 'anna' }] },
+      { number: 22, title: 'Settings schema v2', state: 'open', assignees: [{ login: 'alice' }] },
+    ],
+  })
+  const all = await found(await opened($))
+  const markOf = (n: string) => all[all.findIndex(t => t.text === n) - 1]
+  expect(markOf('#24')?.text).toBe('◌ ')
+  expect(all.some(t => t.text.trim() === 'anna' && t.props.dimColor === true)).toBe(true)
+  expect(markOf('#22')?.text).toBe('● ')
+  expect(markOf('#22')?.props.color).toBe('success')
 })
 
 test('a blocker in another repo is left out on Forgejo', TOKEN, async ($, on) => {
@@ -366,7 +389,7 @@ test('a passed milestone due date is red on its Milestone line', TOKEN, async ($
   expect(all.find(t => t.text === '⧗ 31 Oct')?.props.color).toBe('error')
 })
 
-test('the branch is plain, a commit sha dim and its age reads 2d ago; open under Blocks is plain', TOKEN, async ($, on) => {
+test('the branch is plain, a commit sha dim and its age reads 2d ago; what it blocks is ⊘', TOKEN, async ($, on) => {
   const clock = world(on, FULL)
   await clock.set(NOW)
   const all = await found(await opened($))
@@ -375,10 +398,9 @@ test('the branch is plain, a commit sha dim and its age reads 2d ago; open under
   expect(sha?.props.dimColor).toBe(true)
   expect(sha?.props.color).toBeUndefined()
   expect(all.find(t => t.text === ' 2d ago')?.props.dimColor).toBe(true)
-  // Under Blocks, #31 is open: the word plain, not green.
-  const open = all.filter(t => t.text.trim() === 'open')
-  expect(open.length).toBeGreaterThan(0)
-  expect(open.some(t => t.props.color === 'success')).toBe(false)
+  // Under Blocks, #31 waits on #29 while #29 is open: ⊘, no word.
+  expect(all[all.findIndex(t => t.text === '#31') - 1]?.text).toBe('⊘ ')
+  expect(all.some(t => t.text.trim() === 'open')).toBe(false)
 })
 
 test('the heading wraps over two lines at most; a longer title ends the second in …', TOKEN, async ($, on) => {
@@ -386,10 +408,10 @@ test('the heading wraps over two lines at most; a longer title ends the second i
     'Docs: config keys and the scopes each token needs on Forgejo, GitLab and GitHub, with examples for every host and every setting'
   world(on, { ...FULL, '/issues/29': { ...ISSUE, title } })
   const all = await texts(await opened($))
-  const at = all.findIndex(t => t.startsWith('#29 Docs: config keys'))
-  expect(at).toBeGreaterThan(-1)
-  const second = all.slice(at + 1).find(t => t !== '#29' && !t.startsWith('Docs:') && t.length > 0) ?? ''
-  expect(second.endsWith('…')).toBe(true)
+  expect(all.some(t => t.startsWith('⊘ #29 Docs: config keys'))).toBe(true)
+  // The second line starts under the number, after the mark's two columns.
+  const second = all.find(t => t.endsWith('…') && t.startsWith('  ')) ?? ''
+  expect(second.length).toBeGreaterThan(2)
   expect(second.length).toBeLessThanOrEqual(60)
   expect(all.some(t => t.includes('every setting'))).toBe(false)
 })
@@ -397,7 +419,7 @@ test('the heading wraps over two lines at most; a longer title ends the second i
 test('a closed issue\'s heading is grey as a whole, number and title', TOKEN, async ($, on) => {
   world(on, { ...FULL, '/issues/29': { ...ISSUE, state: 'closed' } })
   const all = await found(await opened($))
-  const heading = all.find(t => t.text.startsWith('#29 '))
+  const heading = all.find(t => t.text.startsWith('✓ #29 '))
   expect(heading?.props.color).toBe('inactive')
   expect(heading?.props.bold).toBe(true)
   // No blue number inside it.

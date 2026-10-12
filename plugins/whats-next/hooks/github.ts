@@ -197,7 +197,14 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       const found = await fetchAll<RawIssue>(`${api}/issues?state=all&labels=${encodeURIComponent(label)}`, 'epics')
       return found
         .filter(i => isIssue(i) && labelNames(i).some(l => l.toLowerCase() === label.toLowerCase()))
-        .map(i => ({ number: i.number, title: i.title, state: i.state === 'closed' ? 'closed' : 'open', milestone: i.milestone?.title ?? null, due: null }))
+        .map(i => ({
+          number: i.number,
+          title: i.title,
+          state: i.state === 'closed' ? 'closed' : 'open',
+          milestone: i.milestone?.title ?? null,
+          due: null,
+          assignees: (i.assignees ?? []).map(a => a.login),
+        }))
     },
 
     async members(n: number): Promise<number[] | null> {
@@ -302,19 +309,23 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
             .filter((c, k, all) => all.findIndex(d => d.sha === c.sha) === k)
             .reverse()
         : null
-      // Whether each open blocker is itself blocked by an open issue: from
-      // the count GitHub gives with it, else one request each; one that does
-      // not answer counts as not blocked.
-      const blockers = blockedBy
-        ? await Promise.all(
-            blockedBy.map(async d => {
-              if (d.state !== 'open') return toRef(d)
-              const count = d.issue_dependencies_summary?.blocked_by
-              const theirs = count === undefined ? ((await dependencies(d.number, 'blocked_by')) ?? []).filter(x => x.state === 'open').length : count
-              return { ...toRef(d), blocked: theirs > 0 }
-            }),
-          )
-        : null
+      // Whether an open issue it names is itself blocked by an open issue:
+      // from the count GitHub gives with it, else one request each; one that
+      // does not answer counts as not blocked. What it blocks waits on it
+      // while it is open: no need to ask.
+      const withBlocked = (all: RawDependency[] | null, waits: boolean) =>
+        all
+          ? Promise.all(
+              all.map(async d => {
+                if (d.state !== 'open') return toRef(d)
+                if (waits) return { ...toRef(d), blocked: true }
+                const count = d.issue_dependencies_summary?.blocked_by
+                const theirs = count === undefined ? ((await dependencies(d.number, 'blocked_by')) ?? []).filter(x => x.state === 'open').length : count
+                return { ...toRef(d), blocked: theirs > 0 }
+              }),
+            )
+          : null
+      const [blockers, blocks] = await Promise.all([withBlocked(blockedBy, false), withBlocked(blocking, i.state === 'open')])
       const commits: CommitRef[] | null = shas
         ? await Promise.all(
             shas.slice(0, 3).map(async c => {
@@ -337,7 +348,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         estimate: null,
         assignees: (i.assignees ?? []).map(a => a.login),
         blockedBy: blockers,
-        blocks: blocking?.map(toRef) ?? null,
+        blocks,
         pulls,
         commits,
         commentList: said ? said.map(c => ({ author: c.actor?.login ?? c.user?.login ?? 'someone', when: c.created_at, body: c.body ?? '' })) : null,
@@ -450,8 +461,9 @@ type RawDependency = {
   state: string
   repository?: { full_name: string }
   issue_dependencies_summary?: { blocked_by?: number } | null
+  assignees?: { login: string }[] | null
 }
-const toRef = (d: RawDependency): Ref => ({ number: d.number, title: d.title, state: d.state })
+const toRef = (d: RawDependency): Ref => ({ number: d.number, title: d.title, state: d.state, assignees: (d.assignees ?? []).map(a => a.login) })
 
 // How many open issues block each open issue, by the repo's API URL, from
 // the last list of open issues.

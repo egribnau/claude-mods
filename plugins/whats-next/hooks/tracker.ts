@@ -14,9 +14,9 @@ export type OpenIssue = IssueRow & { assignees: string[] }
 // A closed issue, as Last closed needs it: when it closed, and its milestone.
 export type Closed = { number: number; title: string; closed: string; milestone: string | null }
 
-// An issue with the Epic label, open or closed, with its milestone's title
-// and its own due date.
-export type EpicRow = { number: number; title: string; state: 'open' | 'closed'; milestone: string | null; due: string | null }
+// An issue with the Epic label, open or closed, with its milestone's title,
+// its own due date and whom it is assigned to.
+export type EpicRow = { number: number; title: string; state: 'open' | 'closed'; milestone: string | null; due: string | null; assignees?: string[] }
 
 // What setup's check found past the repo: the tracker's version as shown,
 // once it answered, and how far setup got.

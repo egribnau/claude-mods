@@ -4,7 +4,7 @@ import type { Epic, EpicChild } from '../types'
 // blocked. Yours wins over blocked: you know what holds it up.
 export type Standing = 'yours' | 'available' | 'withOthers' | 'blocked'
 
-export function standing(c: EpicChild): Standing {
+export function standing(c: Pick<EpicChild, 'mine' | 'blocked' | 'assignees'>): Standing {
   if (c.mine) return 'yours'
   if (c.blocked) return 'blocked'
   return c.assignees.length > 0 ? 'withOthers' : 'available'

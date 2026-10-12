@@ -104,7 +104,10 @@ export type Overview =
 // closed, or for a pull request also merged.
 // An issue or pull request a line names. `blocked`: an open blocker that is
 // itself blocked by an open issue; only asked for under Blocked by.
-export type Ref = { number: number; title: string; state: string; blocked?: boolean }
+// An issue or pull request another issue names. `assignees`: the logins an
+// issue is assigned to; `blocked`: an open issue waits on an open one of its
+// own. Both give its mark in the detail (DRAWING-issue.md, Detail lines).
+export type Ref = { number: number; title: string; state: string; blocked?: boolean; assignees?: string[] }
 
 export type CommitRef = { sha: string; message: string; when: string }
 
@@ -151,8 +154,9 @@ export type Detail =
   | { kind: 'idle' }
   | { kind: 'loading'; number: number }
   // `error`: why the last action on it was refused. `parent`: the issue it
-  // is a child of, and whether that is an epic; null for none.
-  | { kind: 'ok'; issue: IssueDetail; error?: string; parent?: (Ref & { epic: boolean }) | null }
+  // is a child of, and whether that is an epic; null for none. `blocked`:
+  // it waits on an open issue that is not its own child, for its mark.
+  | { kind: 'ok'; issue: IssueDetail; error?: string; parent?: (Ref & { epic: boolean }) | null; blocked?: boolean }
   | { kind: 'error'; number: number; message: string }
 
 // An open issue an epic depends on, as the Epics pane lists it. `mine`: it

@@ -684,13 +684,15 @@ test('issue: with dependencies on, what blocks it and what it blocks, this repo 
   // #9's count says it is blocked; #6 has none, so its blockers are asked:
   // only a closed one, so it is not.
   expect(d.blockedBy).toEqual([
-    { number: 9, title: 'Issue 9', state: 'open', blocked: true },
-    { number: 8, title: 'Issue 8', state: 'closed' },
-    { number: 6, title: 'Issue 6', state: 'open', blocked: false },
+    { number: 9, title: 'Issue 9', state: 'open', blocked: true, assignees: [] },
+    { number: 8, title: 'Issue 8', state: 'closed', assignees: [] },
+    { number: 6, title: 'Issue 6', state: 'open', blocked: false, assignees: [] },
   ])
   expect(asked.filter(a => a.url.includes('/issues/9/dependencies')).length).toBe(0)
   expect(asked.filter(a => a.url.includes('/issues/6/dependencies/blocked_by')).length).toBe(1)
-  expect(d.blocks).toEqual([{ number: 21, title: 'Issue 21', state: 'open' }])
+  // #21 waits on #15 while #15 is open: blocked, and nothing asked.
+  expect(d.blocks).toEqual([{ number: 21, title: 'Issue 21', state: 'open', blocked: true, assignees: [] }])
+  expect(asked.some(a => a.url.includes('/issues/21/'))).toBe(false)
 
   asked.length = 0
   const off = await t.issue(15, { time: false, deps: false, epics: false })
@@ -769,8 +771,8 @@ test('epics: open and closed issues with the Epic label, any case, pull requests
   ])
   const found = await github(fakeSend(route, asked), R, 't', null, 'Epic').epics()
   expect(found).toEqual([
-    { number: 20, title: 'Radar sweep', state: 'open', milestone: 'v1.2', due: null },
-    { number: 19, title: 'Old sweep', state: 'closed', milestone: null, due: null },
+    { number: 20, title: 'Radar sweep', state: 'open', milestone: 'v1.2', due: null, assignees: [] },
+    { number: 19, title: 'Old sweep', state: 'closed', milestone: null, due: null, assignees: [] },
   ])
   expect(asked.map(a => a.url)).toEqual([`${API}/issues?state=all&labels=Epic&per_page=100`])
 })

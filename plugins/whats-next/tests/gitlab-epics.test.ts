@@ -314,9 +314,9 @@ test('epics: the issues carrying the Epic label, compared without case, by iid',
   const got = await gitlab(fakeSend(route({ epics: answer }), asked), r, 'glpat-x', null, 'Epic').epics()
 
   expect(got).toEqual([
-    { number: 20, title: 'Rate limits', state: 'open', milestone: 'v1.2', due: null },
-    { number: 3, title: 'Project setup', state: 'closed', milestone: 'v1.2', due: null },
-    { number: 71, title: 'Ideas', state: 'open', milestone: null, due: null },
+    { number: 20, title: 'Rate limits', state: 'open', milestone: 'v1.2', due: null, assignees: [] },
+    { number: 3, title: 'Project setup', state: 'closed', milestone: 'v1.2', due: null, assignees: [] },
+    { number: 71, title: 'Ideas', state: 'open', milestone: null, due: null, assignees: [] },
   ])
   const u = new URL(asked[0]?.url ?? '')
   expect(u.pathname).toBe(`${path}/issues`)
@@ -559,10 +559,11 @@ test('issue: with deps, a fourth request for the links gives Blocked by and Bloc
   expect(asked.map(a => a.url)).toContain(`${project}/issues/33/links`)
   expect(asked.map(a => a.url)).toContain(`${project}/issues/37/links`)
   expect(got.blockedBy).toEqual([
-    { number: 37, title: 'Token refresh on 401', state: 'open', blocked: false },
-    { number: 9, title: 'Old limits', state: 'closed' },
+    { number: 37, title: 'Token refresh on 401', state: 'open', blocked: false, assignees: [] },
+    { number: 9, title: 'Old limits', state: 'closed', assignees: [] },
   ])
-  expect(got.blocks).toEqual([{ number: 51, title: 'Rate limit settings page', state: 'open' }])
+  // #51 waits on #33 while #33 is open: blocked, and nothing asked.
+  expect(got.blocks).toEqual([{ number: 51, title: 'Rate limit settings page', state: 'open', blocked: true, assignees: [] }])
 })
 
 test('issue: with deps, the links failing leaves both out and the issue loads', async () => {

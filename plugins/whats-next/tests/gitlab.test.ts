@@ -530,7 +530,7 @@ test('epics, blockers and children ask GitLab; links refused leave blockers and 
   const asked: Asked[] = []
   const epic = { ...issue(20, '2026-09-01T00:00:00.000Z', { labels: ['Epic'] }), due_date: '2026-10-20' }
   const t = gitlab(fakeSend(listRoute(ISSUES, [[epic]]), asked), R, 'glpat-x', null)
-  expect(await t.epics()).toEqual([{ number: 20, title: 'Issue 20', state: 'open', milestone: null, due: '2026-10-20' }])
+  expect(await t.epics()).toEqual([{ number: 20, title: 'Issue 20', state: 'open', milestone: null, due: '2026-10-20', assignees: [] }])
   expect(new URL(asked[0]?.url ?? '').searchParams.get('labels')).toBe('epic')
   expect(await t.blockers(12)).toBe(null)
   expect(await t.children(20, 'alice')).toBe(null)
@@ -624,10 +624,10 @@ test('issue: with dependencies on, a fourth request for its links: what blocks i
   )
   const got = await t.issue(12, { time: true, deps: true, epics: true })
   expect(got.blockedBy).toEqual([
-    { number: 31, title: 'Issue 31', state: 'open', blocked: true },
-    { number: 32, title: 'Issue 32', state: 'closed' },
+    { number: 31, title: 'Issue 31', state: 'open', blocked: true, assignees: [] },
+    { number: 32, title: 'Issue 32', state: 'closed', assignees: [] },
   ])
-  expect(got.blocks).toEqual([{ number: 33, title: 'Issue 33', state: 'open' }])
+  expect(got.blocks).toEqual([{ number: 33, title: 'Issue 33', state: 'open', blocked: true, assignees: [] }])
   expect(asked.map(a => a.url)).toContain(`${PROJECT}/issues/12/links`)
   // A fifth for the open blocker's own links; the closed one is not asked.
   expect(asked.map(a => a.url)).toContain(`${PROJECT}/issues/31/links`)
@@ -655,8 +655,8 @@ test('issue: links whose URL names a work item, as newer GitLab answers, count a
     null,
   )
   const got = await t.issue(12, { time: true, deps: true, epics: true })
-  expect(got.blockedBy).toEqual([{ number: 32, title: 'Issue 32', state: 'closed' }])
-  expect(got.blocks).toEqual([{ number: 33, title: 'Issue 33', state: 'open' }])
+  expect(got.blockedBy).toEqual([{ number: 32, title: 'Issue 32', state: 'closed', assignees: [] }])
+  expect(got.blocks).toEqual([{ number: 33, title: 'Issue 33', state: 'open', blocked: true, assignees: [] }])
 })
 
 const note = (author: string, created: string, body: string, system = false) => ({

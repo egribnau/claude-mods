@@ -197,7 +197,14 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
       const found = await fetchAll<RawEpic>(`${api}/issues?state=all&type=issues&labels=${encodeURIComponent(label)}`, 'epics')
       return found
         .filter(i => (i.labels ?? []).some(l => l.name === label))
-        .map(i => ({ number: i.number, title: i.title, state: i.state === 'closed' ? 'closed' : 'open', milestone: i.milestone?.title ?? null, due: i.due_date ?? null }))
+        .map(i => ({
+          number: i.number,
+          title: i.title,
+          state: i.state === 'closed' ? 'closed' : 'open',
+          milestone: i.milestone?.title ?? null,
+          due: i.due_date ?? null,
+          assignees: (i.assignees ?? []).map(a => a.login),
+        }))
     },
 
     async blockers(n: number): Promise<number[] | null> {
@@ -369,6 +376,7 @@ type RawRef = {
   state: string
   pull_request?: { merged?: boolean } | null
   repository?: { full_name: string } | null
+  assignees?: { login: string }[] | null
 }
 type RawIssue = RawRef & {
   html_url: string
@@ -381,7 +389,6 @@ type RawIssue = RawRef & {
   due_date: string | null
   ref: string | null
   labels: { name: string; color: string }[] | null
-  assignees?: { login: string }[] | null
 }
 type RawComment = { user: RawUser; created_at: string; body: string | null }
 type RawTimeline = {
@@ -412,6 +419,8 @@ const ref = (r: RawRef): Ref => ({
   title: r.title,
   state: r.pull_request?.merged ? 'merged' : r.state,
 })
+// An issue another names, with whom it is assigned to.
+const issueRef = (r: RawRef): Ref => ({ ...ref(r), assignees: (r.assignees ?? []).map(a => a.login) })
 
 // A commit message as the timeline holds it: a link around the message,
 // HTML-escaped. Its first line, as text.
@@ -466,18 +475,21 @@ async function loadIssue(get: Get, slug: string, n: number, features: Features):
   // Only this repo's issues: What's Next shows this repo's numbers only.
   const ours = (got: Got | null) =>
     list<RawRef>(got)?.filter(d => !d.repository || d.repository.full_name.toLowerCase() === slug.toLowerCase()) ?? null
-  const blockers = ours(deps)
-  // Whether each open blocker is itself blocked by an open issue, one
-  // request each; one that does not answer counts as not blocked.
-  const blockedBy = blockers
-    ? await Promise.all(
-        blockers.map(async d => {
-          if (d.state !== 'open') return ref(d)
-          const theirs = list<RawRef>(await get(`/issues/${d.number}/dependencies`)) ?? []
-          return { ...ref(d), blocked: theirs.some(x => x.state === 'open') }
-        }),
-      )
-    : null
+  // Whether an open issue it names is itself blocked by an open issue, one
+  // request each; one that does not answer counts as not blocked. What it
+  // blocks waits on it while it is open: no need to ask.
+  const withBlocked = (all: RawRef[] | null, waits: boolean) =>
+    all
+      ? Promise.all(
+          all.map(async d => {
+            if (d.state !== 'open') return issueRef(d)
+            if (waits) return { ...issueRef(d), blocked: true }
+            const theirs = list<RawRef>(await get(`/issues/${d.number}/dependencies`)) ?? []
+            return { ...issueRef(d), blocked: theirs.some(x => x.state === 'open') }
+          }),
+        )
+      : null
+  const [blockedBy, blocking] = await Promise.all([withBlocked(ours(deps), false), withBlocked(ours(blocks), i.state === 'open')])
 
   return {
     number: i.number,
@@ -497,7 +509,7 @@ async function loadIssue(get: Get, slug: string, n: number, features: Features):
     labels: (i.labels ?? []).map(l => ({ name: l.name, color: l.color })),
     assignees: (i.assignees ?? []).map(a => a.login),
     blockedBy,
-    blocks: ours(blocks)?.map(ref) ?? null,
+    blocks: blocking,
     pulls,
     commits,
     commentList: said ? said.map(c => ({ author: c.user?.login ?? 'someone', when: c.created_at, body: c.body ?? '' })) : null,

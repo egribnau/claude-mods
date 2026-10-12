@@ -661,9 +661,11 @@ test('gitlab.com detail: time logged of estimated, the comments and the merge re
   // Merge requests under GitLab's word, each !n: #n there is an issue.
   expect(all.some(t => t.startsWith('MRs'))).toBe(true)
   expect(all.some(t => t.startsWith('PRs'))).toBe(false)
-  for (const want of ['!61 ', 'Document the token setting', ' merged', '!63 ', 'List the scopes', ' open', '!64 ', 'Dropped idea']) {
+  for (const want of ['!61', 'Document the token setting', ' merged', '!63', 'List the scopes', '!64', 'Dropped idea']) {
     expect(all.some(t => t === want || t.includes(want))).toBe(true)
   }
+  // An open merge request says nothing of its state: marks are for issues.
+  expect(all.some(t => t.trim() === 'open')).toBe(false)
   // The merge requests' global ids are never shown.
   expect(all.some(t => /31000006\d/.test(t))).toBe(false)
 })

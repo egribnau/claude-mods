@@ -239,7 +239,14 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       found.forEach(remember)
       return found
         .filter(i => isEpic(labels(i).map(l => l.name)))
-        .map(i => ({ number: i.iid, title: i.title, state: i.state === 'opened' ? 'open' : 'closed', milestone: i.milestone?.title ?? null, due: i.due_date ?? null }))
+        .map(i => ({
+          number: i.iid,
+          title: i.title,
+          state: i.state === 'opened' ? 'open' : 'closed',
+          milestone: i.milestone?.title ?? null,
+          due: i.due_date ?? null,
+          assignees: (i.assignees ?? []).map(a => a.username),
+        }))
     },
 
     async blockers(n: number): Promise<number[] | null> {
@@ -321,22 +328,26 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       ])
       const ours = Array.isArray(linked) ? linked.filter(l => inProject(l.web_url)) : null
       ours?.forEach(remember)
-      const of = (kind: RawLink['link_type']) => ours?.filter(l => l.link_type === kind).map(toRef) ?? null
+      const of = (kind: RawLink['link_type']) => ours?.filter(l => l.link_type === kind).map(linkRef) ?? null
       if (!res.ok) throw new Error(`#${n}: HTTP ${res.status}`)
       const i = JSON.parse(res.text) as RawIssue
       remember(i)
-      // Whether each open blocker is itself blocked by an open issue here,
-      // one request each; one that does not answer counts as not blocked.
-      const blockers = of('is_blocked_by')
-      const blockedBy = blockers
-        ? await Promise.all(
-            blockers.map(async b =>
-              b.state === 'open'
-                ? { ...b, blocked: ((await links(b.number, 'is_blocked_by')) ?? []).some(l => l.state === 'opened') }
-                : b,
-            ),
-          )
-        : null
+      // Whether an open issue it names is itself blocked by an open issue
+      // here, one request each; one that does not answer counts as not
+      // blocked. What it blocks waits on it while it is open: no need to ask.
+      const withBlocked = (all: Ref[] | null, waits: boolean) =>
+        all
+          ? Promise.all(
+              all.map(async b =>
+                b.state !== 'open'
+                  ? b
+                  : waits
+                    ? { ...b, blocked: true }
+                    : { ...b, blocked: ((await links(b.number, 'is_blocked_by')) ?? []).some(l => l.state === 'opened') },
+              ),
+            )
+          : null
+      const [blockedBy, blocking] = await Promise.all([withBlocked(of('is_blocked_by'), false), withBlocked(of('blocks'), i.state === 'opened')])
       // GitLab's own notes (assigned, closed, labels) are no comments.
       const said = Array.isArray(notes) ? notes.filter(c => c.system !== true) : null
       return {
@@ -357,7 +368,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
         labels: labels(i),
         assignees: (i.assignees ?? []).map(a => a.username),
         blockedBy,
-        blocks: of('blocks'),
+        blocks: blocking,
         pulls: Array.isArray(merges) ? merges.map(toRef) : null,
         commits: null,
         commentList: said ? said.map(c => ({ author: c.author?.username ?? 'someone', when: c.created_at, body: c.body ?? '' })) : null,
@@ -476,6 +487,8 @@ type RawNote = { author?: { username: string } | null; created_at: string; body:
 type RawRef = { iid: number; title: string; state: string }
 
 const toRef = (m: RawRef): Ref => ({ number: m.iid, title: m.title, state: m.state === 'opened' ? 'open' : m.state })
+// An issue linked to another, with whom it is assigned to.
+const linkRef = (l: RawLink): Ref => ({ ...toRef(l), assignees: (l.assignees ?? []).map(a => a.username) })
 
 // Whether issues can block others in each project, by its API URL: what
 // check found, false until it did.

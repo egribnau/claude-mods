@@ -51,9 +51,9 @@ it is with.
 | What's next, the blocked at the end of the Queue | `⊘` |
 | Epics, a child | `●` `⊘` `◌` `○`, or `⊕`/`⊖` coloured so when it has children |
 | Milestones and its detail, an issue under a milestone or an epic | the same |
-| Issue detail, the heading and Blocked by | the same, `✓` when closed (proposal) |
-| Issue detail, Blocks | `⊘`, or `●` when yours; `✓` when closed (proposal) |
-| Issue detail, Epic | the same, its children not counted as what blocks it; `✓` when closed (proposal) |
+| Issue detail, the heading and Blocked by | the same, `✓` when closed (#72, built 0.69.0) |
+| Issue detail, Blocks | `⊘`, or `●` when yours; `✓` when closed (#72, built 0.69.0) |
+| Issue detail, Epic | the same, its children not counted as what blocks it; `✓` when closed (#72, built 0.69.0) |
 
 ## Number and title
 
@@ -167,13 +167,13 @@ what, `duePart` the due date before it; `partsLine` draws it, one text.
 The title, with its mark in front of the number as the lists draw it
 (Marks), then one line under it: who opened it and when, as the facts line
 says it. A closed issue's mark is `✓`, the heading grey as a whole. No
-state word: `open` is said by the mark, as everywhere else (proposal; 0.68.8
+state word: `open` is said by the mark, as everywhere else (#72, built 0.69.0; 0.68.8
 had `open` or `closed` before the opened block, #62 decided 1a which blocks
 go on the line, not that the state is a word).
 
 | # | Block | Shown when | Drawn as |
 |---|---|---|---|
-| 0 | mark | always, before the number | `●` `⊘` `◌` `○` as Marks, an epic too, its own children not counted as what blocks it; `✓` grey when closed (proposal) |
+| 0 | mark | always, before the number | `●` `⊘` `◌` `○` as Marks, an epic too, its own children not counted as what blocks it; `✓` grey when closed (#72, built 0.69.0) |
 | 1 | opened | always | `✎ 3w jdoe`: the pencil, the age, who opened it; dim |
 
 Not on the line: the milestone, which is a fact under its name,
@@ -184,7 +184,7 @@ the comments counts; when it was updated, which the newest comment shows.
 The milestone detail's heading reads the same: an open milestone has no
 mark and no line under its title; a closed one is `✓` before its title,
 grey, and under it when it closed (`3 days ago`) where the forge says
-(proposal; 0.68.8 had `open`, or `closed 3 days ago`). Its due date is a
+(#72, built 0.69.0; 0.68.8 had `open`, or `closed 3 days ago`). Its due date is a
 fact under the key `Due`, in the same 11-column gutter (#62, built 0.68.0,
 decided 6). A milestone has no author, so no `✎`.
 
@@ -225,7 +225,7 @@ line (#62, built 0.68.0, decided 3c). One number
 column for the three, as wide as the longest number there, numbers at its
 right, so the titles start in one column. An issue's line has its mark
 before the number, as the lists draw it (Marks), and no state word: the
-mark says it (proposal; 0.68.8 had `open` and `blocked` at the right, and
+mark says it (#72, built 0.69.0; 0.68.8 had `open` and `blocked` at the right, and
 a red number for Blocked by).
 
 | Line | Mark | Number | At the right |

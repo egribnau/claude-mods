@@ -12,7 +12,7 @@ or colour.
 
 Words carry the state; colour and the mark repeat it, never replace it.
 Two exceptions: closed is the mark `✓` alone, and an open issue is its
-mark alone (`●` `⊘` `◌` `○`), never the word `open` (proposal). The Icons setting changes
+mark alone (`●` `⊘` `◌` `○`), never the word `open` (#72, built 0.69.0). The Icons setting changes
 button labels only, never marks or states; the menu's `☰` and Back's `←`
 are the same with Icons on and off (The menu).
 
