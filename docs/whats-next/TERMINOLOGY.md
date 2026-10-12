@@ -63,6 +63,7 @@ free one is blocked.
 | for-you line | What there is for you: how many are yours, available, with others and blocked, each said by its mark and count. |
 | bottom line | The last line of a pane. |
 | menu | `☰` at the right of a pane's top row: what can be done there, each with its hotkey (#62, built 0.68.0). |
+| help page | The page that says what each sign and colour means, the same in every pane; shown in place of the list or detail, left with Back (#63, built 0.70.0). |
 
 ## Actions
 
@@ -74,6 +75,7 @@ free one is blocked.
 | Assign Me, Unassign Me | Adds or removes only you as assignee. |
 | Close, Reopen | Closes or reopens the issue or milestone. |
 | Open in Browser | Opens the issue's or milestone's page on the forge. |
+| Help | Opens the help page; `/next help` opens it in What's next (#63, built 0.70.0). |
 
 ## Setup
 

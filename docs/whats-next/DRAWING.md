@@ -23,7 +23,7 @@ are the same with Icons on and off (The menu).
 | blue | an issue number: "this is an issue" |
 | green | yours: the mark of an issue of yours (`●`, or `⊕`/`⊖` when it folds), `● n` on a for-you line, `n yours` on a bottom line; and finished: the filled cells of a bar |
 | amber | a warning: due within 7 days, `all closed` on an epic or milestone still open |
-| red | holds something up: a Blocked by number while open, a due date passed, a refusal |
+| red | something wrong: a due date passed, a refusal or an error from the forge (a Blocked by number is blue since #72) |
 | grey | closed, and nothing else |
 | purple | a merged pull request |
 | dim | facts under a row, counts, keys of a detail, a blocked row's mark and title; never closed |
@@ -250,7 +250,9 @@ Every pane's top row ends in `[ ☰ ]`, the menu: what can be done there,
 one line each, its word and its hotkey, opened below it as the milestone
 filter opens its list (#62, built 0.68.0, decided 7). Refresh is in it in
 every pane, so the top row holds no Refresh button of its own; in a list
-it is the menu's only line until the pane has more to do. The issue
+it and Help are the menu's only lines until the pane has more to do.
+Help (hotkey `h`) is its last line in every pane and view but the help
+page itself (The help page). The issue
 detail keeps `[ Prompt ]` (hotkey `p`) as a button of its own, on the
 top row just before `☰` (#62, built 0.68.0, decided 7b and 7c); Assign Me or
 Unassign Me, Close or Reopen, Open in Browser and Refresh go in the
@@ -275,7 +277,7 @@ by `overlay`, and `hotkeys` for the hidden ones.
 Buttons and the lines of the menu name an action in Title Case: every
 word capitalised but a short one inside (in, to, on): `Prompt`,
 `Assign Me`, `Unassign Me`, `Open in Browser`, `Close`, `Reopen`,
-`Refresh` (#62, built 0.68.0, decided 7d). Section names, rules and states
+`Refresh`, `Help` (#62, built 0.68.0, decided 7d). Section names, rules and states
 keep their own case.
 
 `☰` (U+2630, plain Unicode, one cell) with Icons on and off, as everyone
@@ -284,6 +286,35 @@ knows it and the menu says what is in it.
 Back, at the left of a detail's top row, is `[ ← ]` alone, in every
 detail, with Icons on and off: not `← Milestones` or `← #24` (#62, built 0.68.0, decided 7a). Its hotkey stays `b`. These two are the buttons
 with a sign and no word when Icons is off.
+
+## The help page
+
+One page that says what each sign and colour means, the same page in
+every pane (#63, built 0.70.0, decided 4). It opens in place of what the pane shows,
+a list or a detail, as a detail does, and Back (`[ ← ]`, `b`) returns
+to just that (decided 1). It opens from Help in every pane's menu
+(hotkey `h`; `?` is no hotkey the engine takes), and `/next help` opens
+What's next on it (decided 2). Its top row is `[ ← ]` and `[ ☰ ]`, the
+menu holding Refresh; it scrolls as a detail does (A detail scrolls).
+
+Its sections, each under a rule, in this order (decided 3a): How an issue
+stands for you, Rows that fold, Under an issue, Counts, Colours,
+Buttons. No section for the words that stand alone (`all closed`,
+`children unknown`): they say what they mean (#63, 0.70.2). A line is the sign, drawn as the panes draw
+it, in its own colour, in a gutter of 20 columns, then its words, plain
+(decided 3b): the term from TERMINOLOGY.md, then after `: ` what it
+means, `yours: assigned to you`; where TERMINOLOGY.md has no term, what
+the sign shows (decided 3c). Words too long for the pane wrap under
+themselves, the gutter left empty, never cut (decided 3d).
+
+A new sign or colour joins the help page with the
+place that draws it. The page is a table in plugins/whats-next/hooks/help.ts,
+its signs drawn by the panes' own helpers (`markOf`, `dueDate`, `barText`):
+a colour cannot drift from the panes, only words. tests/help.test.ts checks
+that every glyph `markOf` draws and every term of How an issue stands for
+you is on it (decided 5).
+
+Drawn by: `helpPage`, in `detailFrame`.
 
 ## Words for each state
 
