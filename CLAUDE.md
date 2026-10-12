@@ -17,6 +17,10 @@ there. Notes for working on a mod live in `docs/<name>/`.
 - Commit messages carry no `Claude-Session:` line: the repo is mirrored
   publicly and those links open only for the maintainer.
   `Co-Authored-By:` stays.
+- The repo is public: tests, docs, commit messages and the README name no
+  real host, repo, person or path of the maintainer (use `git.example.org`,
+  `boats/radar`, `alice`, `jdoe`). The author name in the manifests and the
+  copyright line are the only exceptions.
 - No em-dashes in anything written; commas and periods instead.
 
 ## Mods
