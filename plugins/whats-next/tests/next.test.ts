@@ -198,9 +198,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '#33 ',
       'Issue 33',
       '      ',
-      '⊘ #37 · ✎ 4w',
-      '⊘ ',
-      '#37',
+      '⊘ 1 · ✎ 4w',
+      '⊘ 1',
       ' · ',
       '✎ 4w',
       '─'.repeat(50),
@@ -229,9 +228,9 @@ test('the mark says how a row stands for you; Next is bold; a blocked row dims i
   expect(all.find(t => t.text === '#33 ')?.props.color).toBe('suggestion')
   expect(all.find(t => t.text === 'Issue 33')?.props.dimColor).toBe(true)
   expect(all.find(t => t.text === '○ #29 Issue 29')?.props.dimColor).toBeUndefined()
-  // What blocks it: the numbers blue, the words dim.
-  expect(all.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
-  expect(all.find(t => t.text === '#37')?.props.color).toBe('suggestion')
+  // What blocks it: a count, dim, as unblocks; which ones, the detail.
+  expect(all.find(t => t.text === '⊘ 1')?.props.dimColor).toBe(true)
+  expect(all.some(t => t.text === '#37')).toBe(false)
 })
 
 type Found = { key: string; props: Record<string, unknown> }
@@ -288,12 +287,12 @@ test('the Queue holds 10 checked issues, a blocked one at the bottom, the rest c
 
 test('a second line too long for the pane is cut at its end, its indent kept', TOKEN, async ($, on) => {
   world(on, {
-    open: [[issue(15, '2026-09-01T09:00:00Z'), issue(26, '2026-09-02T09:00:00Z')]],
+    open: [[issue(15, '2026-09-01T09:00:00Z'), issue(26, '2026-09-02T09:00:00Z', { labels: ['documentation', 'enhancement', 'good first issue', 'help wanted'] })]],
     deps: { 26: [20, 21, 22, 23, 24, 25] },
   })
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await texts(ui)).some(t => t.startsWith('⊘ #20, #21, #22, #23, #24, #25'))).toBe(true)
+  expect((await texts(ui)).some(t => t.startsWith('⊘ 6 · documentation, enhancement'))).toBe(true)
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
   const indents = boxes.filter(b => b.key === 'indent')
   expect(indents.length).toBeGreaterThan(0)
@@ -313,7 +312,7 @@ test('everything blocked: Nothing available, and what it waits on', TOKEN, async
   expect(all).toContain('Nothing available')
   expect(all).toContain('#33, #34, #37 wait on #35, #37')
   expect(all).toContain(rule('Queue'))
-  expect(all).toContain('⊘ #37, #35 · ✎ 3w')
+  expect(all).toContain('⊘ 2 · ✎ 3w')
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 0 in progress, nothing available." }))
 })
 
@@ -644,7 +643,7 @@ test('the facts line: what blocks it, what it unblocks, its due date, milestone,
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
   const all = found.map(t => t.text)
-  expect(all).toContain('⊘ #37 · ⧗ 2 Oct · v1.2 · docs · ✎ 4w')
+  expect(all).toContain('⊘ 1 · ⧗ 2 Oct · v1.2 · docs · ✎ 4w')
   expect(all).toContain('⧗ 14 Oct · v1.2 · bug · ✎ 3w')
   // #33 waits on #37: ↦ 1, dim, before its due date.
   expect(all).toContain('↦ 1 · ⧗ 30 Nov · ✎ 7d')
@@ -656,9 +655,9 @@ test('the facts line: what blocks it, what it unblocks, its due date, milestone,
   expect(found.find(t => t.text === '⧗ 2 Oct')?.props.color).toBe('error')
   expect(found.find(t => t.text === '⧗ 14 Oct')?.props.color).toBe('warning')
   expect(found.find(t => t.text === '⧗ 30 Nov')?.props.dimColor).toBe(true)
-  // ⊘ dim, the number blue; the age dim.
-  expect(found.find(t => t.text === '⊘ ')?.props.dimColor).toBe(true)
-  expect(found.find(t => t.text === '#37')?.props.color).toBe('suggestion')
+  // ⊘ and the count dim, as ↦; the age dim.
+  expect(found.find(t => t.text === '⊘ 1')?.props.dimColor).toBe(true)
+  expect(found.some(t => t.text === '#37')).toBe(false)
   expect(found.find(t => t.text === '✎ 4w')?.props.dimColor).toBe(true)
 })
 

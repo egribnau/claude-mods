@@ -376,7 +376,7 @@ test('unfolded, a milestone lists its open issues as epic children are, then how
   const rows = t.filter(x => /^ {2}[●○◌⊘] #\d/.test(x))
   expect(rows.map(x => x.slice(2, 6))).toEqual(['● #3', '○ #3', '◌ #3', '⊘ #4'])
   expect(t).toContain('jdoe')
-  expect(t.some(x => x.startsWith('⊘ #33 · '))).toBe(true)
+  expect(t.some(x => x.startsWith('⊘ 1 · '))).toBe(true)
   expect(t).toContain('  ✓ 9 closed')
   // The milestone is left out of the facts under each row.
   expect(t).not.toContain('GitHub')

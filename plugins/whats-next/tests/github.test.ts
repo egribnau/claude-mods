@@ -722,7 +722,8 @@ test('github.com: an issue with an open blocker waits, the next free one is Next
 
   expect(all).toContain('○ #21 Issue 21')
   expect(all).toContain('⊘ #14 Issue 14')
-  expect(all.some(t => t.includes('#9'))).toBe(true)
+  // What blocks it, counted: #9.
+  expect(all.some(t => t.startsWith('⊘ 1'))).toBe(true)
   // #23, after Next, waits too, at the bottom of the Queue.
   expect(all).toContain('⊘ #23 Issue 23')
   expect(all.indexOf('⊘ #23 Issue 23')).toBeGreaterThan(all.indexOf('○ #22 Issue 22'))

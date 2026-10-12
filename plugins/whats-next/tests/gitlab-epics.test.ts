@@ -791,7 +791,7 @@ test("GitLab EE: an issue blocked by an is_blocked_by link waits in What's next"
   expect(all).toContain(rule('Next'))
   expect(all).toContain('○ #29 Settings screen rework')
   expect(all).toContain('⊘ #33 Issue 33')
-  expect(all.some(t => t.startsWith('⊘ #29'))).toBe(true)
+  expect(all.some(t => t.startsWith('⊘ 1'))).toBe(true)
   expect(linkPaths(asked)).toContain('/api/v4/projects/boats%2Fradar/issues/33/links')
 })
 
@@ -802,7 +802,7 @@ test('GitLab EE: the blocked child shows blocked in Epics', GL, async ($, on) =>
   await epics.press({ key: 'fold-20' })
   const all = await texts(epics)
   expect(all).toContain('  ⊘ #33 Issue 33')
-  expect(all.some(t => t.startsWith('⊘ #29'))).toBe(true)
+  expect(all.some(t => t.startsWith('⊘ 1'))).toBe(true)
 })
 
 test("GitLab EE: the blocked issue's detail lists what blocks it", GL, async ($, on) => {

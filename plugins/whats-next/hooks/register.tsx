@@ -975,6 +975,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Text>
       ),
     ])
+  // How many open issues block an issue, and how many wait on it, on its
+  // facts line: each a count, dim; which ones, the issue detail
+  // (DRAWING-issue.md, The facts line). ↦: the bar this issue, the arrow
+  // what it opens.
+  const blockedPart = (n: number): Part => ({ text: `⊘ ${n}` })
+  const unblocksPart = (n: number): Part => ({ text: `↦ ${n}` })
   // A due date as one part of a line: none where there is no due date, so
   // a line never starts with ` · `.
   const duePart = (key: string, iso: string | null, now: number, o: DueShown): Part[] =>
@@ -1268,29 +1274,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const lead = ' '.repeat(o.lead ?? 0)
     const dim = o.standing === 'blocked'
     const opened: Part[] = i.created ? [{ text: `✎ ${age(i.created, today)}` }] : []
-    // What blocks it: ⊘ dim, its numbers blue, as issue numbers are.
-    const blockers = (by: number[]): Part => ({
-      text: `⊘ ${by.map(n => `#${n}`).join(', ')}`,
-      node: [
-        <Text key="by" dimColor>
-          {'⊘ '}
-        </Text>,
-        ...by.flatMap((n, k) => [
-          ...(k > 0 ? [<Text key={`by-sep-${k}`} dimColor>{', '}</Text>] : []),
-          <Text key={`by-${n}`} color="suggestion">
-            {`#${n}`}
-          </Text>,
-        ]),
-      ],
-    })
     const shownMilestone = !o.noMilestone && i.milestone !== null && pk?.pick !== `m:${i.milestone}`
     // The facts line's recipe (DRAWING-issue.md, The facts line).
     const facts: Part[] = o.note
       ? [{ text: o.note }]
       : [
-          ...(o.blockedBy && o.blockedBy.length > 0 ? [blockers(o.blockedBy)] : []),
-          // How many open issues wait on it: ↦, the bar this issue, the arrow what it opens.
-          ...(waiting(i.number) > 0 ? [{ text: `↦ ${waiting(i.number)}` }] : []),
+          ...(o.blockedBy && o.blockedBy.length > 0 ? [blockedPart(o.blockedBy.length)] : []),
+          ...(waiting(i.number) > 0 ? [unblocksPart(waiting(i.number))] : []),
           ...duePart('due', i.due, today, { form: 'short' }),
           ...(shownMilestone ? [{ text: i.milestone ?? '' }] : []),
           ...(i.labels.length > 0 ? [{ text: '', node: labelTexts(i.labels) }] : []),
@@ -1665,12 +1655,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         case 'forYou':
           return joined(forYou({ closed: 0, total: 0, ...x }))
         case 'blockedBy':
-          return [
-            <Text key="by" dimColor>
-              {'⊘ '}
-            </Text>,
-            <Text key="number" color="suggestion">{`#${x.number}`}</Text>,
-          ]
+          return joined([blockedPart(x.count)])
+        case 'unblocks':
+          return joined([unblocksPart(x.count)])
         case 'label':
           return labelTexts([{ name: x.name, color: x.color }])
         case 'text':

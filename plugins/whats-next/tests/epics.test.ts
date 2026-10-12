@@ -432,7 +432,7 @@ test("a child's facts line has its own due date, after what blocks it", TOKEN, a
   await ui.press({ key: 'fold-20' })
   const said = await texts(ui)
   expect(said).toContain('⧗ 1 Oct · ✎ 5w')
-  expect(said).toContain('⊘ #37 · ⧗ 30 Nov · ✎ 5w')
+  expect(said).toContain('⊘ 1 · ⧗ 30 Nov · ✎ 5w')
 })
 
 test("blocked wins over with others: a blocked child assigned to another shows ⊘, their name at the right", TOKEN, async ($, on) => {
@@ -460,7 +460,7 @@ test("children read like What's next: a second line with labels and age, or what
   const found = await nodes(ui)
   expect(found.some(t => t.text === 'bug · ✎ 5w')).toBe(true)
   expect(found.find(t => t.text === 'bug')?.props.color).toBe('#e57373')
-  expect(found.some(t => t.text === '⊘ #37 · ✎ 5w')).toBe(true)
+  expect(found.some(t => t.text === '⊘ 1 · ✎ 5w')).toBe(true)
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
   expect(boxes.find(b => b.key === 'child-row-51')?.props.marginBottom).toBe(1)
 })

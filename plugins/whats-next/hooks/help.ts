@@ -7,7 +7,8 @@ import type { Folding, Standing } from './epics'
 
 // How a sign is drawn: a mark as `markOf` draws it; a due date `days` from
 // today as `dueDate` draws it; a bar and count as `barText`; the for-you
-// line's parts as `forYou`; what blocks an issue as its facts line does;
+// line's parts as `forYou`; how many block an issue and wait on it as its
+// facts line counts them;
 // labels in their own colour; or words in one of the panes' colours.
 export type Look = 'plain' | 'dim' | 'blue' | 'green' | 'amber' | 'red' | 'grey' | 'purple'
 export type Sign =
@@ -15,7 +16,8 @@ export type Sign =
   | { kind: 'due'; days: number }
   | { kind: 'bar'; closed: number; total: number }
   | { kind: 'forYou'; yours: number; available: number; withOthers: number; blocked: number }
-  | { kind: 'blockedBy'; number: number }
+  | { kind: 'blockedBy'; count: number }
+  | { kind: 'unblocks'; count: number }
   | { kind: 'label'; name: string; color: string }
   | { kind: 'text'; parts: { text: string; look: Look }[] }
 
@@ -50,8 +52,8 @@ export const HELP: readonly HelpSection[] = [
   {
     name: 'Under an issue',
     lines: [
-      { sign: { kind: 'blockedBy', number: 24 }, words: 'blocked by #24' },
-      { sign: text('↦ 2', 'dim'), words: 'unblocks: 2 issues wait on it' },
+      { sign: { kind: 'blockedBy', count: 2 }, words: 'blocked by 2 open issues' },
+      { sign: { kind: 'unblocks', count: 2 }, words: 'unblocks: 2 issues wait on it' },
       { sign: { kind: 'due', days: 18 }, words: 'due date' },
       { sign: text('v0.3.0', 'dim'), words: 'milestone' },
       { sign: { kind: 'label', name: 'docs', color: 'e8875c' }, words: 'a label, in its own colour' },
