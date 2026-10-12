@@ -14,6 +14,9 @@ there. Notes for working on a mod live in `docs/<name>/`.
 - Bump the version in the mod's `.claude-plugin/plugin.json` with each
   change, and update the README when behaviour changes.
 - Commit and push only when asked; the maintainer pushes.
+- Commit messages carry no `Claude-Session:` line: the repo is mirrored
+  publicly and those links open only for the maintainer.
+  `Co-Authored-By:` stays.
 - No em-dashes in anything written; commas and periods instead.
 
 ## Mods
