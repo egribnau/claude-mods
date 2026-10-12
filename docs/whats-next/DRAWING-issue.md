@@ -19,7 +19,7 @@ it stands for you: green is for yours alone (#45, built 0.65.0).
 | State | Doesn't fold | Folded | Unfolded | Also said by |
 |---|---|---|---|---|
 | yours | `●` green | `⊕` green | `⊖` green | |
-| blocked | `⊘` dim, title dim | `⊕` dim, title dim | `⊖` dim, title dim | the facts line, `⊘ #n` |
+| blocked | `⊘` dim, title dim | `⊕` dim, title dim | `⊖` dim, title dim | the facts line, `⊘ n` |
 | with others | `◌` plain | `⊕` plain | `⊖` plain | their name, dim, at the right of the title line |
 | available | `○` plain | `⊕` plain | `⊖` plain | on a row that folds: no name at the right |
 | shown above | | `↑` dim, not a target | | its second line, `shown above` |
@@ -93,7 +93,7 @@ blocks that show are joined by ` · `, dim, in one text cut once at its end.
 | # | Block | Shown when | Drawn as |
 |---|---|---|---|
 | 0 | shown above | the issue is already in the tree higher up | `shown above`, dim; the line is this alone |
-| 1 | blocked by | it stands blocked: open blockers, and not yours | `⊘ #24, #22`: the mark dim, the numbers blue, commas dim (#45, built 0.66.0) |
+| 1 | blocked by | it stands blocked: open blockers, and not yours | `⊘ 2`: how many open issues block it, the mark and the count dim, as unblocks; which ones, the issue detail's Blocked by (#73, built 0.71.0; 0.66.0 to 0.70.2 drew the numbers, `⊘ #24, #22`) |
 | 1b | unblocks | open issues wait on it, as far as is known (GitHub's lists count them; on Forgejo and GitLab what the blocker checks found), its own epic left out as in the detail (#62, built 0.68.0, decided 3c) | `↦ 2`: the bar is this issue, the arrow what it opens; dim, a count, never the numbers (#57, built 0.67.0) |
 | 2 | due date | it has one (Forgejo and GitLab send it with the lists; GitHub issues have none) | `⧗ 14 Oct`, short form, red once passed, amber within 7 days, dim otherwise (DRAWING.md, Due dates; #45, built 0.66.0) |
 | 3 | milestone | it has one, and the list is not that milestone's (the milestone filter is set to it, or the row is under it) | `v0.3.0`, dim |
@@ -101,8 +101,9 @@ blocks that show are joined by ` · `, dim, in one text cut once at its end.
 | 5 | age | always | `✎ 3d`: the pencil (U+270E, one cell), how long ago it was opened, dim (#45, built 0.66.0) |
 
 Not on the line: when it was updated, how many comments; the detail
-shows both (#45). What the issue blocks is only counted here, `↦ 2`
-(#57, built 0.67.0); which issues those are is for the issue detail, #62.
+shows both (#45). What blocks the issue and what it blocks are only
+counted here, `⊘ 2` and `↦ 2`, one way for both (#57, built 0.67.0; #73,
+built 0.71.0); which issues those are is for the issue detail, #62.
 The epic an issue is in is not on the line: where it says why a row
 is where it is, the rule says it (DRAWING.md, Rules). Whom it is with
 is at the right of the title line, not here. They are not buttons: the
