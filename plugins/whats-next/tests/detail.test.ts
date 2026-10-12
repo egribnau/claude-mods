@@ -468,25 +468,21 @@ test("What's next goes back to the overview", TOKEN, async ($, on) => {
   await expect(ui.find({ key: 'prompt' })).resolves.toBeUndefined()
 })
 
-test("the issue detail's bottom line is What's Next's version alone, no repo", TOKEN, async ($, on) => {
+test("the issue detail's bottom line is the same rule as the lists', its version and all, no repo", TOKEN, async ($, on) => {
   world(on, FULL)
   on('fs.read', (_$, e) => (e.path.endsWith('/.claude-plugin/plugin.json') ? { value: '{"version":"9.8.7"}' } : { deny: 'not here' }))
   const ui = await opened($)
   const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
   expect(found.some(t => t.text.includes('git.example.org'))).toBe(false)
-  expect(found.find(t => t.text === '  v9.8.7')?.props.dimColor).toBe(true)
-  const ours = (await ui.find({ key: 'ours' })) as unknown as { props: Record<string, unknown> }
-  expect(ours.props.flexShrink).toBe(0)
-})
-
-test('a rule closes the detail off above the bottom line, as in the lists', TOKEN, async ($, on) => {
-  world(on, FULL)
-  const ui = await opened($)
+  expect(found.map(t => t.text)).toContain("── What's Next · v9.8.7 ".padEnd(60, '─'))
+  expect(found.find(t => t.text === 'v9.8.7')?.props.dimColor).toBe(true)
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
   const keys = boxes.map(b => b.key)
-  expect(boxes.find(b => b.key === 'where-rule')?.props.flexShrink).toBe(0)
-  expect(keys.indexOf('where-rule')).toBe(keys.indexOf('where') - 1)
-  expect(await texts(ui)).toContain('─'.repeat(60))
+  expect(boxes.find(b => b.key === 'where')?.props.flexShrink).toBe(0)
+  expect(keys.indexOf('where')).toBeGreaterThan(keys.indexOf('detail'))
+  // An empty line before it, as before every rule.
+  expect(keys.indexOf('where-gap')).toBe(keys.indexOf('where') - 1)
+  expect(keys).not.toContain('where-rule')
 })
 
 test('says so when the issue cannot be read', TOKEN, async ($, on) => {

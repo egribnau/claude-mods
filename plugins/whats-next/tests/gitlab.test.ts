@@ -1024,7 +1024,8 @@ test("gitlab.com: What's next shows your issue and the free ones by iid", GL, as
   // The label keeps its colour, given without '#'.
   const bug = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'bug')
   expect(bug?.props.color).toBe('#d9534f')
-  expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
+  // The bottom line counts nothing: it is the rule naming What's Next.
+  expect(all.slice(-4)[0]).toBe(rule("What's Next"))
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14, in v1.2." }))
 })
 

@@ -295,7 +295,7 @@ test('a detail scrolls its own rows, within them; the top row and the bottom lin
   await $.ui.scroll(scroll(1))
   expect(await rowsTop(ui)).toBe(end)
   await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
-  await expect(ui.find({ key: 'where-rule' })).resolves.toBeDefined()
+  await expect(ui.find({ key: 'where' })).resolves.toBeDefined()
 })
 
 test('the focus on a control out of view scrolls it into view; Tab passes over the hidden hotkeys', TOKEN, async ($, on) => {

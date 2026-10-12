@@ -537,7 +537,8 @@ test("github.com: What's next shows your issue and the free ones, pull requests 
   const bug = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'bug')
   // GitHub's colour, without '#', made readable as any label's is.
   expect(bug?.props.color).toBe(readable('d73a4a'))
-  expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
+  // The bottom line counts nothing: it is the rule naming What's Next.
+  expect(all.slice(-4)[0]).toBe(rule("What's Next"))
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #14, in v1.2." }))
   // Only GitHub's API host is asked, always with the token; nothing blocks
   // these, so no dependencies are asked, and no epic has sub-issues to ask.

@@ -168,6 +168,13 @@ const REPO: World = {
 }
 
 const rule = (name: string) => `── ${name} `.padEnd(50, '─')
+// The bottom line, a rule, as its texts: the whole, then each part.
+const bottom = (version?: string) => {
+  const after = version ? [`v${version}`] : []
+  const full = rule(["What's Next", ...after].join(' · '))
+  const last = after.at(-1) ?? "What's Next"
+  return [full, '── ', "What's Next", ...after.flatMap(x => [' · ', x]), full.slice(full.lastIndexOf(last) + last.length)]
+}
 
 test("the Epics pane opens next to What's next when the repo has an open epic", TOKEN, async ($, on) => {
   const opened: { id: string; title?: string }[] = []
@@ -369,18 +376,13 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     'children ',
     'all closed',
     `   #3 ${'Project setup'.padEnd(29)} ${'✓'.padStart(14)}`,
-    '─'.repeat(50),
-    '3 epics · 3 yours',
-    '3 epics',
-    ' · ',
-    '3 yours',
+    ...bottom(),
   ])
   const all = await nodes(ui)
   expect(all.find(t => t.text === 'v1.2')?.props.bold).toBe(true)
   expect(all.find(t => t.text === 'all closed')?.props.color).toBe('warning')
   // A closed epic is grey, not dim: grey means closed.
   expect(all.find(t => t.text.startsWith('   #3 '))?.props.color).toBe('inactive')
-  expect(all.find(t => t.text === '3 yours')?.props.color).toBe('success')
 })
 
 test('the fold mark folds an epic open: its children with their marks, the closed ones counted', TOKEN, async ($, on) => {
@@ -547,14 +549,15 @@ test('Close on a child goes back to Epics, the child counted closed there', TOKE
   expect(await texts(ui)).toContain('  ✓ 2 closed')
 })
 
-test("the bottom line in Epics ends in What's Next's version from its manifest", TOKEN, async ($, on) => {
+test("the bottom line in Epics is the same rule, with What's Next's version from its manifest, and counts nothing", TOKEN, async ($, on) => {
   world(on, REPO)
   on('fs.read', (_$, e) => (e.path.endsWith('/.claude-plugin/plugin.json') ? { value: '{"version":"9.8.7"}' } : { deny: 'not here' }))
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   const all = await nodes(ui)
-  expect(all.find(t => t.text === '  v9.8.7')?.props.dimColor).toBe(true)
-  expect(all.map(t => t.text).indexOf('  v9.8.7')).toBeGreaterThan(all.map(t => t.text).findIndex(t => t.endsWith(' yours')))
+  expect(all.find(t => t.text === 'v9.8.7')?.props.dimColor).toBe(true)
+  expect(all.map(t => t.text).slice(-bottom('9.8.7').length)).toEqual(bottom('9.8.7'))
+  expect(all.some(t => / epics?$| yours$/.test(t.text))).toBe(false)
 })
 
 test("an issue opened in Epics leaves What's next as it was", TOKEN, async ($, on) => {
@@ -584,7 +587,7 @@ test('the rule and the bottom line keep their row when the epics are too many', 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, props: { ...EPICS_PANE.props, scroll: { offset: 0, bodyRows: 12 } }, surface: 'terminal' })
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
-  for (const key of ['top', 'group-0', 'where-rule', 'where']) expect(boxes.find(b => b.key === key)?.props.flexShrink).toBe(0)
+  for (const key of ['top', 'group-0', 'where-gap', 'where']) expect(boxes.find(b => b.key === key)?.props.flexShrink).toBe(0)
 })
 
 test('Refresh in the Epics pane loads the epics again', TOKEN, async ($, on) => {
@@ -662,9 +665,10 @@ test('All shows a group per milestone, No milestone last, and counts them all', 
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-all' })
   const all = await texts(ui)
+  // The groups' rules, then the bottom line's.
   const names = all.filter((t, k) => all[k - 1] === '── ')
-  expect(names).toEqual(['v1.2', 'v1.3', 'No milestone'])
-  expect(all.slice(-4)).toEqual(['5 epics · 3 yours', '5 epics', ' · ', '3 yours'])
+  expect(names).toEqual(['v1.2', 'v1.3', 'No milestone', "What's Next"])
+  expect(all.slice(-bottom().length)).toEqual(bottom())
   // The group names are bold; an epic's facts line names its milestone too, dim.
   const found = await nodes(ui)
   expect(found.filter((t, k) => found[k - 1]?.text === '── ').every(t => t.props.bold === true)).toBe(true)
@@ -714,7 +718,8 @@ test('switching milestones and back asks Forgejo only for epics not seen yet', T
   expect(count(asked, depsOf(12))).toBe(1)
   expect(count(asked, depsOf(60))).toBe(1)
   expect(count(asked, depsOf(71))).toBe(1)
-  expect((await texts(ui)).filter(t => t === '── ')).toHaveLength(3)
+  // Three groups' rules and the bottom line's.
+  expect((await texts(ui)).filter(t => t === '── ')).toHaveLength(4)
 })
 
 test('Refresh forgets the epics and asks again', TOKEN, async ($, on) => {
@@ -744,12 +749,12 @@ test('who you are comes from the setup check, so a picker switch asks Forgejo no
 })
 
 const DEBUG = { options: { ...TOKEN.options, debug: true } }
-// The Debug line's parts: each side is one text holding them.
+// The Debug line's parts: one text holding them, joined by ` · `.
 const counter = async (ui: Ui) => {
-  const t = (await texts(ui)).slice(-7)
-  expect(t[0]).toBe(t.slice(1, 4).join(''))
-  expect(t[4]).toBe(t.slice(5).join(''))
-  return [...t.slice(1, 4), ...t.slice(5)]
+  const t = (await texts(ui)).slice(-4)
+  expect(t[0]).toBe(t.slice(1).join(''))
+  expect(t[2]).toBe(' · ')
+  return [t[1], t[3]]
 }
 
 test('with Debug on, a line under the bottom line counts the requests of each action and the session', DEBUG, async ($, on) => {
@@ -758,26 +763,30 @@ test('with Debug on, a line under the bottom line counts the requests of each ac
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   const first = asked.length
-  expect(await counter(ui)).toEqual(['↯ /next: ', String(first), ' requests', String(first), ' this session'])
+  expect(await counter(ui)).toEqual([`↯ /next: ${first} requests`, `${first} this session`])
 
   await ui.press({ key: 'fold-20' })
   await ui.press({ key: 'child-51' })
   const opened = asked.length - first
   expect(opened).toBeGreaterThan(0)
-  expect(await counter(ui)).toEqual(['↯ #51: ', String(opened), ' requests', String(asked.length), ' this session'])
+  expect(await counter(ui)).toEqual([`↯ #51: ${opened} requests`, `${asked.length} this session`])
 
   await ui.press({ key: 'back' })
   await ui.press({ key: 'child-51' })
-  expect(await counter(ui)).toEqual(['↯ #51: ', '0', ' requests', String(asked.length), ' this session'])
+  expect(await counter(ui)).toEqual(['↯ #51: 0 requests', `${asked.length} this session`])
 
   await ui.press({ key: 'back' })
   const before = asked.length
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-m:v1.3' })
-  expect(await counter(ui)).toEqual(['↯ v1.3: ', String(asked.length - before), ' requests', String(asked.length), ' this session'])
+  expect(await counter(ui)).toEqual([`↯ v1.3: ${asked.length - before} requests`, `${asked.length} this session`])
+  // Its parts dim, as on any line of parts, under the bottom line.
+  const all = await nodes(ui)
+  expect(all.find(t => t.text === `${asked.length} this session`)?.props.dimColor).toBe(true)
+  expect(all.findIndex(t => t.text.startsWith('↯ v1.3'))).toBeGreaterThan(all.findIndex(t => t.text === "What's Next"))
 
   await ui.press({ key: 'refresh' })
-  expect((await counter(ui))[0]).toBe('↯ Refresh: ')
+  expect((await counter(ui))[0]).toMatch(/^↯ Refresh: \d+ requests$/)
 })
 
 test('with Debug off there is no counter', TOKEN, async ($, on) => {

@@ -280,7 +280,7 @@ test('Prompt: the prompt it drafts, its toast and the Debug counter carry no tok
   expect(said.some(s => s.startsWith('Work on #14: Rotate <token>'))).toBe(true)
   expect(said.some(s => s.startsWith('#14 is yours and in the prompt'))).toBe(true)
   // The Debug counter, named after the action.
-  expect(said).toContain(' requests')
+  expect(said.some(s => /^↯ .+: \d+ requests$/.test(s))).toBe(true)
   noToken(said)
 })
 

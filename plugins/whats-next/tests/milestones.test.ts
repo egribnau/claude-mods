@@ -234,7 +234,7 @@ test('each open milestone is a folded row, soonest due first, those without a du
   expect(t.some(x => /^ {2}.*(\d+ open|due)/.test(x))).toBe(false)
   // Panes has no due date and nothing known for you: no line under it.
   const panes = t.indexOf(`${'Panes'.padEnd(33)} ▰▰▱▱▱▱▱▱   1/4`)
-  expect(t[panes + 5]).toBe('─'.repeat(50))
+  expect(t[panes + 5]).toBe("── What's Next ".padEnd(50, '─'))
 })
 
 test('a milestone row has the bar and closed/total from its own counts', TOKEN, async ($, on) => {
@@ -321,12 +321,14 @@ test('the fold mark folds a milestone open and shut', TOKEN, async ($, on) => {
   expect(await texts(pane)).not.toContain('  ✓ 9 closed')
 })
 
-test('the bottom line counts the open milestones and their open issues', TOKEN, async ($, on) => {
+test('the bottom line counts nothing: it is the rule naming What\'s Next, as in every pane', TOKEN, async ($, on) => {
   const clock = world(on, REPO)
   await clock.set(NOW)
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
-  expect(await texts(pane)).toContain('4 milestones · 20 open')
+  const t = await texts(pane)
+  expect(t.some(x => / milestones? · /.test(x))).toBe(false)
+  expect(t).toContain("── What's Next ".padEnd(50, '─'))
 })
 
 test('the Milestones pane has Refresh and no milestone picker', TOKEN, async ($, on) => {

@@ -591,6 +591,19 @@ function fit(text: string, width: number): string {
   return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`
 }
 
+// Pieces of one line, each with its look, cut once at `width` as `fit` cuts
+// a text: the pieces past the cut are left out, the one it falls in ends in ….
+type Piece = { text: string; bold?: boolean; color?: string; dim?: boolean }
+function fitParts(pieces: readonly Piece[], width: number): Piece[] {
+  const whole = fit(pieces.map(p => p.text).join(''), width)
+  let at = 0
+  return pieces.flatMap(p => {
+    const text = whole.slice(at, at + p.text.length)
+    at += p.text.length
+    return text ? [{ ...p, text }] : []
+  })
+}
+
 // A due date's colour: red once passed, amber within 7 days, dim otherwise.
 function dueLook(iso: string, now: number): { color?: string; dimColor?: boolean } {
   const soon = dueSoon(iso, now)
@@ -898,22 +911,25 @@ const settingChanged: Hook<'config.set'> = async ($, e, next) => {
   return done
 }
 
-// What's Next's own version, from its manifest, read once by the code that
-// runs: a session keeps the version it loaded until /reload-plugins, even
-// when the folder on disk has moved on. null: the manifest could not be read.
-let ownVersion: Promise<string | null> | null = null
-function builtVersion($: EngineInterface): Promise<string | null> {
+// What's Next's own version and repository, from its manifest, read once by
+// the code that runs: a session keeps the version it loaded until
+// /reload-plugins, even when the folder on disk has moved on. Each is null
+// where the manifest has none or could not be read.
+type Built = { version: string | null; repository: string | null }
+let ownManifest: Promise<Built> | null = null
+function builtManifest($: EngineInterface): Promise<Built> {
+  const word = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null)
   const from = (path: string) =>
     $.fs.read(path).then(text => {
-      const v = (JSON.parse(text) as { version?: unknown }).version
-      return typeof v === 'string' && v !== '' ? v : null
+      const m = JSON.parse(text) as { version?: unknown; repository?: unknown }
+      return { version: word(m.version), repository: word(m.repository) }
     })
   // The plugin's folder, or the .claude-plugin folder in it.
   const root = $.plugin.root
-  ownVersion ??= from(`${root}/.claude-plugin/plugin.json`)
+  ownManifest ??= from(`${root}/.claude-plugin/plugin.json`)
     .catch(() => from(`${root}/plugin.json`))
-    .catch(() => null)
-  return ownVersion
+    .catch(() => ({ version: null, repository: null }))
+  return ownManifest
 }
 
 // Both panes draw here: they share setup, the detail view and the bottom line.
@@ -961,13 +977,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       </Button>
     </Box>
   )
-  // A dim line that keeps its row when the list or detail under it is too
-  // long for the pane: that is cut at its bottom, never by squeezing this out.
-  const fixedLine = (key: string, text: string) => (
-    <Box key={key} flexShrink={0}>
-      {line(`${key}-text`, text, { dimColor: true })}
-    </Box>
-  )
   // One part of a line made of parts: its words, dim unless it has a
   // colour, or drawn as `node` where it is more than one text.
   type Part = { text: string; color?: string; node?: RenderChildren }
@@ -1000,14 +1009,28 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     </Text>
   )
   // A rule (DRAWING.md, Rules): `── ` dim, its name bold, what belongs to it
-  // after ` · `, and the line to the pane's edge, in one text. One that
-  // folds starts with its + or − instead, plain, and is one target.
-  const rule = (key: string, name: string, after: readonly Part[] = [], fold?: { key: string; open: boolean; onPress: () => unknown }) => {
-    const lead = fold ? `${fold.open ? '−' : '+'} ` : '── '
+  // after ` · `, and the line to the pane's edge, in one text. One that is a
+  // target is one Button: one that folds starts with its + or − instead,
+  // plain; one that opens something (`open` absent) keeps its `── `.
+  const rule = (key: string, name: string, after: readonly Part[] = [], press?: { key: string; open?: boolean; onPress: () => unknown }) => {
+    const folds = press?.open !== undefined
+    const lead = folds ? `${press.open ? '−' : '+'} ` : '── '
     const used = lead.length + name.length + after.reduce((n, p) => n + 3 + p.text.length, 0) + 1
-    const text = (
+    // Text inside a Button wraps instead of truncating: there a rule too
+    // long for the pane is cut here, once at its end, its parts as words.
+    const cut = press && used > columns
+    const shown = cut ? fitParts([{ text: lead, dim: !folds }, { text: name, bold: true }, ...after.flatMap(p => [{ text: ' · ', dim: true }, { text: p.text, color: p.color, dim: !p.color }])], columns) : null
+    const text = shown ? (
       <Text wrap="truncate-end">
-        <Text dimColor={!fold}>{lead}</Text>
+        {shown.map((p, i) => (
+          <Text key={`piece-${i}`} bold={p.bold} color={p.color} dimColor={p.dim}>
+            {p.text}
+          </Text>
+        ))}
+      </Text>
+    ) : (
+      <Text wrap="truncate-end">
+        <Text dimColor={!folds}>{lead}</Text>
         <Text bold>{name}</Text>
         {after.length > 0 && <Text dimColor>{' · '}</Text>}
         {joined(after)}
@@ -1016,8 +1039,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
     return (
       <Box key={key} height={1} flexShrink={0}>
-        {fold ? (
-          <Button key={fold.key} plain onPress={fold.onPress}>
+        {press ? (
+          <Button key={press.key} plain onPress={press.onPress}>
             {text}
           </Button>
         ) : (
@@ -1449,31 +1472,28 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
   }
 
-  // The right of the bottom line: What's Next's version, dim, kept whole on
-  // a narrow pane.
-  const built = await builtVersion($)
-  const ours = built && (
-    <Box key="ours" flexShrink={0}>
-      <Text dimColor>{`  v${built}`}</Text>
-    </Box>
-  )
+  // The bottom line of every pane and detail: a rule naming What's Next and
+  // its version, which opens the repo
+  // (DRAWING.md, Rules). Cut at its end on a narrow pane, as every rule.
+  // An empty line before it, as before every rule, kept when the list or
+  // detail above is cut at its bottom.
+  const built = await builtManifest($)
+  const repository = built.repository
+  const bottomRule = [
+    <Box key="where-gap" height={1} flexShrink={0} />,
+    rule(
+      'where',
+      "What's Next",
+      built.version ? [{ text: `v${built.version}` }] : [],
+      repository ? { key: 'repository', onPress: () => openUrl($, repository) } : undefined,
+    ),
+  ]
   // With Debug on, under the bottom line: what the last action and the session
-  // asked the forge.
+  // asked the forge, its parts dim (DRAWING.md, Lines that hold several parts).
   const req = configDebug ? await read($, requests) : null
   const counter = req && (
     <Box key="requests" height={1} flexShrink={0}>
-      <Text wrap="truncate-end">
-        <Text dimColor>{`↯ ${req.label}: `}</Text>
-        <Text>{String(req.count)}</Text>
-        <Text dimColor>{' requests'}</Text>
-      </Text>
-      <Box flexGrow={1} />
-      <Box flexShrink={0}>
-        <Text>
-          <Text>{String(req.total)}</Text>
-          <Text dimColor>{' this session'}</Text>
-        </Text>
-      </Box>
+      {partsLine('requests-text', 0, [{ text: `↯ ${req.label}: ${req.count} requests` }, { text: `${req.total} this session` }])}
     </Box>
   )
   // The milestone filter both panes share, and what it is set to.
@@ -1635,11 +1655,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             {body}
           </Box>
         </Box>
-        {fixedLine('where-rule', '─'.repeat(columns))}
-        <Box key="where" height={1} flexShrink={0}>
-          <Box flexGrow={1} />
-          {ours}
-        </Box>
+        {bottomRule}
         {counter}
         {over}
       </Box>
@@ -2443,8 +2459,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       )
       if (showClosed) for (const ms of closedOnes) draw(ms, true)
     }
-    const count = known?.length ?? 0
-    const openIssues = (known ?? []).reduce((n, ms) => n + ms.total - ms.closed, 0)
     return (
       <Box flexDirection="column" height={height}>
         {await titleRow('Milestones', false)}
@@ -2452,12 +2466,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
           {rows}
         </Box>
-        {fixedLine('where-rule', '─'.repeat(columns))}
-        <Box key="where" height={1} flexShrink={0}>
-          {count > 0 && partsLine('counts', 0, [{ text: `${count} ${count === 1 ? 'milestone' : 'milestones'}` }, { text: `${openIssues} open` }])}
-          <Box flexGrow={1} />
-          {ours}
-        </Box>
+        {bottomRule}
         {counter}
         {await listOverlay(false)}
       </Box>
@@ -2518,12 +2527,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         )
       }
     })
-    // Every open epic in the milestone filter, at the top or under a parent; each child
-    // of yours once, however many epics hold it.
-    const shown = [...groups.flatMap(g => g.epics), ...(ep.kind === 'ok' ? ep.held : [])].filter(x => x.state === 'open')
-    const yours = new Set(shown.flatMap(x => (x.children ?? []).filter(c => c.state === 'open' && standing(c) === 'yours').map(c => c.number))).size
-    const openShown = shown.length
-    const g = groups.length > 0
     return (
       <Box flexDirection="column" height={height}>
         {await titleRow('Epics')}
@@ -2531,12 +2534,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Box key="list" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
           {rows}
         </Box>
-        {fixedLine('where-rule', '─'.repeat(columns))}
-        <Box key="where" height={1} flexShrink={0}>
-          {g && partsLine('counts', 0, [{ text: `${openShown} ${openShown === 1 ? 'epic' : 'epics'}` }, { text: `${yours} yours`, color: 'success' }])}
-          <Box flexGrow={1} />
-          {ours}
-        </Box>
+        {bottomRule}
         {counter}
         {await listOverlay()}
       </Box>
@@ -2686,16 +2684,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         )
       }
     }
-    // Once loaded, how many open issues What's Next counted and how many are
-    // yours, in In progress green; the version at the right.
-    const open = m.kind === 'ok' ? m.inProgress.length + (m.next ? 1 : 0) + m.queue.length + m.more + m.blocked.length : null
-    const bottomLine = (
-      <Box key="where" height={1} flexShrink={0}>
-        {m.kind === 'ok' && partsLine('counts', 0, [{ text: `${open} open` }, { text: `${m.inProgress.length} yours`, color: 'success' }])}
-        <Box flexGrow={1} />
-        {ours}
-      </Box>
-    )
     return (
       <Box flexDirection="column" height={height}>
         {await titleRow("What's next")}
@@ -2708,8 +2696,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             {lastRows}
           </Box>
         )}
-        {fixedLine('where-rule', '─'.repeat(columns))}
-        {bottomLine}
+        {bottomRule}
         {counter}
         {await listOverlay()}
       </Box>

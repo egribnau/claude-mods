@@ -67,10 +67,11 @@ type World = {
 }
 
 // A repo that passes setup and answers from `w`.
-function world(on: On, w: World, asked: string[] = []) {
+function world(on: On, w: World, asked: string[] = [], ran: string[] = []) {
   const clock = mock.clock(on)
   on('process.run', (_$, e) => {
     const cmd = e.argv.join(' ')
+    ran.push(cmd)
     const stdout = cmd === 'git remote get-url origin' ? 'git@git.example.org:boats/radar.git' : 'true'
     return { value: { exitCode: 0, stdout: `${stdout}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -121,6 +122,9 @@ const ruleTexts = (name: string, ...after: string[]) => {
   const used = 3 + name.length + after.reduce((n, x) => n + 3 + x.length, 0) + 1
   return [full, '── ', name, ...after.flatMap(x => [' · ', x]), ` ${'─'.repeat(Math.max(0, 50 - used))}`]
 }
+// The bottom line: a rule naming What's Next and its version when the
+// manifest has one (DRAWING.md, Rules).
+const bottom = (version?: string) => ruleTexts("What's Next", ...(version ? [`v${version}`] : []))
 
 // #42 is yours. Of the rest, #33 is oldest but blocked by #37, so #29 is
 // next; #60 is someone else's and left out.
@@ -202,11 +206,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '⊘ 1',
       ' · ',
       '✎ 4w',
-      '─'.repeat(50),
-      '5 open · 1 yours',
-      '5 open',
-      ' · ',
-      '1 yours',
+      ...bottom(),
     ])
     expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #37, in v1.2." }))
   })
@@ -279,7 +279,6 @@ test('the Queue holds 10 checked issues, a blocked one at the bottom, the rest c
   expect(free).toEqual([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12])
   expect(all).toContain('  and 13 more')
   expect(all.indexOf('⊘  #3 Issue 3')).toBeGreaterThan(all.indexOf('  and 13 more'))
-  expect(all).toContain('25 open · 0 yours')
   // Next and the 11 issues past it are checked; #13 to #25 are not.
   const checked = asked.map(u => /\/issues\/(\d+)\/dependencies$/.exec(new URL(u).pathname)?.[1]).filter(Boolean)
   expect(checked).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'])
@@ -344,7 +343,8 @@ test('no open issues at all: says so, without sections', TOKEN, async ($, on) =>
   const all = await texts(ui)
 
   expect(all).toContain('No open issues in boats/radar.')
-  expect(all.some(t => t.startsWith('── '))).toBe(false)
+  // No section rule: the only rule is the bottom line's.
+  expect(all.filter(t => t.startsWith('── ') && t !== '── ')).toEqual([bottom()[0]])
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: no open issues." }))
 })
 
@@ -406,20 +406,21 @@ test('the bottom line sits at the bottom of the pane, however long the list', TO
   expect((boxes[0] as unknown as { props: { height?: number } }).props.height).toBe(rows)
   const list = boxes.find(b => b.key === 'list') as unknown as { props: Record<string, unknown> }
   expect(list.props).toEqual(expect.objectContaining({ flexGrow: 1, flexShrink: 1, overflow: 'hidden' }))
-  expect((await texts(ui)).slice(-4)).toEqual(['30 open · 0 yours', '30 open', ' · ', '0 yours'])
+  expect((await texts(ui)).slice(-bottom().length)).toEqual(bottom())
 })
 
-// A list taller than the pane is cut at its bottom; the section rules and the
-// repo line keep their row instead of being squeezed out.
-test('the bottom line counts the open issues, yours in green, and leaves the repo out', TOKEN, async ($, on) => {
+test('the bottom line is a rule that counts nothing and leaves the repo out', TOKEN, async ($, on) => {
   world(on, REPO)
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
   expect(all.some(t => t.text.includes('git.example.org') || t.text === 'boats/radar')).toBe(false)
-  expect(all.find(t => t.text === '5 open')?.props.dimColor).toBe(true)
-  expect(all.find(t => t.text === '1 yours')?.props.color).toBe('success')
+  expect(all.some(t => / open|yours$/.test(t.text) && !t.text.startsWith('──'))).toBe(false)
+  expect(all.find(t => t.text === "What's Next")?.props.bold).toBe(true)
 })
+
+// A list taller than the pane is cut at its bottom; the section rules and the
+// bottom line keep their row instead of being squeezed out.
 
 test('the section rules and the bottom line keep their row when the list is too long', TOKEN, async ($, on) => {
   const mine = Array.from({ length: 5 }, (_, k) => issue(100 + k, '2026-09-01T00:00:00Z', { assignees: ['alice'] }))
@@ -429,19 +430,24 @@ test('the section rules and the bottom line keep their row when the list is too 
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 12 } }, surface: 'terminal' })
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
-  for (const key of ['in-progress', 'next', 'queue', 'where-rule', 'where']) {
+  for (const key of ['in-progress', 'next', 'queue', 'where-gap', 'where']) {
     expect(boxes.find(b => b.key === key)?.props.flexShrink).toBe(0)
   }
+  // An empty line before the bottom line, as before every rule.
+  const keys = boxes.map(b => b.key)
+  expect(keys.indexOf('where-gap')).toBe(keys.indexOf('where') - 1)
+  expect(boxes.find(b => b.key === 'where-gap')?.props.height).toBe(1)
 })
 
 // The manifest as $.fs.read finds it under the plugin's folder; `read`
 // collects the paths asked for.
-function manifest(on: On, version: string, read: string[] = []) {
+function manifest(on: On, version: string, read: string[] = [], repository?: string) {
   on('fs.read', (_$, e) => {
     read.push(e.path)
-    return e.path.endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ name: 'whats-next', version }) } : { deny: 'not here' }
+    return e.path.endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ name: 'whats-next', version, repository }) } : { deny: 'not here' }
   })
 }
+const REPOSITORY = 'https://git.example.org/boats/radar'
 
 type Node = { key: string; type: string; text?: string; props: Record<string, unknown>; children?: Node[] }
 
@@ -454,31 +460,45 @@ test("the bottom line ends in What's Next's version from its manifest, dim, read
   await ui.press({ key: 'refresh' })
 
   const found = (await ui.findAll({ type: 'Text' })) as unknown as Node[]
-  const v = found.find(t => t.text === '  v9.8.7')
-  expect(v?.props.dimColor).toBe(true)
-  const all = found.map(t => t.text)
-  expect(all.indexOf('  v9.8.7')).toBeGreaterThan(all.findIndex(t => t?.endsWith(' yours')))
+  expect(found.find(t => t.text === 'v9.8.7')?.props.dimColor).toBe(true)
+  expect(found.map(t => t.text).slice(-bottom('9.8.7').length)).toEqual(bottom('9.8.7'))
   expect(read.filter(p => p.endsWith('plugin.json'))).toHaveLength(1)
 })
 
-test('on a narrow pane the counts are cut and the version keeps its place', TOKEN, async ($, on) => {
-  world(on, REPO)
-  manifest(on, '9.8.7')
+test("the bottom line opens What's Next's repository from its manifest", TOKEN, async ($, on) => {
+  const ran: string[] = []
+  world(on, REPO, [], ran)
+  manifest(on, '9.8.7', [], REPOSITORY)
   await $.command.run(RUN)
-  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 20 }, surface: 'terminal' })
-  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Node[]
-  expect(boxes.find(b => b.key === 'ours')?.props.flexShrink).toBe(0)
-  const texts = (await ui.findAll({ type: 'Text' })) as unknown as Node[]
-  // The counts are one text, cut once at its end.
-  expect(texts.find(t => t.text === '5 open · 1 yours')?.props.wrap).toBe('truncate-end')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await texts(ui)).slice(-bottom('9.8.7').length)).toEqual(bottom('9.8.7'))
+  await ui.press({ key: 'repository' })
+  expect(ran).toContain(`open ${REPOSITORY}`)
 })
 
-test('a manifest that cannot be read leaves the version out', TOKEN, async ($, on) => {
+test('on a narrow pane the bottom line is cut once at its end, the version its last part to go', TOKEN, async ($, on) => {
+  world(on, REPO)
+  manifest(on, '9.8.7', [], REPOSITORY)
+  await $.command.run(RUN)
+  // A Button's text wraps rather than truncates: cut by What's Next itself.
+  const at = async (columns: number) => {
+    const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: columns }, surface: 'terminal' })
+    const cut = (await texts(ui)).filter(t => t.startsWith('── What'))[0]
+    await ui.unmount()
+    return cut
+  }
+  expect(await at(30)).toBe("── What's Next · v9.8.7 ──────")
+  expect(await at(20)).toBe("── What's Next · v9…")
+  expect(await at(10)).toBe("── What's…")
+})
+
+test('a manifest that cannot be read leaves the version out, and the bottom line opens nothing', TOKEN, async ($, on) => {
   world(on, REPO)
   on('fs.read', () => ({ deny: 'no such file' }))
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await expect(ui.find({ key: 'ours' })).resolves.toBeUndefined()
+  expect((await texts(ui)).slice(-bottom().length)).toEqual(bottom())
+  await expect(ui.find({ key: 'repository' })).resolves.toBeUndefined()
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {
@@ -545,7 +565,7 @@ test('starts where you work, and every section keeps to it', TOKEN, async ($, on
   expect(all).toContain(rule('Queue'))
   expect(all).toContain('○ #37 Issue 37')
   expect(all.some(t => t.includes('#29') || t.includes('#33'))).toBe(false)
-  expect(all.slice(-4)).toEqual(['3 open · 1 yours', '3 open', ' · ', '1 yours'])
+  expect(all.slice(-bottom().length)).toEqual(bottom())
   // The milestone picked is not repeated under every issue.
   expect(all).toContain('bug · ✎ 2w')
   expect(all.some(t => t.startsWith('v1.2 · '))).toBe(false)
@@ -855,7 +875,7 @@ test('Next follows on in the epic of the issue you closed last; the Queue says e
   const last = found.find(t => t.text === '✓ #41 Issue 41')
   expect(last?.props.color).toBe('inactive')
   expect(all.indexOf('✓ #41 Issue 41')).toBeGreaterThan(all.indexOf('○ #29 Issue 29'))
-  expect(all.indexOf('✓ #41 Issue 41')).toBeLessThan(all.indexOf('─'.repeat(50)))
+  expect(all.indexOf('✓ #41 Issue 41')).toBeLessThan(all.indexOf(bottom()[0] ?? ''))
   expect(await ui.find({ key: 'last-closed-open' })).toBeTruthy()
 
   // Asked: your closed issues, assigned to you; the epic that depends on
