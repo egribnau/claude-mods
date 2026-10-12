@@ -248,6 +248,8 @@ declare module 'claude-code' {
       // menu is open.
       scrolled: StateFamily<number>
       menuOpen: StateFamily<boolean>
+      // Per pane: whether the help page is shown, over its list or detail.
+      helpShown: StateFamily<boolean>
       epics: Epics
       // What's Next's panes that are open, by id: with more than one the engine draws
       // tabs naming them, so the title rows leave the names out.

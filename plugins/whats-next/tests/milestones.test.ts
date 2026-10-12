@@ -953,10 +953,10 @@ test('read only: a milestone detail has no Close', TOKEN, async ($, on) => {
   await pane.press({ key: 'milestone-GitHub' })
   // The top row, before the sections: the hidden hotkeys, Back, the menu.
   let keys = (await buttons(pane)).map(b => b.key)
-  expect(keys.slice(0, keys.indexOf('issues-section'))).toEqual(['open', 'refresh', 'back', 'menu'])
+  expect(keys.slice(0, keys.indexOf('issues-section'))).toEqual(['open', 'refresh', 'help', 'back', 'menu'])
   await pane.press({ key: 'menu' })
   keys = (await buttons(pane)).map(b => b.key)
-  expect(keys.filter(k => k.startsWith('menu-'))).toEqual(['menu-open', 'menu-refresh'])
+  expect(keys.filter(k => k.startsWith('menu-'))).toEqual(['menu-open', 'menu-refresh', 'menu-help'])
 })
 
 test('the menu holds Open in Browser, Close, Refresh, and Close closes the milestone at once, open issues and all', TOKEN, async ($, on) => {
@@ -968,11 +968,11 @@ test('the menu holds Open in Browser, Close, Refresh, and Close closes the miles
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
   let keys = (await buttons(pane)).map(b => b.key)
-  expect(keys.slice(0, keys.indexOf('issues-section'))).toEqual(['open', 'close', 'refresh', 'back', 'menu'])
+  expect(keys.slice(0, keys.indexOf('issues-section'))).toEqual(['open', 'close', 'refresh', 'help', 'back', 'menu'])
   expect((await buttons(pane)).find(b => b.key === 'close')?.props.label).toBe('Close')
   await pane.press({ key: 'menu' })
   keys = (await buttons(pane)).map(b => b.key)
-  expect(keys.filter(k => k.startsWith('menu-'))).toEqual(['menu-open', 'menu-close', 'menu-refresh'])
+  expect(keys.filter(k => k.startsWith('menu-'))).toEqual(['menu-open', 'menu-close', 'menu-refresh', 'menu-help'])
   const t = await texts(pane)
   const words = ['Open in Browser', 'Close', 'Refresh'].map(w => t.findIndex(x => x.startsWith(`${w} `)))
   expect(words.every(i => i > -1)).toBe(true)

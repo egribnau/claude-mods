@@ -3,6 +3,7 @@ import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } fro
 
 import type { Comment, Detail, DetailFolds, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneIssue, Overview, Ref, Repo, Scope, Setup, TokenSource } from '../types'
 import { bar, dueFirst, forYou, inMilestone, markOf, openChildren, pickerOptions, standing, summary, tally, tree, type Folding, type Mark, type Standing, type TreeLine } from './epics'
+import { GUTTER, HELP, type Look, type Sign } from './help'
 import { configureCommand, detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { github } from './github'
@@ -35,6 +36,7 @@ const FOLDED: DetailFolds = { description: false, commentsShut: false, comments:
 const folds = atom({ plugin: 'whats-next', key: 'folds' } as const, FOLDED)
 const scrolled = atom({ plugin: 'whats-next', key: 'scrolled' } as const, 0)
 const menuOpen = atom({ plugin: 'whats-next', key: 'menuOpen' } as const, false)
+const helpShown = atom({ plugin: 'whats-next', key: 'helpShown' } as const, false)
 const iconsChosen = atom({ plugin: 'whats-next', key: 'icons' } as const, null)
 const compactChosen = atom({ plugin: 'whats-next', key: 'compact' } as const, null)
 const epics = atom({ plugin: 'whats-next', key: 'epics' } as const, { kind: 'idle' })
@@ -455,6 +457,27 @@ async function openIssue($: EngineInterface, pane: string, n: number | null) {
   await showIssue($, pane, n)
 }
 
+// How far a pane's detail was scrolled when the help page opened over it,
+// by pane id: Back scrolls it there again.
+const scrolledBeforeHelp = new Map<string, number>()
+
+// The help page (DRAWING.md, The help page) in pane `pane`, over what it
+// shows, at its top; Back returns to that, as it was.
+async function showHelp($: EngineInterface, pane: string) {
+  if (await read($, memberOf(helpShown, { requestId: pane }))) return
+  scrolledBeforeHelp.set(pane, await read($, memberOf(scrolled, { requestId: pane })))
+  await update($, memberOf(menuOpen, { requestId: pane }), () => false)
+  await update($, pickerOpen, () => false)
+  await update($, memberOf(scrolled, { requestId: pane }), () => 0)
+  await update($, memberOf(helpShown, { requestId: pane }), () => true)
+}
+
+async function leaveHelp($: EngineInterface, pane: string) {
+  await update($, memberOf(menuOpen, { requestId: pane }), () => false)
+  await update($, memberOf(scrolled, { requestId: pane }), () => scrolledBeforeHelp.get(pane) ?? 0)
+  await update($, memberOf(helpShown, { requestId: pane }), () => false)
+}
+
 // Shows issue `n` in pane `pane`, reached from issue `from`'s Blocked by or
 // Blocks: Back returns to `from`.
 async function followIssue($: EngineInterface, pane: string, from: number, n: number) {
@@ -848,6 +871,7 @@ const focusMoved: Hook<'ui.focus'> = async ($, e, next) => {
 // names itself in its title row again.
 const paneClosed: Hook<'ui.close'> = async ($, e, next) => {
   await update($, panesOpen, ids => ids.filter(id => id !== e.id))
+  await update($, memberOf(helpShown, { requestId: e.id }), () => false)
   return next(e)
 }
 
@@ -1441,6 +1465,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // its hotkey and what pressing it does. Pressing one shuts the menu.
   type Action = { key: string; label: string; hotkey: string; onPress: () => unknown }
   const refreshAction: Action = { key: 'refresh', label: 'Refresh', hotkey: 'r', onPress: () => counted($, 'Refresh', () => refresh($)) }
+  // Help, the last line of every menu but the help page's own.
+  const helpAction: Action = { key: 'help', label: 'Help', hotkey: 'h', onPress: () => showHelp($, e.requestId) }
   const menuShown = await read($, memberOf(menuOpen, e))
   const run = (a: Action) => async () => {
     await update($, memberOf(menuOpen, e), () => false)
@@ -1521,7 +1547,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     return (
       <Box key="top" flexDirection="column" flexShrink={0}>
         <Box key="title" height={1} flexShrink={0}>
-          {hotkeys([refreshAction], shown ? 'milestone' : 'menu')}
+          {hotkeys([refreshAction, helpAction], shown ? 'milestone' : 'menu')}
           {!tabbed && (
             <Text bold wrap="truncate-end">
               {name}
@@ -1566,7 +1592,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         )),
       )
     }
-    return menuLines([refreshAction])
+    return menuLines([refreshAction, helpAction])
   }
   // A detail: its top row, which stays, then its rows, scrolled by the mod
   // (DRAWING.md, A detail scrolls), then the bottom line, which stays.
@@ -1612,6 +1638,76 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       {action && <Button key="refresh" label={action.label} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />}
     </Box>
   )
+
+  // The help page, in place of the list or detail it was opened over
+  // (DRAWING.md, The help page): each sign drawn by the helpers the panes
+  // draw it with, in a gutter, and its words wrapped under themselves.
+  if (await read($, memberOf(helpShown, e))) {
+    const now = await $.clock.now()
+    const LOOK: Record<Look, Record<string, unknown>> = {
+      plain: {},
+      dim: { dimColor: true },
+      blue: { color: 'suggestion' },
+      green: { color: 'success' },
+      amber: { color: 'warning' },
+      red: { color: 'error' },
+      grey: { color: 'inactive' },
+      purple: { color: 'merged' },
+    }
+    const signOf = (x: Sign): RenderChildren => {
+      switch (x.kind) {
+        case 'mark':
+          return markText(markOf(x.standing, x.fold, x.closed))
+        case 'due':
+          return dueDate('due', new Date(now + x.days * 86400000).toISOString(), now, { form: 'short' })
+        case 'bar':
+          return countText(x.closed, x.total, true)
+        case 'forYou':
+          return joined(forYou({ closed: 0, total: 0, ...x }))
+        case 'blockedBy':
+          return [
+            <Text key="by" dimColor>
+              {'⊘ '}
+            </Text>,
+            <Text key="number" color="suggestion">{`#${x.number}`}</Text>,
+          ]
+        case 'label':
+          return labelTexts([{ name: x.name, color: x.color }])
+        case 'text':
+          return x.parts.map((p, k) => (
+            <Text key={`part-${k}`} {...LOOK[p.look]}>
+              {p.text}
+            </Text>
+          ))
+      }
+    }
+    const room = Math.max(10, columns - GUTTER)
+    const body: RenderChildren[] = HELP.flatMap((section, k) => [
+      ...(k > 0 ? [<Box key={`help-gap-${k}`} height={1} flexShrink={0} />] : []),
+      rule(`help-rule-${k}`, section.name),
+      ...section.lines.flatMap((l, j) =>
+        wrap(l.words, room).map((words, w) => (
+          <Box key={`help-${k}-${j}-${w}`} height={1} flexShrink={0}>
+            <Box key="sign" width={GUTTER} flexShrink={0}>
+              {w === 0 && <Text wrap="truncate-end">{signOf(l.sign)}</Text>}
+            </Box>
+            {line('words', words)}
+          </Box>
+        )),
+      ),
+    ])
+    const top = (
+      <Box key="top" flexDirection="column" flexShrink={0}>
+        <Box key="title" height={1} flexShrink={0}>
+          {hotkeys([refreshAction], 'back')}
+          <Button key="back" label="←" hotkey="b" onPress={() => leaveHelp($, e.requestId)} />
+          <Box flexGrow={1} />
+          {menuButton}
+        </Box>
+      </Box>
+    )
+    return detailFrame(top, body, menuLines([refreshAction]))
+  }
 
   // Setup passed and Icons is still ask: the one-time choice, before the list.
   if (s.kind === 'ready' && r && icons === 'ask') {
@@ -1720,7 +1816,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // Lines of text that may run long, each cut to the pane: a detail counts its rows.
     const lines = (key: string, text: string, props: Record<string, unknown> = {}) =>
       wrap(text, columns).map((t, k) => line(`${key}-${k}`, t || ' ', props))
-    let actions: Action[] = [refreshAction]
+    let actions: Action[] = [refreshAction, helpAction]
     let note: string | undefined
     let prompt: RenderChildren = null
     if (d.kind === 'loading' || d.kind === 'idle') body.push(line('loading', `Loading #${open}…`, { dimColor: true }))
@@ -1871,6 +1967,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           : []),
         { key: 'open', label: 'Open in Browser', hotkey: 'o', onPress: () => openUrl($, i.url) },
         refreshAction,
+        helpAction,
       ]
       note = canAct
         ? undefined
@@ -2143,6 +2240,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             ]
           : []),
         refreshAction,
+        helpAction,
       ]
       const error = await read($, milestoneError)
       if (error) {
@@ -2576,11 +2674,15 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 }
 
 // /next opens both panes with What's next in front, and so does /next next
-// (n); /next epics (e) puts Epics in front. `name`: the command as registered.
+// (n); /next epics (e) puts Epics in front; /next help opens What's next on
+// the help page. `name`: the command as registered.
 async function runNext($: EngineInterface, name: string, word: string) {
   const lower = word.toLowerCase()
-  const want = lower === '' || lower === 'next' || lower === 'n' ? 'both' : lower === 'epics' || lower === 'e' ? 'epics' : null
-  if (!want) return { text: `/${name} does not know "${word}". Try /${name} for What's next in front, or /${name} epics (or e) for Epics.` }
+  const want =
+    lower === '' || lower === 'next' || lower === 'n' ? 'both' : lower === 'epics' || lower === 'e' ? 'epics' : lower === 'help' ? 'help' : null
+  if (!want) {
+    return { text: `/${name} does not know "${word}". Try /${name} for What's next in front, /${name} epics (or e) for Epics, or /${name} help.` }
+  }
   const openNext = async (title: string) => {
     await $.ui.open({ id: PANE, title })
     await update($, panesOpen, ids => (ids.includes(PANE) ? ids : [...ids, PANE]))
@@ -2617,6 +2719,10 @@ async function runNext($: EngineInterface, name: string, word: string) {
     await update($, panesOpen, ids => (ids.includes(MILESTONES_PANE) ? ids : [...ids, MILESTONES_PANE]))
   } else if (ms !== null && ms.length === 0 && open.includes(MILESTONES_PANE)) {
     await $.ui.close({ id: MILESTONES_PANE })
+  }
+  if (want === 'help') {
+    await showHelp($, PANE)
+    return { text: "What's Next's help is open in What's next: what each sign and colour means." }
   }
   const o = await read($, overview)
   if (s.kind !== 'ready' || !r) return { text: "What's Next needs setting up: see its pane." }
@@ -2658,7 +2764,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: taken ? FALLBACK_COMMAND : COMMAND,
       description: "Your issues and what's next, for this repo",
-      argumentHint: '[epics]',
+      argumentHint: '[epics | help]',
     })
     if (taken) $.ui.toast("/next is taken by another command: What's Next is /whats-next in this session.")
     // A reload brings new code but keeps the session's state, which the old

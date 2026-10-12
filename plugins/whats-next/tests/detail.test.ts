@@ -566,6 +566,7 @@ test('with write:issue and push, Assign Me and Close are in the menu, and hidden
     'close',
     'open',
     'refresh',
+    'help',
     'back',
     'prompt',
     'menu',
@@ -586,7 +587,7 @@ test('with write:issue and push, Assign Me and Close are in the menu, and hidden
   // The menu open: a line for each, its words then its hotkey.
   await ui.press({ key: 'menu' })
   const menu = (await keys(ui)).filter(k => k.startsWith('menu-'))
-  expect(menu).toEqual(['menu-assign', 'menu-close', 'menu-open', 'menu-refresh'])
+  expect(menu).toEqual(['menu-assign', 'menu-close', 'menu-open', 'menu-refresh', 'menu-help'])
   const shown = await texts(ui)
   for (const [label, key] of [
     ['Assign Me', 'a'],
@@ -679,11 +680,11 @@ for (const [why, rights, how] of [
   test(`read only (${why}): no Assign or Close, one line on how in the menu`, TOKEN, async ($, on) => {
     world(on, FULL, [], [], 'open', { ...rights })
     const ui = await opened($)
-    expect(await keys(ui)).toEqual(['open', 'refresh', 'back', 'prompt', 'menu', 'follow-24', 'follow-19', 'follow-31', 'comments-section', 'comment-0', 'comment-1'])
+    expect(await keys(ui)).toEqual(['open', 'refresh', 'help', 'back', 'prompt', 'menu', 'follow-24', 'follow-19', 'follow-31', 'comments-section', 'comment-0', 'comment-1'])
     // The line on how shows with the menu open, dim, under its lines.
     expect(await texts(ui)).not.toContain(how)
     await ui.press({ key: 'menu' })
-    expect((await keys(ui)).filter(k => k.startsWith('menu-'))).toEqual(['menu-open', 'menu-refresh'])
+    expect((await keys(ui)).filter(k => k.startsWith('menu-'))).toEqual(['menu-open', 'menu-refresh', 'menu-help'])
     // Wrapped to the menu's width, each line its own Text.
     const all = await found(ui)
     const at = all.findIndex(t => t.text.startsWith('Assign and close'))

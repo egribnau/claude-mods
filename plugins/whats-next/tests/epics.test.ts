@@ -237,7 +237,7 @@ test('/next with an unknown word opens nothing and says what it knows', TOKEN, a
   const out = await $.command.run(run('milestones'))
   expect(opened).toEqual([])
   expect(out).toEqual(
-    expect.objectContaining({ text: `/next does not know "milestones". Try /next for What's next in front, or /next epics (or e) for Epics.` }),
+    expect.objectContaining({ text: `/next does not know "milestones". Try /next for What's next in front, /next epics (or e) for Epics, or /next help.` }),
   )
 })
 
