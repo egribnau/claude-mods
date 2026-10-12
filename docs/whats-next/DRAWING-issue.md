@@ -54,6 +54,7 @@ it is with.
 | Issue detail, the heading and Blocked by | the same, `✓` when closed (#72, built 0.69.0) |
 | Issue detail, Blocks | `⊘`, or `●` when yours; `✓` when closed (#72, built 0.69.0) |
 | Issue detail, Epic | the same, its children not counted as what blocks it; `✓` when closed (#72, built 0.69.0) |
+| Issue detail, Children | the same for each open child; the closed ones one grey line, `✓ 3 closed` (#86, built 0.73.0) |
 
 ## Number and title
 
@@ -82,7 +83,7 @@ place of its kind.
 | Milestones | one for every milestone folded open | bold for an epic |
 | Milestone detail, Issues | one for the tree | bold for an epic |
 | Issue detail, heading | the mark, then `#n` blue; the heading grey as a whole once closed | wraps over two lines |
-| Issue detail, Blocked by, Blocks, Pull requests | one for the three, see Detail lines | cut |
+| Issue detail, Epic, Children, Blocked by, Blocks, Pull requests | one for them all, see Detail lines | cut |
 
 ## The facts line
 
@@ -222,7 +223,8 @@ Drawn by: the issue detail in `renderPane`, the rule by `rule`.
 
 ## Detail lines that name an issue
 
-Blocked by, Blocks and Pull requests in the issue detail: one line each,
+Epic (or Parent), Children, Blocked by, Blocks and Pull requests in the
+issue detail: one line each,
 `#n title state`, under a dim key in an 11-column gutter, the key on the
 first line of its group only, as every key of the detail. The keys are
 words, as GitHub and GitLab have them: `Blocked by`, `Blocks`, the longest
@@ -234,7 +236,7 @@ and not `#61`, which there is an issue (#62, built 0.68.0, decided 3d).
 Under Blocks the issue's own epic is left out: on Forgejo an epic depends on
 its children, so it waits on each of them, but it is already the `Epic`
 line (#62, built 0.68.0, decided 3c). One number
-column for the three, as wide as the longest number there, numbers at its
+column for them all, as wide as the longest number there, numbers at its
 right, so the titles start in one column. An issue's line has its mark
 before the number, as the lists draw it (Marks), and no state word: the
 mark says it (#72, built 0.69.0; 0.68.8 had `open` and `blocked` at the right, and
@@ -243,18 +245,20 @@ a red number for Blocked by).
 | Line | Mark | Number | At the right |
 |---|---|---|---|
 | Epic, open | `●` `◌` `○` as Marks, as its own heading: its children not counted as what blocks it | blue | with others: their name, dim |
+| Children, open | `●` `⊘` `◌` `○` as Marks; blocked dims the line | blue | with others: their name, dim |
+| Children, closed | none: one grey line for them all, `✓ 3 closed`, in the mark column, as under an unfolded epic in the lists (DRAWING.md, Counts and states) | | nothing |
 | Blocked by, open | `●` `⊘` `◌` `○` as Marks; blocked dims the line | blue, as everywhere: the key says it holds this one up | with others: their name, dim |
 | Blocks, open | `⊘`, the line dim: it waits on this issue, so it stands blocked; `●` green when it is yours (yours wins over blocked) | blue | nothing |
 | Pull request, open | none: marks are for issues | blue | nothing |
 | Pull request, merged | none | blue | `merged` purple |
 | any, closed | `✓`, the whole line grey, no strikethrough | grey | nothing |
 
-Blocked by and Blocks lines are plain buttons: the focus inverts them,
+Epic, Children, Blocked by and Blocks lines are plain buttons: the focus inverts them,
 Enter opens that issue in the same pane, and Back returns. Pull request
 lines are not buttons.
 
 The facts of the issue detail, top to bottom, in the facts line's order
-and then what only the detail has: Epic (or Parent), Blocked by, Blocks,
+and then what only the detail has: Epic (or Parent), Children, Blocked by, Blocks,
 Due, Milestone, Labels, then Branch, Time, PRs (or MRs), Commits. How old
 it is is on the line under the title (#62, built 0.68.0, decided 3a).
 
@@ -262,6 +266,21 @@ First among the facts, the issue it is a child of, if any:
 one line drawn and pressed as a Blocked by line, number blue, under the
 key `Epic`, or `Parent` when it is not an epic (on GitHub any issue can
 be a parent) (#62, built 0.68.0, decided 3b).
+
+Then its children, under the key `Children`, on every forge: an epic's on
+Forgejo (the issues it depends on) and GitLab (the issues it links as
+related), other epics left out as TERMINOLOGY.md says; on GitHub the
+sub-issues of any issue that has them. The open ones in the order the
+forge gives them, each a line drawn and pressed as a Blocked by line;
+the closed ones counted on one grey line, `✓ 3 closed`, not buttons.
+Up, then down, then what it waits on (#86, built 0.73.0, decided 1 and
+2). No children, or the forge would not say: no Children key.
+
+Blocked by then holds only what it waits on outside its children: on
+Forgejo an epic depends on each child, and those are its Children lines,
+not what blocks it, as its mark and the facts line's `⊘ n` already count
+it (#64). Another epic it depends on stays under Blocked by. All its
+blockers its children: no Blocked by key (#86, built 0.73.0, decided 3).
 
 The other lines of a detail: Due (long form), Branch plain, Time,
 Labels, Commits (sha dim, message cut, age dim at the right; three at

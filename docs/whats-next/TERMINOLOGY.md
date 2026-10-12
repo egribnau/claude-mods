@@ -18,7 +18,7 @@ DRAWING.md and DRAWING-issue.md.
 | milestone | A forge milestone of the repo. |
 | due date | The date an issue or a milestone is due, if it has one. |
 | epic | An issue with the Epic label (the label is a setting). |
-| child | An issue an epic holds, or on GitHub any issue. On Forgejo: an issue the epic depends on, other epics left out (an epic that depends on another waits for it). On GitLab: an issue it links as related, other epics left out (a related link has no direction). On GitHub: a sub-issue, of any issue. Only on GitHub does a child have children of its own, and unfold to them. |
+| child | An issue an epic holds, or on GitHub any issue. On Forgejo: an issue the epic depends on, other epics left out (an epic that depends on another waits for it). On GitLab: an issue it links as related, other epics left out (a related link has no direction). On GitHub: a sub-issue, of any issue. Only on GitHub does a child have children of its own, and unfold to them. The issue detail lists them under `Children`, apart from Blocked by (#86). |
 | parent | The issue an issue is a child of: its epic, or on GitHub any parent issue. The issue detail names it `Epic`, or `Parent` when it is not an epic (#62, built 0.68.0). |
 | pull request | A forge's request to merge a branch, `PR`; GitLab calls it a merge request, `MR`, numbered `!61`. The panes use the forge's word: `PRs` or `MRs` (#62, built 0.68.0). |
 | blocker | An open issue that another one waits on. On Forgejo: a dependency. On GitLab EE: a blocking link. On GitHub: a "blocked by" relation. |
