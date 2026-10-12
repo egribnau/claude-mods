@@ -265,7 +265,9 @@ it is is on the line under the title (#62, built 0.68.0, decided 3a).
 First among the facts, the issue it is a child of, if any:
 one line drawn and pressed as a Blocked by line, number blue, under the
 key `Epic`, or `Parent` when it is not an epic (on GitHub any issue can
-be a parent) (#62, built 0.68.0, decided 3b).
+be a parent) (#62, built 0.68.0, decided 3b). On Forgejo and GitLab an
+epic has none: an epic that depends on it waits for it, as in Epics, so
+it is under Blocks (0.74.3).
 
 Then its children, under the key `Children`, on every forge: an epic's on
 Forgejo (the issues it depends on) and GitLab (the issues it links as

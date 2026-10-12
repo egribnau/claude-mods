@@ -118,7 +118,7 @@ function world(on: On, answers: Answers, opened: string[] = []) {
     const page = Number(url.searchParams.get('page') ?? '1')
     if (url.pathname.endsWith('/issues/search')) return reply(200, page === 1 ? [LISTED] : [])
     if (url.pathname.endsWith('/repos/boats/radar/issues')) {
-      return reply(200, url.searchParams.get('labels') === 'epic' && page === 1 ? [EPIC] : [])
+      return reply(200, url.searchParams.get('labels') === 'epic' && page === 1 ? (answers.epics ?? [EPIC]) : [])
     }
     const path = e.url.startsWith(API) ? url.pathname.slice(new URL(API).pathname.length) : ''
     if (path === '') {
@@ -481,6 +481,26 @@ test("an epic whose only blockers are its children has no Blocked by", TOKEN, as
   expect(all).toContain('Children   ')
   expect(all).not.toContain('Blocked by ')
   expect(all.some(t => t.includes('closed'))).toBe(false)
+})
+
+// On Forgejo an epic another epic depends on is no child of it: that one
+// waits for it, so it is under Blocks, and the detail names no Epic.
+test('an epic another epic depends on names it under Blocks, not on an Epic line', TOKEN, async ($, on) => {
+  world(on, {
+    ...EPIC_DEPS,
+    epics: [EPIC, OTHER_EPIC],
+    '/issues/12': { ...ISSUE, ...OTHER_EPIC, user: { login: 'alice' }, comments: 0 },
+    '/issues/12/dependencies': [],
+    '/issues/12/blocks': [{ ...EPIC, repository: { full_name: 'boats/radar' } }],
+  })
+  const ui = await opened($)
+  await ui.press({ key: 'follow-30' })
+  await ui.press({ key: 'follow-12' })
+  const all = await texts(ui)
+  expect(has(all, 'Settings, one place')).toBe(true)
+  expect(all).not.toContain('Epic       ')
+  expect(all).toContain('Blocks     ')
+  expect(all.indexOf('Blocks     ')).toBeLessThan(all.findIndex(t => t.includes('Token handling')))
 })
 
 test('an issue that is no epic has no Children', TOKEN, async ($, on) => {

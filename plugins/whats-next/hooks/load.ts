@@ -199,8 +199,11 @@ export async function lastClosedIn(t: Tracker, known: Memory, pick: string, me: 
   return found
 }
 
-// The open epic issue `n` is a child of, asked once and remembered.
+// The open epic issue `n` is a child of, asked once and remembered. Where
+// children do not nest, an epic is no child: an epic that depends on it
+// waits for it (README, Epics), and nothing is asked.
 async function parentOf(t: Tracker, known: Memory, n: number): Promise<number | null> {
+  if (!t.nested && known.epics.some(e => e.number === n)) return null
   if (!known.parents.has(n)) known.parents.set(n, await t.parentOf(n).catch(() => null))
   return known.parents.get(n) ?? null
 }
