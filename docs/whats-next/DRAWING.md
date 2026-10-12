@@ -11,7 +11,8 @@ those helpers are in plugins/whats-next/hooks/register.tsx (inside
 or colour.
 
 Words carry the state; colour and the mark repeat it, never replace it.
-One exception: closed is the mark `✓` alone. The Icons setting changes
+Two exceptions: closed is the mark `✓` alone, and an open issue is its
+mark alone (`●` `⊘` `◌` `○`), never the word `open` (proposal). The Icons setting changes
 button labels only, never marks or states; the menu's `☰` and Back's `←`
 are the same with Icons on and off (The menu).
 

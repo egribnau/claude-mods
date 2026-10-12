@@ -51,6 +51,9 @@ it is with.
 | What's next, the blocked at the end of the Queue | `⊘` |
 | Epics, a child | `●` `⊘` `◌` `○`, or `⊕`/`⊖` coloured so when it has children |
 | Milestones and its detail, an issue under a milestone or an epic | the same |
+| Issue detail, the heading and Blocked by | the same, `✓` when closed (proposal) |
+| Issue detail, Blocks | `⊘`, or `●` when yours; `✓` when closed (proposal) |
+| Issue detail, Epic | the same, its children not counted as what blocks it; `✓` when closed (proposal) |
 
 ## Number and title
 
@@ -78,7 +81,7 @@ place of its kind.
 | Epics | one for every group and tree | bold for an epic |
 | Milestones | one for every milestone folded open | bold for an epic |
 | Milestone detail, Issues | one for the tree | bold for an epic |
-| Issue detail, heading | `#n` blue, the heading grey as a whole once closed | wraps over two lines |
+| Issue detail, heading | the mark, then `#n` blue; the heading grey as a whole once closed | wraps over two lines |
 | Issue detail, Blocked by, Blocks, Pull requests | one for the three, see Detail lines | cut |
 
 ## The facts line
@@ -161,23 +164,29 @@ what, `duePart` the due date before it; `partsLine` draws it, one text.
 
 ## The issue detail's heading
 
-The title, then one line under it, as the forges draw it: the state in
-words, then who opened it and when, as the facts line says it (#62, built 0.68.0, decided 1a).
+The title, with its mark in front of the number as the lists draw it
+(Marks), then one line under it: who opened it and when, as the facts line
+says it. A closed issue's mark is `✓`, the heading grey as a whole. No
+state word: `open` is said by the mark, as everywhere else (proposal; 0.68.8
+had `open` or `closed` before the opened block, #62 decided 1a which blocks
+go on the line, not that the state is a word).
 
 | # | Block | Shown when | Drawn as |
 |---|---|---|---|
-| 1 | state | always | `open` or `closed`, dim |
-| 2 | opened | always | `✎ 3w jdoe`: the pencil, the age, who opened it; dim |
+| 0 | mark | always, before the number | `●` `⊘` `◌` `○` as Marks, an epic too, its own children not counted as what blocks it; `✓` grey when closed (proposal) |
+| 1 | opened | always | `✎ 3w jdoe`: the pencil, the age, who opened it; dim |
 
 Not on the line: the milestone, which is a fact under its name,
 `Milestone  v0.3.0 · ⧗ 30 Oct`, its due date after it (Detail lines), so
 `⧗` there is never the issue's own; how many comments, which the rule of
 the comments counts; when it was updated, which the newest comment shows.
 
-The milestone detail's heading reads the same: the title, then one line,
-its state (`open`, or `closed 3 days ago` where the forge says when), and
-its due date a fact under the key `Due`, in the same 11-column gutter
-(#62, built 0.68.0, decided 6). A milestone has no author, so no `✎`.
+The milestone detail's heading reads the same: an open milestone has no
+mark and no line under its title; a closed one is `✓` before its title,
+grey, and under it when it closed (`3 days ago`) where the forge says
+(proposal; 0.68.8 had `open`, or `closed 3 days ago`). Its due date is a
+fact under the key `Due`, in the same 11-column gutter (#62, built 0.68.0,
+decided 6). A milestone has no author, so no `✎`.
 
 ## The issue detail's comments
 
@@ -214,17 +223,19 @@ Under Blocks the issue's own epic is left out: on Forgejo an epic depends on
 its children, so it waits on each of them, but it is already the `Epic`
 line (#62, built 0.68.0, decided 3c). One number
 column for the three, as wide as the longest number there, numbers at its
-right, so the titles start in one column; the state a word at the right
-of the line.
+right, so the titles start in one column. An issue's line has its mark
+before the number, as the lists draw it (Marks), and no state word: the
+mark says it (proposal; 0.68.8 had `open` and `blocked` at the right, and
+a red number for Blocked by).
 
-| Line | Number | State word |
-|---|---|---|
-| Blocked by, open | red: it holds this one up | `open` red |
-| Blocked by, open and itself blocked | red | `blocked`, dim (not grey: grey is closed) |
-| Blocks, open | blue | `open` plain |
-| Pull request, open | blue | `open` plain |
-| Pull request, merged | blue | `merged` purple |
-| any, closed | grey | `✓` alone, the whole line grey, no strikethrough |
+| Line | Mark | Number | At the right |
+|---|---|---|---|
+| Epic, open | `●` `◌` `○` as Marks, as its own heading: its children not counted as what blocks it | blue | with others: their name, dim |
+| Blocked by, open | `●` `⊘` `◌` `○` as Marks; blocked dims the line | blue, as everywhere: the key says it holds this one up | with others: their name, dim |
+| Blocks, open | `⊘`, the line dim: it waits on this issue, so it stands blocked; `●` green when it is yours (yours wins over blocked) | blue | nothing |
+| Pull request, open | none: marks are for issues | blue | nothing |
+| Pull request, merged | none | blue | `merged` purple |
+| any, closed | `✓`, the whole line grey, no strikethrough | grey | nothing |
 
 Blocked by and Blocks lines are plain buttons: the focus inverts them,
 Enter opens that issue in the same pane, and Back returns. Pull request
