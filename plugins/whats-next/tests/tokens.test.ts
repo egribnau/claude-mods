@@ -254,6 +254,22 @@ test('Issue detail: whom a blocker is with, and the requests for what a closed i
   noToken(said)
 })
 
+test("Issue detail: a child under Children, and whom it is with, carry no token", GH, async ($, on) => {
+  const said = world(on, {
+    answers: {
+      '/repos/boats/radar/issues/14/sub_issues': () => json(200, [{ ...issue(30, `Rotate ${TOKEN}`), assignees: [person(`anna-${TOKEN}`, 501)] }]),
+    },
+  })
+  const ui = await shown($)
+  await ui.press({ key: 'pick-14' })
+  said.push(...(await texts(ui)))
+
+  expect(said).toContain('Children   ')
+  expect(said.some(s => s.includes('Rotate <token>'))).toBe(true)
+  expect(said.some(s => s.trim() === 'anna-<token>')).toBe(true)
+  noToken(said)
+})
+
 test('Prompt: the prompt it drafts, its toast and the Debug counter carry no token, even from an issue that names it', GH, async ($, on) => {
   const said = world(on, { title: `Rotate ${TOKEN}` })
   const ui = await shown($)

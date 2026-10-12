@@ -233,6 +233,16 @@ export async function blockedOutside(t: Tracker, known: Memory, n: number, open:
   return open.some(b => !children.includes(b))
 }
 
+// The children of issue `n`, as the issue detail lists them: an epic's, or
+// on a forge where children nest any issue's. From the children Epics
+// loaded, else asked once and remembered. null for an issue that holds
+// none, or when the forge would not say.
+export async function childrenOf(t: Tracker, known: Memory, n: number, me: string | null): Promise<EpicChild[] | null> {
+  if (!known.epics.some(e => e.number === n) && !t.nested) return null
+  if (!known.children.has(n)) known.children.set(n, await t.children(n, me).catch(() => null))
+  return known.children.get(n) ?? null
+}
+
 // The epics above issue `n`, nearest first: its epic, and on a forge where
 // children nest, each parent up the tree, a loop stopped where it repeats.
 async function epicsAbove(t: Tracker, known: Memory, n: number): Promise<number[]> {

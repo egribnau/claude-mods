@@ -443,3 +443,48 @@ test('what it blocks is ⊘ while it is open, a green ● when that one is yours
   expect(found[at - 1]?.text).toBe('● ')
   expect(found[at - 1]?.props.color).toBe('success')
 })
+
+// Epic #30 depends on its children #29, #19 and #18, two of them closed,
+// and on epic #12, which it waits on.
+const OTHER_EPIC = { ...EPIC, number: 12, title: 'Settings, one place', html_url: 'https://git.example.org/boats/radar/issues/12' }
+const EPIC_DEPS: Answers = {
+  ...FULL,
+  '/issues/30/dependencies': [
+    { ...LISTED, repository: { full_name: 'boats/radar' } },
+    { ...LISTED, number: 19, title: 'Drop FORGEJO_TOKEN', state: 'closed' },
+    { ...LISTED, number: 18, title: 'Token from settings only', state: 'closed' },
+    OTHER_EPIC,
+  ],
+}
+
+test("an epic's detail lists its children under Children, the closed ones counted, and Blocked by only what it waits on", TOKEN, async ($, on) => {
+  world(on, EPIC_DEPS)
+  const ui = await opened($)
+  await ui.press({ key: 'follow-30' })
+  const all = await texts(ui)
+  expect(all).toContain('Children   ')
+  expect(all).toContain('✓ 2 closed')
+  expect(all.indexOf('Children   ')).toBeLessThan(all.indexOf('Blocked by '))
+  // #29 under Children, #12 alone under Blocked by; the closed ones are no buttons.
+  const follows = (await ui.findAll({ type: 'Button' })).map(b => (b as unknown as { props: { key: string } }).props.key).filter(k => k.startsWith('follow-'))
+  expect(follows).toEqual(['follow-29', 'follow-12'])
+  expect(has(all, 'Drop FORGEJO_TOKEN')).toBe(false)
+  await ui.press({ key: 'follow-29' })
+  expect(has(await texts(ui), 'Docs: config keys')).toBe(true)
+})
+
+test("an epic whose only blockers are its children has no Blocked by", TOKEN, async ($, on) => {
+  world(on, { ...EPIC_DEPS, '/issues/30/dependencies': [{ ...LISTED, repository: { full_name: 'boats/radar' } }] })
+  const ui = await opened($)
+  await ui.press({ key: 'follow-30' })
+  const all = await texts(ui)
+  expect(all).toContain('Children   ')
+  expect(all).not.toContain('Blocked by ')
+  expect(all.some(t => t.includes('closed'))).toBe(false)
+})
+
+test('an issue that is no epic has no Children', TOKEN, async ($, on) => {
+  world(on, FULL)
+  const all = await texts(await opened($))
+  expect(all).not.toContain('Children   ')
+})

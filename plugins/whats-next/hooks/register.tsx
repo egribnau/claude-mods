@@ -9,7 +9,7 @@ import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
 import { day, dueSoon, dueText, duration, readable, wrap } from './issue'
-import { blockedOutside, changesSince, epicTree, growTree, loadRepo, milestoneIssues, milestoneKnown, noteChange, parentRef, startingPick, whatsNext, type Memory } from './load'
+import { blockedOutside, changesSince, childrenOf as childrenIn, epicTree, growTree, loadRepo, milestoneIssues, milestoneKnown, noteChange, parentRef, startingPick, whatsNext, type Memory } from './load'
 import { measure } from './measure'
 import { waitingText } from './next'
 import { message, withoutToken, type Send, type Tracker } from './tracker'
@@ -431,19 +431,25 @@ async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) 
     if (i.state !== 'open' || (me !== null && i.assignees.includes(me))) return false
     return memory ? await blockedOutside(tracker($, r), memory, n, open).catch(() => open.length > 0) : open.length > 0
   }
+  // The issues it holds, for its Children lines: an epic's, or on GitHub
+  // any issue's sub-issues.
+  const childrenOf = async (): Promise<Ref[] | null> => {
+    const all = memory ? await childrenIn(tracker($, r), memory, n, me).catch(() => null) : null
+    return all ? all.map(c => ({ number: c.number, title: c.title, state: c.state, assignees: c.assignees, blocked: c.blocked })) : null
+  }
   if (known) {
-    const [parent, blocked] = await Promise.all([parentOf(), blockedOf(known)])
-    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue: known, parent, blocked }))
+    const [parent, blocked, children] = await Promise.all([parentOf(), blockedOf(known), childrenOf()])
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue: known, parent, blocked, children }))
     return
   }
   await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'loading', number: n }))
   try {
-    const [issue, parent] = await Promise.all([tracker($, r).issue(n, features), parentOf()])
+    const [issue, parent, children] = await Promise.all([tracker($, r).issue(n, features), parentOf(), childrenOf()])
     const blocked = await blockedOf(issue)
     issuesRead.set(key, issue)
     // Another issue opened while this one loaded wins.
     if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
-    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue, parent, blocked }))
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue, parent, blocked, children }))
   } catch (err) {
     if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
     await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'error', number: n, message: message(err) }))
@@ -1861,6 +1867,14 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // The issue it is a child of, and what it blocks but that epic.
       const parent = d.parent ?? null
       const blocks = (i.blocks ?? []).filter(x => !(parent?.epic && x.number === parent.number))
+      // Its children, the open ones a line each, the closed ones counted; what
+      // blocks it is then only what it waits on outside them: on Forgejo an
+      // epic depends on each child (DRAWING-issue.md, Detail lines that name
+      // an issue).
+      const children = d.children ?? []
+      const openChildren = children.filter(x => x.state !== 'closed')
+      const closedChildren = children.length - openChildren.length
+      const blockedBy = (i.blockedBy ?? []).filter(x => !children.some(c => c.number === x.number))
       // Pull requests under the forge's word, and on GitLab its sign: !61 there is a merge request, #61 an issue.
       const gitlab = t?.name === 'GitLab'
       // One issue or pull request on a line: mark, number, title. An issue's
@@ -1869,11 +1883,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // column; at the right whom it is with, or merged. No state word: the
       // mark says it (DRAWING-issue.md, Detail lines that name an issue). All
       // but pull request lines are buttons that open their issue here.
-      type RefKind = 'parent' | 'blocker' | 'blocks' | 'pull'
+      type RefKind = 'parent' | 'child' | 'blocker' | 'blocks' | 'pull'
       const numberOf = (x: Ref, kind: RefKind) => `${kind === 'pull' && gitlab ? '!' : '#'}${x.number}`
       const refs: [Ref, RefKind][] = [
         ...(parent ? [[parent, 'parent'] as [Ref, RefKind]] : []),
-        ...(i.blockedBy ?? []).map((x): [Ref, RefKind] => [x, 'blocker']),
+        ...openChildren.map((x): [Ref, RefKind] => [x, 'child']),
+        ...blockedBy.map((x): [Ref, RefKind] => [x, 'blocker']),
         ...blocks.map((x): [Ref, RefKind] => [x, 'blocks']),
         ...(i.pulls ?? []).map((x): [Ref, RefKind] => [x, 'pull']),
       ]
@@ -1922,7 +1937,11 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // (DRAWING-issue.md, Detail lines that name an issue).
       const facts: RenderChildren[] = []
       if (parent) facts.push(refLine('parent', parent.epic ? 'Epic' : 'Parent', parent, 'parent'))
-      ;(i.blockedBy ?? []).forEach((x, k) => facts.push(refLine(`blocked-${k}`, k === 0 ? 'Blocked by' : '', x, 'blocker')))
+      openChildren.forEach((x, k) => facts.push(refLine(`child-${k}`, k === 0 ? 'Children' : '', x, 'child')))
+      if (closedChildren > 0) {
+        facts.push(keyed('children-closed', openChildren.length === 0 ? 'Children' : '', <Text color="inactive">{`✓ ${closedChildren} closed`}</Text>))
+      }
+      blockedBy.forEach((x, k) => facts.push(refLine(`blocked-${k}`, k === 0 ? 'Blocked by' : '', x, 'blocker')))
       blocks.forEach((x, k) => facts.push(refLine(`blocks-${k}`, k === 0 ? 'Blocks' : '', x, 'blocks')))
       if (i.due) facts.push(keyed('due', 'Due', dueDate('due-date', i.due, now, { form: 'long', bare: true })))
       if (i.milestone) {

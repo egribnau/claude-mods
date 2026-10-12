@@ -824,3 +824,20 @@ test("GitLab EE: the blocked issue's detail lists what blocks it", GL, async ($,
   expect(all.some(t => t.startsWith('#29'))).toBe(true)
   expect(all.some(t => t.includes('Settings screen rework'))).toBe(true)
 })
+
+test("GitLab: an epic's detail lists its related issues under Children, the closed one counted; no peer epic, nothing under Blocked by", GL, async ($, on) => {
+  const clock = paneWorld(on, false)
+  await clock.set(NOW)
+  const { epics } = await panes($)
+  await epics.press({ key: 'epic-20' })
+
+  const all = await texts(epics)
+  expect(all).toContain('Children   ')
+  expect(all).toContain('✓ 1 closed')
+  expect(all).not.toContain('Blocked by ')
+  const follows = ((await epics.findAll({ type: 'Button' })) as Found[]).map(b => b.key).filter(k => k.startsWith('follow-'))
+  expect(follows).toEqual(['follow-37', 'follow-33', 'follow-44'])
+  // Another project's issue and the peer epic are no children.
+  expect(all.some(t => t.includes('#5 ') || t.includes('#25'))).toBe(false)
+  expect(all.some(t => ERROR.test(t))).toBe(false)
+})

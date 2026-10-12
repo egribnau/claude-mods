@@ -156,7 +156,9 @@ export type Detail =
   // `error`: why the last action on it was refused. `parent`: the issue it
   // is a child of, and whether that is an epic; null for none. `blocked`:
   // it waits on an open issue that is not its own child, for its mark.
-  | { kind: 'ok'; issue: IssueDetail; error?: string; parent?: (Ref & { epic: boolean }) | null; blocked?: boolean }
+  // `children`: the issues it holds, open and closed; null for none, or
+  // when the forge would not say.
+  | { kind: 'ok'; issue: IssueDetail; error?: string; parent?: (Ref & { epic: boolean }) | null; blocked?: boolean; children?: Ref[] | null }
   | { kind: 'error'; number: number; message: string }
 
 // An open issue an epic depends on, as the Epics pane lists it. `mine`: it

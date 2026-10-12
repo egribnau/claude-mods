@@ -245,6 +245,8 @@ type Pane = {
   // GitHub's lists lagging every change, as they do for a few seconds:
   // they keep showing the issue as it was before.
   lag?: boolean
+  // #14's sub-issues.
+  subs?: unknown[]
 }
 
 function paneWorld(on: On, w: Pane) {
@@ -286,6 +288,7 @@ function paneWorld(on: On, w: Pane) {
     }
     if (p === '/repos/boats/radar/issues/14') return reply(200, now)
     if (p === '/repos/boats/radar/issues/14/timeline') return reply(200, TIMELINE)
+    if (p === '/repos/boats/radar/issues/14/sub_issues' && w.subs) return reply(200, w.subs)
     if (p.startsWith('/repos/boats/radar/commits/')) return reply(200, commit(p.split('/').at(-1) ?? '', 'A commit'))
     return reply(404, { message: 'Not Found' })
   })
@@ -426,4 +429,22 @@ test("github.com detail: lists that lag a change still show it at once, Assign M
   await ui.press({ key: 'close' })
   all = await texts(ui)
   expect(all.some(t => t.includes('#14'))).toBe(false)
+})
+
+test('github.com detail: an issue with sub-issues lists them under Children, the closed ones counted', GH, async ($, on) => {
+  paneWorld(on, { subs: [issue(40, { assignees: ['mvos'] }), issue(41), issue(42, { state: 'closed' }), issue(43, { state: 'closed' })] })
+  const ui = await opened($)
+  const all = await texts(ui)
+  expect(all).toContain('Children   ')
+  expect(all).toContain('✓ 2 closed')
+  expect(all.some(t => t.includes('Issue 40'))).toBe(true)
+  expect(all.some(t => t.includes('Issue 42'))).toBe(false)
+  const follows = (await keys(ui)).filter(k => k.startsWith('follow-'))
+  expect(follows).toEqual(['follow-40', 'follow-41'])
+})
+
+test('github.com detail: an issue without sub-issues has no Children', GH, async ($, on) => {
+  paneWorld(on, { subs: [] })
+  const all = await texts(await opened($))
+  expect(all).not.toContain('Children   ')
 })
