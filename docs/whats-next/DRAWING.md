@@ -151,7 +151,7 @@ same rule and joins the table:
 | Milestone filter (What's next, Epics) | short | `30 Oct`, no word before it |
 | Epics pane, a milestone's rule | short | `· ⧗ 30 Oct` |
 | Milestones pane, the line under a milestone | short | `⧗ 30 Oct`, first on the line |
-| Epics and Milestones, the line under a folded epic | short | `⧗ 14 Oct`, the epic's own due date from the lists, first on the line (#45, built 0.66.0) |
+| Epics, Milestones and the milestone detail, an epic's facts line | short | `· ⧗ 14 Oct`, after blocked by and unblocks, as on any issue row; no longer on the for-you line under it (#64, built 0.72.0; was the line under a folded epic, #45) |
 | Issue detail, the issue's milestone | short | `· ⧗ 30 Oct` after the milestone's name, on the Milestone line (#62, built 0.68.0, decided 1a) |
 | An issue row's facts line, the issue's own due date | short | `· ⧗ 14 Oct`, after blocked by, before the milestone (DRAWING-issue.md, The facts line; #45, built 0.66.0) |
 | Issue detail, the issue's own due date | long | `30 Oct, in 19 days` on the Due line |
@@ -301,7 +301,8 @@ Its sections, each under a rule, in this order (decided 3a): How an issue
 stands for you, Rows that fold, Under an issue, Counts, Colours,
 Buttons. No section for the words that stand alone (`all closed`,
 `children unknown`): they say what they mean (#63, 0.70.2). A line is the sign, drawn as the panes draw
-it, in its own colour, in a gutter of 20 columns, then its words, plain
+it, in its own colour, in a gutter as wide as the widest sign and two spaces (17 columns,
+`● 2 · ○ 1 · ⊘ 1`; #64, 0.72.0; was 20), then its words, plain
 (decided 3b): the term from TERMINOLOGY.md, then after `: ` what it
 means, `yours: assigned to you`; where TERMINOLOGY.md has no term, what
 the sign shows (decided 3c). Words too long for the pane wrap under

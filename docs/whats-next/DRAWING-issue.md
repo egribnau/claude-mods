@@ -121,6 +121,7 @@ Drawn by: `issueRow`, its parts through `partsLine`; the due date by `duePart`; 
 | What's next, every row | blocked by, unblocks, due date, milestone (not when the milestone filter is set to one), labels, age |
 | Epics, a child | the same |
 | Milestones, an issue under a milestone | blocked by, unblocks, due date, labels, age |
+| An epic at the top of a tree: Epics, Milestones, the milestone detail | the same as the place's issue rows, folded or unfolded: blocked by (its own children left out), unblocks, due date, milestone (Epics with the filter on All), labels, the Epic label too, age (#64, built 0.72.0) |
 | Issue detail, under the heading | not the facts line: one line of its own, see The issue detail's heading |
 
 ## The for-you line
@@ -135,12 +136,16 @@ others. The lines that stand alone (`children unknown`, `no children`,
 `all closed`, `issues unknown`) stay words: there is no count to put a
 sign before.
 
-The line under a folded epic and the line under a milestone are one
-recipe (#45, built 0.66.0):
+An epic is an issue, so its row has the facts line any issue row has,
+folded or unfolded, its due date there; folded, the for-you line comes
+under it, the counts alone (#64, built 0.72.0). One epic is drawn so in
+Epics, in Milestones and in the milestone detail (#64, built 0.72.0).
+
+The line under a milestone (#45, built 0.66.0):
 
 | # | Block | Shown when | Drawn as |
 |---|---|---|---|
-| 1 | due date | it has one (an epic's own, from the lists; GitHub issues have none) | `⧗ 14 Oct`, short form, red, amber or dim |
+| 1 | due date | it has one | `⧗ 14 Oct`, short form, red, amber or dim |
 | 2 | for you | any of it is known | `● 2 · ○ 2 · ◌ 3 · ⊘ 1`; or `all closed`, amber; or alone `children unknown`, `no children`, `issues unknown` |
 
 A milestone without a due date says nothing of it there; how many of its
@@ -148,7 +153,13 @@ issues are open is read from its count. Folded, a milestone whose issues
 could not be listed says `issues unknown`; folded open, the list under it
 says so.
 
-Under a folded epic, where all its children are closed: `all closed`,
+Under a folded epic, the for-you line is block 2 alone, after its facts
+line, and starts with the word `children`, dim: `children ● 1 · ⊘ 2`.
+The facts line's `⊘ 2` is what the epic itself waits on; without the
+word, the `⊘ 2` of its blocked children under it read as the same thing
+(#64, built 0.72.0, decided 5). `no children` and `children unknown`
+say it already and get no word before them. Where all its children are
+closed: `children all closed`,
 amber, as for every epic or milestone still open (DRAWING.md, Counts and
 states; #45, built 0.65.0). With no children, `no children`; not known,
 `children unknown` (`summary`).
@@ -158,8 +169,8 @@ what, `duePart` the due date before it; `partsLine` draws it, one text.
 
 | Where | Counts |
 |---|---|
-| Epics, under a folded epic | its children |
-| Milestones, under an epic, folded | its children |
+| Epics, under a folded epic | its children, after the word `children` |
+| Milestones and its detail, under an epic, folded | its children, after the word `children` |
 | Milestones, under a milestone | its issues that are not epics, as far as the pane knows them without asking (only `● n` until every issue not yours was checked) |
 | Milestone detail, under the bar | its issues that are not epics |
 
