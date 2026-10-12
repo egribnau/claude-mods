@@ -122,10 +122,13 @@ function detailRoute(timeline: unknown[] | null = TIMELINE) {
   }
 }
 
-test('issue: the last comment, pull requests of this repo with merged, and the three newest commits', async () => {
+test('issue: every comment oldest first, pull requests of this repo with merged, and the three newest commits', async () => {
   const asked: Asked[] = []
   const d = await github(fakeSend(detailRoute(), asked), R, 't', null).issue(14, OFF)
-  expect(d.lastComment).toEqual({ author: 'mvos', when: '2026-10-07T09:00:00Z', body: 'Also mention the desktop app.' })
+  expect(d.commentList).toEqual([
+    { author: 'jdoe', when: '2026-09-20T09:00:00Z', body: 'First thought.' },
+    { author: 'mvos', when: '2026-10-07T09:00:00Z', body: 'Also mention the desktop app.' },
+  ])
   expect(d.pulls).toEqual([
     { number: 61, title: 'Fix the crash', state: 'merged' },
     { number: 63, title: 'Try another way', state: 'open' },
@@ -147,10 +150,10 @@ test('issue: the last comment, pull requests of this repo with merged, and the t
   ])
 })
 
-test('issue: a quiet timeline has no last comment, pull requests or commits, and asks for none', async () => {
+test('issue: a quiet timeline has no comments, pull requests or commits, and asks for none', async () => {
   const asked: Asked[] = []
   const d = await github(fakeSend(detailRoute([labeled]), asked), R, 't', null).issue(14, OFF)
-  expect(d.lastComment).toBeNull()
+  expect(d.commentList).toEqual([])
   expect(d.pulls).toEqual([])
   expect(d.commits).toEqual([])
   expect(asked).toHaveLength(2)
@@ -161,7 +164,7 @@ test('issue: a failing timeline leaves its parts unknown, and the issue loads', 
   expect(d.number).toBe(14)
   expect(d.pulls).toBeNull()
   expect(d.commits).toBeNull()
-  expect(d.lastComment).toBeNull()
+  expect(d.commentList).toBeNull()
 })
 
 // Writes
@@ -306,15 +309,19 @@ async function opened($: Engine) {
   return ui
 }
 
-test('github.com detail: the last comment, pull requests and commits; no Time line', GH, async ($, on) => {
+test('github.com detail: the comments, pull requests and commits; no Time line', GH, async ($, on) => {
   const clock = paneWorld(on, {})
   await clock.set(NOW)
   const ui = await opened($)
   const all = await texts(ui)
 
   expect(all.some(t => t.includes('Issue 14'))).toBe(true)
-  expect(all.some(t => t.startsWith('── Last comment · mvos · 2d ago'))).toBe(true)
+  // The newest comment unfolded under the rule, the older one a line that unfolds it.
+  expect(all.some(t => t.startsWith('− Comments · 2 '))).toBe(true)
+  expect(all).toContain('− mvos · 2d ago')
   expect(all).toContain('Also mention the desktop app.')
+  expect(all).toContain('+ jdoe · 2w ago · First thought.')
+  expect(all).not.toContain('First thought.')
   for (const want of ['#61 ', 'Fix the crash', ' merged', '#63 ', 'Try another way']) {
     expect(all.some(t => t === want || t.includes(want))).toBe(true)
   }
@@ -322,16 +329,21 @@ test('github.com detail: the last comment, pull requests and commits; no Time li
   expect(all.some(t => t.trimEnd() === 'Time' || t.includes('logged') || t.includes('estimated'))).toBe(false)
 })
 
-test('github.com detail: with push rights and a fine-grained token, Assign me and Close show', GH, async ($, on) => {
+test('github.com detail: with push rights and a fine-grained token, Assign Me and Close show', GH, async ($, on) => {
   paneWorld(on, {})
   const ui = await opened($)
   const k = await keys(ui)
   expect(k).toContain('assign')
   expect(k).toContain('close')
-  expect(await labelOf(ui, 'assign')).toBe('Assign me')
+  expect(await labelOf(ui, 'assign')).toBe('Assign Me')
+  // In the menu too, each a line.
+  await ui.press({ key: 'menu' })
+  const m = await keys(ui)
+  expect(m).toContain('menu-assign')
+  expect(m).toContain('menu-close')
 })
 
-test('github.com detail: Assign me sends you as assignee, and the reload shows you assigned', GH, async ($, on) => {
+test('github.com detail: Assign Me sends you as assignee, and the reload shows you assigned', GH, async ($, on) => {
   const sent: Pane['sent'] = []
   paneWorld(on, { sent, scopes: 'repo' })
   const ui = await opened($)
@@ -342,11 +354,11 @@ test('github.com detail: Assign me sends you as assignee, and the reload shows y
   expect(await texts(ui)).toContain('● #14 Issue 14')
 
   await ui.press({ key: 'pick-14' })
-  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
+  expect(await labelOf(ui, 'assign')).toBe('Unassign Me')
   await ui.press({ key: 'assign' })
   expect(sent.at(-1)?.body).toEqual({ assignees: [] })
   await ui.press({ key: 'pick-14' })
-  expect(await labelOf(ui, 'assign')).toBe('Assign me')
+  expect(await labelOf(ui, 'assign')).toBe('Assign Me')
 })
 
 test("github.com detail: Close sends state closed, and the reloaded lists leave #14 out", GH, async ($, on) => {
@@ -366,9 +378,11 @@ test("github.com detail: a refused close says GitHub's message, in red", GH, asy
   const ui = await opened($)
   await ui.press({ key: 'close' })
 
+  // One Text per wrapped line, each red.
   const found = (await ui.findAll({ type: 'Text' })) as { text: string; props: Record<string, unknown> }[]
-  const line = found.find(t => t.text === 'Could not close #14: HTTP 403, Resource not accessible by personal access token.')
-  expect(line?.props.color).toBe('error')
+  const red = found.filter(t => t.props.color === 'error').map(t => t.text)
+  expect(red.length).toBeGreaterThan(1)
+  expect(red.join(' ')).toBe('Could not close #14: HTTP 403, Resource not accessible by personal access token.')
 })
 
 for (const [why, w, notice] of [
@@ -381,12 +395,21 @@ for (const [why, w, notice] of [
     const k = await keys(ui)
     expect(k).not.toContain('assign')
     expect(k).not.toContain('close')
-    expect(k).toContain('work')
-    expect(await texts(ui)).toContain(notice)
+    expect(k).toContain('prompt')
+    // The sentence only with the menu open, dim under its lines.
+    expect((await texts(ui)).join(' ')).not.toContain(notice)
+    await ui.press({ key: 'menu' })
+    const m = await keys(ui)
+    expect(m).not.toContain('menu-assign')
+    expect(m).not.toContain('menu-close')
+    expect(m).toContain('menu-open')
+    const found = (await ui.findAll({ type: 'Text' })) as { text: string; props: Record<string, unknown> }[]
+    const dim = found.filter(t => t.props.dimColor === true).map(t => t.text)
+    expect(dim.join(' ')).toContain(notice)
   })
 }
 
-test("github.com detail: lists that lag a change still show it at once, Assign me and Close alike", GH, async ($, on) => {
+test("github.com detail: lists that lag a change still show it at once, Assign Me and Close alike", GH, async ($, on) => {
   const clock = paneWorld(on, { sent: [], scopes: 'repo', lag: true })
   await clock.set(NOW)
   const ui = await opened($)

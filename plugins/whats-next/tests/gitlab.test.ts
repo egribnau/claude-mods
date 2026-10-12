@@ -575,11 +575,11 @@ test('issue: three requests by iid, mapped for the detail view; notes and merge 
     blocks: null,
     pulls: null,
     commits: null,
-    lastComment: null,
+    commentList: null,
   })
   expect(asked.map(a => a.url)).toEqual([
     `${PROJECT}/issues/12`,
-    `${PROJECT}/issues/12/notes?sort=desc&order_by=created_at&per_page=20`,
+    `${PROJECT}/issues/12/notes?sort=asc&order_by=created_at&per_page=100&page=1`,
     `${PROJECT}/issues/12/related_merge_requests`,
   ])
 })
@@ -688,15 +688,16 @@ const mr = (iid: number, title: string, state: string) => ({
   web_url: `https://gitlab.com/boats/radar/-/merge_requests/${iid}`,
 })
 
-test('issue: time spent and estimate, the last note that is no system note, and related merge requests', async () => {
+test('issue: time spent and estimate, every note that is no system note, oldest first, and related merge requests', async () => {
   const raw = {
     ...issue(12, '2026-09-25T09:00:00.000Z'),
     time_stats: { time_estimate: 14400, total_time_spent: 5400, human_time_estimate: '4h', human_total_time_spent: '1h 30m' },
   }
+  // Oldest first, as asked.
   const notes = [
-    note('alice', '2026-10-08T09:30:00.000Z', 'assigned to @alice', true),
-    note('mvos', '2026-10-07T15:00:00.000Z', 'Seen on v1.1 too.'),
     note('jdoe', '2026-10-01T10:00:00.000Z', 'First.'),
+    note('mvos', '2026-10-07T15:00:00.000Z', 'Seen on v1.1 too.'),
+    note('alice', '2026-10-08T09:30:00.000Z', 'assigned to @alice', true),
   ]
   const merges = [mr(31, 'Fix the radar sweep', 'opened'), mr(29, 'Try a sweep', 'closed'), mr(30, 'Sweep, again', 'merged')]
   const t = gitlab(
@@ -717,7 +718,10 @@ test('issue: time spent and estimate, the last note that is no system note, and 
 
   expect(got.logged).toBe(5400)
   expect(got.estimate).toBe(14400)
-  expect(got.lastComment).toEqual({ author: 'mvos', when: '2026-10-07T15:00:00.000Z', body: 'Seen on v1.1 too.' })
+  expect(got.commentList).toEqual([
+    { author: 'jdoe', when: '2026-10-01T10:00:00.000Z', body: 'First.' },
+    { author: 'mvos', when: '2026-10-07T15:00:00.000Z', body: 'Seen on v1.1 too.' },
+  ])
   expect(got.pulls).toEqual([
     { number: 31, title: 'Fix the radar sweep', state: 'open' },
     { number: 29, title: 'Try a sweep', state: 'closed' },
@@ -729,7 +733,7 @@ test('issue: time spent and estimate, the last note that is no system note, and 
   expect(got.blocks).toBe(null)
 })
 
-test('issue: only system notes leave no last comment, and no time_stats leaves time unknown', async () => {
+test('issue: only system notes leave no comments, and no time_stats leaves time unknown', async () => {
   const { time_stats: _, ...raw } = issue(12, '2026-09-25T09:00:00.000Z')
   const t = gitlab(
     fakeSend(u =>
@@ -744,7 +748,7 @@ test('issue: only system notes leave no last comment, and no time_stats leaves t
     null,
   )
   const got = await t.issue(12, { time: false, deps: false, epics: false })
-  expect(got.lastComment).toBe(null)
+  expect(got.commentList).toEqual([])
   expect(got.logged).toBe(null)
   expect(got.estimate).toBe(null)
   expect(got.pulls).toEqual([])

@@ -164,12 +164,12 @@ const note = (id: number, who: ReturnType<typeof person>, created: string, body:
   commands_changes: {},
 })
 
-// Newest first, as sort=desc asks: system notes around the comments.
+// Oldest first, as sort=asc asks: system notes around the comments.
 const NOTES = [
-  note(9003, person('jdoe', 777), '2026-10-08T12:00:00.000Z', 'added 1h 30m of time spent', true),
-  note(9002, person('mvos', 778), '2026-10-07T12:00:00.000Z', 'Also mention the desktop app.', false),
-  note(9001, person('jdoe', 777), '2026-10-06T12:00:00.000Z', 'changed the description', true),
   note(9000, person('jdoe', 777), '2026-10-01T12:00:00.000Z', 'First.', false),
+  note(9001, person('jdoe', 777), '2026-10-06T12:00:00.000Z', 'changed the description', true),
+  note(9002, person('mvos', 778), '2026-10-07T12:00:00.000Z', 'Also mention the desktop app.', false),
+  note(9003, person('jdoe', 777), '2026-10-08T12:00:00.000Z', 'added 1h 30m of time spent', true),
 ]
 
 const mr = (iid: number, title: string, state: string) => ({
@@ -275,9 +275,11 @@ test('issue: exactly three requests, for the issue, its notes and its merge requ
     [`${project}/issues/14`, `${project}/issues/14/notes`, `${project}/issues/14/related_merge_requests`].sort(),
   )
   const notes = new URL(asked.find(a => a.url.includes('/notes'))?.url ?? '')
-  expect(notes.searchParams.get('sort')).toBe('desc')
+  // Every note, oldest first, a page of 100 at a time: four fit on the first.
+  expect(notes.searchParams.get('sort')).toBe('asc')
   expect(notes.searchParams.get('order_by')).toBe('created_at')
-  expect(notes.searchParams.get('per_page')).toBe('20')
+  expect(notes.searchParams.get('per_page')).toBe('100')
+  expect(notes.searchParams.get('page')).toBe('1')
 
   expect(got).toMatchObject({
     number: 14,
@@ -290,7 +292,10 @@ test('issue: exactly three requests, for the issue, its notes and its merge requ
     blockedBy: null,
     blocks: null,
     commits: null,
-    lastComment: { author: 'mvos', when: '2026-10-07T12:00:00.000Z', body: 'Also mention the desktop app.' },
+    commentList: [
+      { author: 'jdoe', when: '2026-10-01T12:00:00.000Z', body: 'First.' },
+      { author: 'mvos', when: '2026-10-07T12:00:00.000Z', body: 'Also mention the desktop app.' },
+    ],
     pulls: [
       { number: 61, title: 'Document the token setting', state: 'merged' },
       { number: 63, title: 'List the scopes', state: 'open' },
@@ -315,21 +320,21 @@ test('issue: an estimate with nothing logged keeps the estimate', async () => {
   expect((got as { estimate?: unknown }).estimate).toBe(7200)
 })
 
-test('issue: only system notes leave no last comment', async () => {
+test('issue: only system notes leave no comments', async () => {
   const { r } = at('detail-system.example')
   const system = NOTES.filter(n => n.system)
   const got = await gitlab(fakeSend(route({ notes: { status: 200, body: system } })), r, 'glpat-x', null).issue(14, FEATURES)
-  expect(got.lastComment).toBe(null)
+  expect(got.commentList).toEqual([])
 })
 
-test('issue: notes failing leave the last comment out, and the issue loads', async () => {
+test('issue: notes failing leave the comments unknown, and the issue loads', async () => {
   const { r } = at('detail-nonotes.example')
   const got = await gitlab(fakeSend(route({ notes: { status: 500, body: { message: '500 Internal Server Error' } } })), r, 'glpat-x', null).issue(
     14,
     FEATURES,
   )
   expect(got.title).toBe('Issue 14')
-  expect(got.lastComment).toBe(null)
+  expect(got.commentList).toBe(null)
   expect(got.pulls).toHaveLength(3)
 })
 
@@ -339,7 +344,7 @@ test('issue: merge requests failing or down leave them out, and the issue loads'
     const got = await gitlab(fakeSend(route({ mrs })), r, 'glpat-x', null).issue(14, FEATURES)
     expect(got.title).toBe('Issue 14')
     expect(got.pulls).toBe(null)
-    expect(got.lastComment?.author).toBe('mvos')
+    expect(got.commentList?.map(c => c.author)).toEqual(['jdoe', 'mvos'])
   }
 })
 
@@ -638,7 +643,7 @@ async function opened($: Engine) {
   return ui
 }
 
-test('gitlab.com detail: time logged of estimated, the last comment and the merge requests', GL, async ($, on) => {
+test('gitlab.com detail: time logged of estimated, the comments and the merge requests', GL, async ($, on) => {
   const clock = paneWorld(on, {})
   await clock.set(NOW)
   const ui = await opened($)
@@ -646,12 +651,17 @@ test('gitlab.com detail: time logged of estimated, the last comment and the merg
 
   expect(all.some(t => t.includes('Issue 14'))).toBe(true)
   expect(all).toContain('1h 30m logged of 4h 0m estimated')
-  expect(all.some(t => t.startsWith('── Last comment · mvos · 2d ago'))).toBe(true)
+  // The newest comment unfolded under the rule, the older one a line that unfolds it.
+  expect(all.some(t => t.startsWith('− Comments · 2 '))).toBe(true)
+  expect(all).toContain('− mvos · 2d ago')
   expect(all).toContain('Also mention the desktop app.')
-  // A system note is never the last comment.
-  expect(all.some(t => t.includes('added 1h 30m of time spent'))).toBe(false)
-  expect(all.some(t => t.startsWith('Pull requests'))).toBe(true)
-  for (const want of ['#61 ', 'Document the token setting', ' merged', '#63 ', 'List the scopes', ' open', '#64 ', 'Dropped idea']) {
+  expect(all).toContain('+ jdoe · 8d ago · First.')
+  // A system note is never a comment.
+  expect(all.some(t => t.includes('added 1h 30m of time spent') || t.includes('changed the description'))).toBe(false)
+  // Merge requests under GitLab's word, each !n: #n there is an issue.
+  expect(all.some(t => t.startsWith('MRs'))).toBe(true)
+  expect(all.some(t => t.startsWith('PRs'))).toBe(false)
+  for (const want of ['!61 ', 'Document the token setting', ' merged', '!63 ', 'List the scopes', ' open', '!64 ', 'Dropped idea']) {
     expect(all.some(t => t === want || t.includes(want))).toBe(true)
   }
   // The merge requests' global ids are never shown.
@@ -674,7 +684,7 @@ test('gitlab.com detail: neither logged nor estimated, no Time line', GL, async 
   expect(all.some(t => t.includes('estimated') || t.includes('logged'))).toBe(false)
 })
 
-test('gitlab.com detail: one detail load is three requests', GL, async ($, on) => {
+test('gitlab.com detail: one detail load is four requests, its links for its epic the fourth', GL, async ($, on) => {
   const asked: string[] = []
   paneWorld(on, { asked })
   await $.command.run(RUN)
@@ -682,20 +692,28 @@ test('gitlab.com detail: one detail load is three requests', GL, async ($, on) =
   const before = asked.length
   await ui.press({ key: 'pick-14' })
   const issueAsks = asked.slice(before).filter(a => a.includes('/issues/14'))
-  expect(issueAsks).toHaveLength(3)
+  const at = 'GET https://gitlab.com/api/v4/projects/boats%2Fradar/issues/14'
+  expect(issueAsks.sort()).toEqual(
+    [at, `${at}/notes?sort=asc&order_by=created_at&per_page=100&page=1`, `${at}/related_merge_requests`, `${at}/links`].sort(),
+  )
 })
 
-test('gitlab.com detail: with api and Developer, Assign me and Close show', GL, async ($, on) => {
+test('gitlab.com detail: with api and Developer, Assign Me and Close show', GL, async ($, on) => {
   paneWorld(on, {})
   const ui = await opened($)
   const k = await keys(ui)
   expect(k).toContain('assign')
   expect(k).toContain('close')
-  expect(await labelOf(ui, 'assign')).toBe('Assign me')
+  expect(await labelOf(ui, 'assign')).toBe('Assign Me')
   expect(await labelOf(ui, 'close')).toBe('Close')
+  // In the menu too, each a line.
+  await ui.press({ key: 'menu' })
+  const m = await keys(ui)
+  expect(m).toContain('menu-assign')
+  expect(m).toContain('menu-close')
 })
 
-test('gitlab.com detail: Assign me sends your id, and the reload shows you assigned', GL, async ($, on) => {
+test('gitlab.com detail: Assign Me sends your id, and the reload shows you assigned', GL, async ($, on) => {
   const sent: Pane['sent'] = []
   const asked: string[] = []
   paneWorld(on, { sent, asked })
@@ -710,11 +728,11 @@ test('gitlab.com detail: Assign me sends your id, and the reload shows you assig
   expect(await texts(ui)).toContain('● #14 Issue 14')
 
   await ui.press({ key: 'pick-14' })
-  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
+  expect(await labelOf(ui, 'assign')).toBe('Unassign Me')
   await ui.press({ key: 'assign' })
   expect(sent.at(-1)?.body).toEqual({ assignee_id: 0 })
   await ui.press({ key: 'pick-14' })
-  expect(await labelOf(ui, 'assign')).toBe('Assign me')
+  expect(await labelOf(ui, 'assign')).toBe('Assign Me')
 })
 
 test('gitlab.com detail: Close sends state_event close, and the reloaded lists leave #14 out', GL, async ($, on) => {
@@ -774,8 +792,17 @@ for (const [why, w, step, notice] of [
     const k = await keys(ui)
     expect(k).not.toContain('assign')
     expect(k).not.toContain('close')
-    expect(k).toContain('work')
-    expect(await texts(ui)).toContain(notice)
+    expect(k).toContain('prompt')
+    // The sentence only with the menu open, dim under its lines.
+    expect((await texts(ui)).join(' ')).not.toContain(notice)
+    await ui.press({ key: 'menu' })
+    const m = await keys(ui)
+    expect(m).not.toContain('menu-assign')
+    expect(m).not.toContain('menu-close')
+    expect(m).toContain('menu-open')
+    const found = (await ui.findAll({ type: 'Text' })) as { text: string; props: Record<string, unknown> }[]
+    const dim = found.filter(t => t.props.dimColor === true).map(t => t.text)
+    expect(dim.join(' ')).toContain(notice)
   })
 }
 

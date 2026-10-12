@@ -102,13 +102,14 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(all[0]).toBe("What's Next is ready!")
     expect(all).toContain('One choice: icons on buttons')
     expect(all).toContain(`[ ${ICON.refresh} ]  [ ${ICON.work} ]  [ ${ICON.open} ]  [ ${ICON.back} ]`)
+    expect(all).toEqual(expect.arrayContaining(['refresh', 'prompt', 'browser', 'back']))
     expect(all).not.toContain("What's next")
     await expect(ui.find({ key: 'use-icons' })).resolves.toBeDefined()
     await expect(ui.find({ key: 'keep-text' })).resolves.toBeDefined()
   })
 }
 
-test('Use icons saves the setting and the buttons become icons', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
+test('Use Icons saves the setting and Prompt becomes an icon; Back, the menu and its lines stay as they are', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
   const set: { key: string; value: unknown }[] = []
   world(on, set)
   await $.command.run(RUN)
@@ -117,15 +118,21 @@ test('Use icons saves the setting and the buttons become icons', { options: { to
 
   expect(set).toEqual([{ key: 'whats-next@egribnau-mods.icons', value: 'icons' }])
   expect((await texts(ui))[0]).toBe("What's next")
-  expect(await label(ui, 'refresh')).toBe(ICON.refresh)
+  expect(await label(ui, 'menu')).toBe('☰')
+  expect(await label(ui, 'refresh')).toBe('Refresh')
 
   await ui.press({ key: 'pick-29' })
-  expect(await label(ui, 'back')).toBe(ICON.back)
-  expect(await label(ui, 'work')).toBe(ICON.work)
-  expect(await label(ui, 'open')).toBe(ICON.open)
+  expect(await label(ui, 'prompt')).toBe(ICON.work)
+  expect(await label(ui, 'back')).toBe('←')
+  expect(await label(ui, 'menu')).toBe('☰')
+  await ui.press({ key: 'menu' })
+  const all = await texts(ui)
+  expect(all.some(t => t.startsWith('Open in Browser'))).toBe(true)
+  expect(all.some(t => t.startsWith('Refresh'))).toBe(true)
+  expect(all.some(t => t.includes(ICON.open) || t.includes(ICON.refresh))).toBe(false)
 })
 
-test('Keep text saves the setting and the buttons keep their words', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
+test('Keep Text saves the setting and the buttons keep their words', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
   const set: { key: string; value: unknown }[] = []
   world(on, set)
   await $.command.run(RUN)
@@ -134,6 +141,8 @@ test('Keep text saves the setting and the buttons keep their words', { options: 
 
   expect(set).toEqual([{ key: 'whats-next@egribnau-mods.icons', value: 'text' }])
   expect(await label(ui, 'refresh')).toBe('Refresh')
+  await ui.press({ key: 'pick-29' })
+  expect(await label(ui, 'prompt')).toBe('Prompt')
 })
 
 test('where /config offers no Icons row, the choice holds for the session', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
@@ -144,7 +153,8 @@ test('where /config offers no Icons row, the choice holds for the session', { op
   await ui.press({ key: 'use-icons' })
 
   expect(set).toEqual([])
-  expect(await label(ui, 'refresh')).toBe(ICON.refresh)
+  await ui.press({ key: 'pick-29' })
+  expect(await label(ui, 'prompt')).toBe(ICON.work)
 })
 
 test('once chosen in settings, it is not asked again', { options: { token: 'secret', icons: 'icons', compact: 'off' } }, async ($, on) => {
@@ -153,15 +163,16 @@ test('once chosen in settings, it is not asked again', { options: { token: 'secr
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   expect((await texts(ui))[0]).toBe("What's next")
-  expect(await label(ui, 'refresh')).toBe(ICON.refresh)
+  await ui.press({ key: 'pick-29' })
+  expect(await label(ui, 'prompt')).toBe(ICON.work)
 })
 
-test('setup screens keep Check again in words', { options: { token: '', icons: 'icons', compact: 'off' } }, async ($, on) => {
+test('setup screens keep Check Again in words', { options: { token: '', icons: 'icons', compact: 'off' } }, async ($, on) => {
   world(on)
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await label(ui, 'refresh')).toBe('Check again')
+  expect(await label(ui, 'refresh')).toBe('Check Again')
 })
 
 test('after Icons, asks once about space between rows, showing both', { options: { token: 'secret', icons: 'text' } }, async ($, on) => {
@@ -225,5 +236,6 @@ test('a change in /config wins over the choice made in onboarding', { options: {
   await change('compact', 'off', 'on')
   expect(await gapOf29()).toBe(1)
   await change('icons', 'icons', 'text')
-  expect(await label(ui, 'refresh')).toBe(ICON.refresh)
+  await ui.press({ key: 'pick-29' })
+  expect(await label(ui, 'prompt')).toBe(ICON.work)
 })

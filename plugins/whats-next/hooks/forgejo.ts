@@ -447,7 +447,7 @@ async function loadIssue(get: Get, slug: string, n: number, features: Features):
   if (!main.ok) throw new Error(`#${n}: HTTP ${main.status}`)
   const i = main.json as RawIssue
 
-  const last = list<RawComment>(comments)?.at(-1)
+  const said = list<RawComment>(comments)
   const items = list<RawTimeline>(timeline)
   const pulls: Ref[] | null = items
     ? items
@@ -500,6 +500,6 @@ async function loadIssue(get: Get, slug: string, n: number, features: Features):
     blocks: ours(blocks)?.map(ref) ?? null,
     pulls,
     commits,
-    lastComment: last ? { author: last.user?.login ?? 'someone', when: last.created_at, body: last.body ?? '' } : null,
+    commentList: said ? said.map(c => ({ author: c.user?.login ?? 'someone', when: c.created_at, body: c.body ?? '' })) : null,
   }
 }

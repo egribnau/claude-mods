@@ -481,10 +481,10 @@ test('clicking an epic opens its detail, closed ones too, and back returns to Ep
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
 
   await ui.press({ key: 'epic-12' })
-  const back = (await ui.find({ key: 'back' })) as unknown as { props: Record<string, unknown> }
-  expect(back.props.label).toBe('← Epics')
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
   await ui.press({ key: 'back' })
   await expect(ui.find({ key: 'milestone' })).resolves.toBeDefined()
+  await expect(ui.find({ key: 'epic-12' })).resolves.toBeDefined()
   await ui.press({ key: 'epic-3' })
   await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 })
@@ -506,10 +506,10 @@ test('clicking a child opens its detail, and back returns to Epics', TOKEN, asyn
 
   await ui.press({ key: 'fold-20' })
   await ui.press({ key: 'child-51' })
-  const back = (await ui.find({ key: 'back' })) as unknown as { props: Record<string, unknown> }
-  expect(back.props.label).toBe('← Epics')
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
   await ui.press({ key: 'back' })
   await expect(ui.find({ key: 'milestone' })).resolves.toBeDefined()
+  await expect(ui.find({ key: 'epic-12' })).resolves.toBeDefined()
 })
 
 test('Close on a child goes back to Epics, the child counted closed there', TOKEN, async ($, on) => {
@@ -961,7 +961,7 @@ test('pickerOptions: open milestones with an epic, due first, then No milestone 
   expect(pickerOptions(MS, [{ milestone: 'undated' }, { milestone: 'later' }, { milestone: null }])).toEqual([
     { value: 'm:later', label: 'later', due: '2026-12-01T00:00:00Z' },
     { value: 'm:undated', label: 'undated', due: null },
-    { value: 'none', label: 'No milestone' },
+    { value: 'none', label: 'None' },
     { value: 'all', label: 'All' },
   ])
   expect(pickerOptions(MS, [{ milestone: 'gone' }])).toEqual([{ value: 'all', label: 'All' }])

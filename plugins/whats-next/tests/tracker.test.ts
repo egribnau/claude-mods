@@ -224,7 +224,7 @@ function changed(number: number, state: string, assignees: string[], created = '
     blocks: null,
     pulls: null,
     commits: null,
-    lastComment: null,
+    commentList: null,
   }
 }
 

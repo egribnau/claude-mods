@@ -134,14 +134,25 @@ export type IssueDetail = {
   blocks: Ref[] | null
   pulls: Ref[] | null
   commits: CommitRef[] | null
-  lastComment: { author: string; when: string; body: string } | null
+  // Every comment, oldest first; null when the forge would not say.
+  commentList: Comment[] | null
 }
+
+export type Comment = { author: string; when: string; body: string }
+
+// What is folded in an issue's detail (DRAWING.md, A detail scrolls): it
+// opens as its rules say every time, and Refresh keeps it. `description`:
+// Description unfolded; `commentsShut`: Comments folded shut; `comments`:
+// the comments unfolded, by when they were written, null for the newest
+// alone; `whole`: those of them shown whole, past their first 3 lines.
+export type DetailFolds = { description: boolean; commentsShut: boolean; comments: string[] | null; whole: string[] }
 
 export type Detail =
   | { kind: 'idle' }
   | { kind: 'loading'; number: number }
-  // `error`: why the last action on it was refused.
-  | { kind: 'ok'; issue: IssueDetail; error?: string }
+  // `error`: why the last action on it was refused. `parent`: the issue it
+  // is a child of, and whether that is an epic; null for none.
+  | { kind: 'ok'; issue: IssueDetail; error?: string; parent?: (Ref & { epic: boolean }) | null }
   | { kind: 'error'; number: number; message: string }
 
 // An open issue an epic depends on, as the Epics pane lists it. `mine`: it
@@ -227,6 +238,12 @@ declare module 'claude-code' {
       // Per pane: the issues the open one was reached from through its
       // Blocked by and Blocks lines, oldest first; Back returns to the last.
       trail: StateFamily<number[]>
+      // Per pane: what is folded in the issue detail open there.
+      folds: StateFamily<DetailFolds>
+      // Per pane: how far its detail is scrolled, in rows, and whether its
+      // menu is open.
+      scrolled: StateFamily<number>
+      menuOpen: StateFamily<boolean>
       epics: Epics
       // What's Next's panes that are open, by id: with more than one the engine draws
       // tabs naming them, so the title rows leave the names out.
@@ -246,7 +263,7 @@ declare module 'claude-code' {
       // forge would not say.
       treeKids: Record<number, EpicChild[] | null>
       // In the milestone detail: whether Issues is folded shut, and whether
-      // Description is folded open; one for every milestone.
+      // Description is folded open; set again each time a milestone opens.
       issuesFolded: boolean
       descriptionUnfolded: boolean
       // The repo's open milestones, once loaded; null before.

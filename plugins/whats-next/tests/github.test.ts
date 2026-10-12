@@ -412,7 +412,7 @@ test('issue: a timeline that fails leaves comments, pull requests and commits un
       blockedBy: null,
       pulls: null,
       commits: null,
-      lastComment: null,
+      commentList: null,
     }),
   )
   expect(asked.map(a => a.url)).toEqual([`${API}/issues/12`, `${API}/issues/12/timeline?per_page=100`])

@@ -209,7 +209,7 @@ export const dueFirst = (milestones: readonly MilestoneRow[]) =>
   )
 
 // What the milestone filter offers: each open milestone that has an open issue or an
-// epic, due first, then No milestone when some has none, then All. The panes
+// epic, due first, then None when some has none, then All. The panes
 // start on the first milestone, or on All when there is none.
 export function pickerOptions(
   milestones: readonly MilestoneRow[],
@@ -218,7 +218,7 @@ export function pickerOptions(
   const options: { value: string; label: string; due?: string | null }[] = dueFirst(milestones)
     .filter(m => epics.some(e => e.milestone === m.title))
     .map(m => ({ value: `m:${m.title}`, label: m.title, due: m.due }))
-  if (epics.some(e => e.milestone === null)) options.push({ value: 'none', label: 'No milestone' })
+  if (epics.some(e => e.milestone === null)) options.push({ value: 'none', label: 'None' })
   options.push({ value: 'all', label: 'All' })
   return options
 }

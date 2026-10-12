@@ -12,7 +12,8 @@ or colour.
 
 Words carry the state; colour and the mark repeat it, never replace it.
 One exception: closed is the mark `✓` alone. The Icons setting changes
-button labels only, never marks or states.
+button labels only, never marks or states; the menu's `☰` and Back's `←`
+are the same with Icons on and off (The menu).
 
 ## Colours
 
@@ -107,7 +108,7 @@ right edge. One look everywhere (#45, built 0.65.0):
 | Epics, a milestone's group | `── v0.3.0 · ⧗ 30 Oct · 9/17 closed` |
 | Milestones, closed milestones | `+ Closed · 3` |
 | Milestone detail | `− Issues · 8 open`, `+ Description` or `── Description` |
-| Issue detail | `── Description`, `── Last comment · jdoe · 2d ago` |
+| Issue detail | `+ Description` or `── Description`, as the milestone detail (#62, built 0.68.0, decided 4a); `− Comments · 3`, which folds (decided 1a and 4b) |
 
 Drawn by: `rule`, for every rule; the line above a bottom line, which
 names nothing, is `fixedLine`.
@@ -138,7 +139,7 @@ Two forms:
 `⧗ ` (U+29D7, the hourglass, one cell, plain Unicode; not the `⌛` emoji,
 which is two cells) goes before it, in the date's own colour, except where
 the place already says what it is: the milestone filter's column of dates and the
-issue detail's Due line (#45, built 0.66.0). `⚑` is kept for git tags,
+Due line of both details (#45, built 0.66.0; the milestone detail's, #62). `⚑` is kept for git tags,
 later.
 
 The places that show a due date today; a new one picks its form by the
@@ -150,11 +151,11 @@ same rule and joins the table:
 | Epics pane, a milestone's rule | short | `· ⧗ 30 Oct` |
 | Milestones pane, the line under a milestone | short | `⧗ 30 Oct`, first on the line |
 | Epics and Milestones, the line under a folded epic | short | `⧗ 14 Oct`, the epic's own due date from the lists, first on the line (#45, built 0.66.0) |
-| Issue detail, the issue's milestone | short | `· ⧗ 30 Oct` after the milestone's name |
+| Issue detail, the issue's milestone | short | `· ⧗ 30 Oct` after the milestone's name, on the Milestone line (#62, built 0.68.0, decided 1a) |
 | An issue row's facts line, the issue's own due date | short | `· ⧗ 14 Oct`, after blocked by, before the milestone (DRAWING-issue.md, The facts line; #45, built 0.66.0) |
 | Issue detail, the issue's own due date | long | `30 Oct, in 19 days` on the Due line |
-| Milestone detail, an open milestone | long | `⧗ 30 Oct, in 19 days` |
-| Milestone detail, a closed milestone | short, dim | `⧗ 30 Oct`: once closed, how far off no longer matters |
+| Milestone detail, an open milestone | long | `30 Oct, in 19 days` on the Due line, as the issue detail (#62, built 0.68.0, decided 6) |
+| Milestone detail, a closed milestone | short, dim | `30 Oct` on the Due line: once closed, how far off no longer matters |
 
 No due date: nothing is shown, anywhere (#45, built 0.66.0). One text
 joins its parts, so leaving the first one out starts no line with `·`;
@@ -178,8 +179,10 @@ of the row, which opens its detail. Tab and the arrows stop on each.
   open issues
 - a section folds on its rule, which is one target, and keeps `+`/`−`: a
   section is not a row. `+ Closed · 3 ───`.
-  Description in the milestone detail, folded, shows its first 3 lines
-  and `… n more lines`; with 3 lines or fewer its rule has no mark
+  Description in both details, folded, shows its first 3 lines and
+  `… n more lines`; with 4 lines or fewer its rule has no mark: a 4th
+  line takes the row `… 1 more lines` would, so text is cut only from 5
+  lines on, a comment's too (#62, built 0.68.8)
 
 | Where | Folds | Opens |
 |---|---|---|
@@ -189,9 +192,43 @@ of the row, which opens its detail. Tab and the arrows stop on each.
 | Milestones and its detail, an epic | its tree, folded open with Epics | the epic's detail |
 | Milestones, the Closed rule | the last closed milestones | |
 | Milestone detail, the Issues and Description rules | the section | |
+| Issue detail, the Comments rule and each comment | the section; a comment its text, the newest unfolded (#62, built 0.68.0, decided 4b) | |
+| Issue detail, the Description rule | the section: folded its first 3 lines and `… n more lines` (#62, built 0.68.0, decided 4a) | |
 
 Drawn by: `foldRow` for a row at the top of a tree (`epicRow` for an epic),
 `issueRow` for an issue that folds, `rule` for a section.
+
+## A detail scrolls
+
+The issue detail and the milestone detail scroll what is between their
+top row and their bottom line: wheel, arrows, Page Up and Down. The top
+row (`[ ← ]`, `[ Prompt ]`, `[ ☰ ]`) and the bottom line stay in place:
+the engine has no row that stays, so the mod scrolls its own rows,
+answering `ui.scroll` and moving them by `e.by`, and moves them along
+when the focus goes to a control out of view. Folding keeps a detail
+short; scrolling reaches what is unfolded (#62, built 0.68.0, decided 4c).
+The arrows move the focus, as in a list: the mod's rows fit the pane, so
+the engine has none to scroll. The focus on the last control scrolls the
+detail to its end, so the text under it (a long comment, unfolded) is
+reached with the arrows too; on the first control, to its top (#62, built
+0.68.3).
+
+Drawn by: `detailFrame`, the rows in a Box as tall as they are, moved up by `marginTop={-offset}` (a placed Box's negative `top` the engine does not keep); how
+many rows there are and where each control sits, `measure`
+(hooks/measure.ts), so a detail's rows are lines, each one row: a long
+text is wrapped into lines first, never left to wrap.
+
+Tab and the arrows stop on every control of a detail, top to bottom: in
+the issue detail `[ ← ]`, `[ Prompt ]`, `[ ☰ ]`, each Epic, Blocked by and
+Blocks line, the Description rule, the Comments rule, each comment, and
+each `… n more lines` under Description or a comment.
+Enter presses the one in focus: a rule or a comment folds or unfolds, a
+line naming an issue opens it. No key of its own for folding (#62, built 0.68.0, decided 5a).
+
+A detail opens as its rules say, folded where they say so, every time:
+nothing is remembered per issue or milestone. Refresh keeps what is
+unfolded in the detail that is open; opening another issue or milestone,
+or the same one again, starts as it opens (#62, built 0.68.0, decided 5b).
 
 ## Lines that hold several parts
 
@@ -205,6 +242,47 @@ Drawn by: `partsLine` (its parts joined by `joined`) for a facts line, a
 for-you line, the line under a milestone and the left of a bottom line;
 `rule` for a rule. Debug's line under the bottom line is one text on each
 side.
+
+## The menu
+
+Every pane's top row ends in `[ ☰ ]`, the menu: what can be done there,
+one line each, its word and its hotkey, opened below it as the milestone
+filter opens its list (#62, built 0.68.0, decided 7). Refresh is in it in
+every pane, so the top row holds no Refresh button of its own; in a list
+it is the menu's only line until the pane has more to do. The issue
+detail keeps `[ Prompt ]` (hotkey `p`) as a button of its own, on the
+top row just before `☰` (#62, built 0.68.0, decided 7b and 7c); Assign Me or
+Unassign Me, Close or Reopen, Open in Browser and Refresh go in the
+menu. The milestone detail: Open in Browser, Close or Reopen, Refresh.
+Every hotkey still works with the menu shut: its Buttons are drawn hidden
+at the start of the top row, and Tab and the arrows pass over them.
+
+A menu line is its words, padded, and its hotkey dim at the right
+(`Open in Browser o`); pressing one shuts the menu. Opening the menu shuts
+the milestone filter's list, and the other way round. Where the token may
+not assign or close, the issue detail's menu says why, dim, under its
+lines (#62, built 0.68.0).
+
+The menu and the milestone filter's list open over the rows under the top
+row, at the right, in a dim frame: the rows stay where they are, and what
+the list covers shows again once it shuts. Each line is padded to the
+list's width, so nothing beneath shows through (#62, built 0.68.1).
+
+Drawn by: `menuButton`, `menuLines`, `listOverlay` for a list's, the frame
+by `overlay`, and `hotkeys` for the hidden ones.
+
+Buttons and the lines of the menu name an action in Title Case: every
+word capitalised but a short one inside (in, to, on): `Prompt`,
+`Assign Me`, `Unassign Me`, `Open in Browser`, `Close`, `Reopen`,
+`Refresh` (#62, built 0.68.0, decided 7d). Section names, rules and states
+keep their own case.
+
+`☰` (U+2630, plain Unicode, one cell) with Icons on and off, as everyone
+knows it and the menu says what is in it.
+
+Back, at the left of a detail's top row, is `[ ← ]` alone, in every
+detail, with Icons on and off: not `← Milestones` or `← #24` (#62, built 0.68.0, decided 7a). Its hotkey stays `b`. These two are the buttons
+with a sign and no word when Icons is off.
 
 ## Words for each state
 

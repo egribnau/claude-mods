@@ -812,7 +812,8 @@ test("GitLab EE: the blocked issue's detail lists what blocks it", GL, async ($,
 
   const all = await texts(next)
   expect(all.some(t => t.includes('Issue 33'))).toBe(true)
-  expect(all).toContain('Blocked by     ')
+  // The key in the detail's 11-column gutter.
+  expect(all).toContain('Blocked by ')
   expect(all.some(t => t.startsWith('#29'))).toBe(true)
   expect(all.some(t => t.includes('Settings screen rework'))).toBe(true)
 })

@@ -91,7 +91,7 @@ blocks that show are joined by ` · `, dim, in one text cut once at its end.
 |---|---|---|---|
 | 0 | shown above | the issue is already in the tree higher up | `shown above`, dim; the line is this alone |
 | 1 | blocked by | it stands blocked: open blockers, and not yours | `⊘ #24, #22`: the mark dim, the numbers blue, commas dim (#45, built 0.66.0) |
-| 1b | unblocks | open issues wait on it, as far as is known (GitHub's lists count them; on Forgejo and GitLab what the blocker checks found) | `↦ 2`: the bar is this issue, the arrow what it opens; dim, a count, never the numbers (#57, built 0.67.0) |
+| 1b | unblocks | open issues wait on it, as far as is known (GitHub's lists count them; on Forgejo and GitLab what the blocker checks found), its own epic left out as in the detail (#62, built 0.68.0, decided 3c) | `↦ 2`: the bar is this issue, the arrow what it opens; dim, a count, never the numbers (#57, built 0.67.0) |
 | 2 | due date | it has one (Forgejo and GitLab send it with the lists; GitHub issues have none) | `⧗ 14 Oct`, short form, red once passed, amber within 7 days, dim otherwise (DRAWING.md, Due dates; #45, built 0.66.0) |
 | 3 | milestone | it has one, and the list is not that milestone's (the milestone filter is set to it, or the row is under it) | `v0.3.0`, dim |
 | 4 | labels | it has any | each in its colour, commas dim |
@@ -117,7 +117,7 @@ Drawn by: `issueRow`, its parts through `partsLine`; the due date by `duePart`; 
 | What's next, every row | blocked by, unblocks, due date, milestone (not when the milestone filter is set to one), labels, age |
 | Epics, a child | the same |
 | Milestones, an issue under a milestone | blocked by, unblocks, due date, labels, age |
-| Issue detail, under the heading | `open · v0.3.0 · ⧗ 30 Oct · 3 comments`, then `opened 3d ago by jdoe · updated 1d ago` |
+| Issue detail, under the heading | not the facts line: one line of its own, see The issue detail's heading |
 
 ## The for-you line
 
@@ -159,13 +159,60 @@ what, `duePart` the due date before it; `partsLine` draws it, one text.
 | Milestones, under a milestone | its issues that are not epics, as far as the pane knows them without asking (only `● n` until every issue not yours was checked) |
 | Milestone detail, under the bar | its issues that are not epics |
 
+## The issue detail's heading
+
+The title, then one line under it, as the forges draw it: the state in
+words, then who opened it and when, as the facts line says it (#62, built 0.68.0, decided 1a).
+
+| # | Block | Shown when | Drawn as |
+|---|---|---|---|
+| 1 | state | always | `open` or `closed`, dim |
+| 2 | opened | always | `✎ 3w jdoe`: the pencil, the age, who opened it; dim |
+
+Not on the line: the milestone, which is a fact under its name,
+`Milestone  v0.3.0 · ⧗ 30 Oct`, its due date after it (Detail lines), so
+`⧗` there is never the issue's own; how many comments, which the rule of
+the comments counts; when it was updated, which the newest comment shows.
+
+The milestone detail's heading reads the same: the title, then one line,
+its state (`open`, or `closed 3 days ago` where the forge says when), and
+its due date a fact under the key `Due`, in the same 11-column gutter
+(#62, built 0.68.0, decided 6). A milestone has no author, so no `✎`.
+
+## The issue detail's comments
+
+Under the rule `− Comments · 3`, which folds the section, the newest
+comment first and unfolded: its line `− jdoe · 2d ago` (the name bold,
+the age dim), then its text, 3 lines and `… n more lines` from 5 lines on, as
+Description. Each older one, newest to oldest, is one dim line,
+`+ jdoe · 5d ago · its first words…`, cut once at its end; pressing it
+unfolds that comment. The newest is so always right under the rule, and
+no older comment pushes it away (#62, built 0.68.0, decided 4b). No comments:
+no rule.
+
+`… n more lines` under a comment is a dim button: pressed, the rest of
+that comment shows, until the issue opens again. Under Description, in
+the issue detail and the milestone detail alike, it is the same button,
+and unfolds Description as its rule does (#62, built 0.68.7). Pressing an unfolded
+comment's line folds it. Where the forge would not list the comments,
+`comments unknown`, dim, under the rule (#62, built 0.68.0).
+
+Drawn by: the issue detail in `renderPane`, the rule by `rule`.
+
 ## Detail lines that name an issue
 
-The issue detail as a whole is being redesigned in #62; until then it is
-drawn as below.
-
 Blocked by, Blocks and Pull requests in the issue detail: one line each,
-`#n title state`, under a dim key in a 15-column gutter. One number
+`#n title state`, under a dim key in an 11-column gutter, the key on the
+first line of its group only, as every key of the detail. The keys are
+words, as GitHub and GitLab have them: `Blocked by`, `Blocks`, the longest
+key, 10 columns, setting the gutter (#62, built 0.68.0, decided 2; signs as
+keys were tried and dropped, half signs and half words read badly).
+Pull requests are under the forge's word:
+`PRs` on Forgejo and GitHub, `MRs` on GitLab, where the number is `!61`
+and not `#61`, which there is an issue (#62, built 0.68.0, decided 3d).
+Under Blocks the issue's own epic is left out: on Forgejo an epic depends on
+its children, so it waits on each of them, but it is already the `Epic`
+line (#62, built 0.68.0, decided 3c). One number
 column for the three, as wide as the longest number there, numbers at its
 right, so the titles start in one column; the state a word at the right
 of the line.
@@ -182,6 +229,16 @@ of the line.
 Blocked by and Blocks lines are plain buttons: the focus inverts them,
 Enter opens that issue in the same pane, and Back returns. Pull request
 lines are not buttons.
+
+The facts of the issue detail, top to bottom, in the facts line's order
+and then what only the detail has: Epic (or Parent), Blocked by, Blocks,
+Due, Milestone, Labels, then Branch, Time, PRs (or MRs), Commits. How old
+it is is on the line under the title (#62, built 0.68.0, decided 3a).
+
+First among the facts, the issue it is a child of, if any:
+one line drawn and pressed as a Blocked by line, number blue, under the
+key `Epic`, or `Parent` when it is not an epic (on GitHub any issue can
+be a parent) (#62, built 0.68.0, decided 3b).
 
 The other lines of a detail: Due (long form), Branch plain, Time,
 Labels, Commits (sha dim, message cut, age dim at the right; three at

@@ -273,7 +273,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       return raw ? raw.filter(d => d.state === 'open').map(d => d.number) : null
     },
 
-    // The issue and its timeline, read in one go: the last comment, the pull
+    // The issue and its timeline, read in one go: the comments, the pull
     // requests that mention it and the commits that refer to it come from the
     // timeline. Only the issue itself must answer; the rest is left out when
     // the timeline fails. Commits carry no message there: the newest three,
@@ -288,7 +288,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       ])
       if (!res.ok) throw new Error(`#${n}: ${refusal(res)}`)
       const i = JSON.parse(res.text) as RawIssue
-      const last = timeline?.filter(e => e.event === 'commented').at(-1)
+      const said = timeline?.filter(e => e.event === 'commented') ?? null
       const pulls: Ref[] | null = timeline
         ? timeline
             .flatMap(e => (e.event === 'cross-referenced' && e.source?.issue?.pull_request ? [e.source.issue] : []))
@@ -340,7 +340,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         blocks: blocking?.map(toRef) ?? null,
         pulls,
         commits,
-        lastComment: last ? { author: last.actor?.login ?? last.user?.login ?? 'someone', when: last.created_at, body: last.body ?? '' } : null,
+        commentList: said ? said.map(c => ({ author: c.actor?.login ?? c.user?.login ?? 'someone', when: c.created_at, body: c.body ?? '' })) : null,
       }
     },
 

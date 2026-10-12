@@ -308,14 +308,14 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       )
     },
 
-    // The issue, its latest notes, the merge requests that mention it and,
+    // The issue, all its notes, the merge requests that mention it and,
     // where issues can block others, its links, read in one go. Only the
     // issue itself must answer; each other part is left out when it fails.
     async issue(n: number, features: Features): Promise<IssueDetail> {
       const at = `${project}/issues/${n}`
       const [res, notes, merges, linked] = await Promise.all([
         get(at),
-        fetchJson<RawNote[]>(`${at}/notes?sort=desc&order_by=created_at&per_page=20`),
+        fetchAll<RawNote>(`${at}/notes?sort=asc&order_by=created_at`, 'notes').catch(() => null),
         fetchJson<RawRef[]>(`${at}/related_merge_requests`),
         features.deps ? fetchJson<RawLink[]>(`${at}/links`) : null,
       ])
@@ -338,7 +338,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
           )
         : null
       // GitLab's own notes (assigned, closed, labels) are no comments.
-      const last = Array.isArray(notes) ? notes.find(c => c.system !== true) : undefined
+      const said = Array.isArray(notes) ? notes.filter(c => c.system !== true) : null
       return {
         number: i.iid,
         title: i.title,
@@ -360,7 +360,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
         blocks: of('blocks'),
         pulls: Array.isArray(merges) ? merges.map(toRef) : null,
         commits: null,
-        lastComment: last ? { author: last.author?.username ?? 'someone', when: last.created_at, body: last.body ?? '' } : null,
+        commentList: said ? said.map(c => ({ author: c.author?.username ?? 'someone', when: c.created_at, body: c.body ?? '' })) : null,
       }
     },
 

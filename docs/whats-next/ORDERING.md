@@ -30,7 +30,7 @@ Per milestone filter setting, the issue you work from is:
    below.
 
 Where you work is that issue's epic, else its milestone. The milestone filter: a milestone,
-No milestone or All. Set the filter to v1.3 and Next follows on from what you
+None or All. Set the filter to v1.3 and Next follows on from what you
 did in v1.3, not elsewhere; All follows on from what you did anywhere.
 
 A close counts from anywhere: the pane, the browser, a `closes #41`
@@ -86,7 +86,7 @@ On `/next` the milestone filter starts where you work:
 2. with none, the milestone of the last issue you closed in the repo;
 3. with neither, the open milestone due first, as before #57.
 
-That issue without a milestone starts it on No milestone. A milestone you
+That issue without a milestone starts it on None. A milestone you
 choose yourself holds until the next `/next`.
 
 ## What it asks the forge
@@ -101,7 +101,7 @@ Asked the first time the milestone filter is set to something, then remembered u
 | the epic's children | 1, or none when Epics already loaded them | its dependencies | its related links | its sub-issues |
 | each parent epic up the tree | 2 each (its parent, its children) | | | GitHub only |
 
-All asks without a milestone; No milestone asks for issues without one
+All asks without a milestone; None asks for issues without one
 (Forgejo cannot filter that: its list is filtered here). The All answer is
 also the answer for its own milestone, which is then not asked. Where the
 milestone filter starts uses the All request, asked first, so it costs

@@ -1,14 +1,15 @@
 import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
-import type { Detail, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneIssue, Overview, Ref, Repo, Scope, Setup, TokenSource } from '../types'
+import type { Comment, Detail, DetailFolds, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneIssue, Overview, Ref, Repo, Scope, Setup, TokenSource } from '../types'
 import { bar, dueFirst, forYou, inMilestone, markOf, openChildren, pickerOptions, standing, summary, tally, tree, type Folding, type Mark, type Standing, type TreeLine } from './epics'
 import { configureCommand, detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
 import { day, dueSoon, dueText, duration, readable, wrap } from './issue'
-import { changesSince, epicTree, growTree, loadRepo, milestoneIssues, milestoneKnown, noteChange, startingPick, whatsNext, type Memory } from './load'
+import { changesSince, epicTree, growTree, loadRepo, milestoneIssues, milestoneKnown, noteChange, parentRef, startingPick, whatsNext, type Memory } from './load'
+import { measure } from './measure'
 import { waitingText } from './next'
 import { message, withoutToken, type Send, type Tracker } from './tracker'
 
@@ -28,6 +29,12 @@ const overview = atom({ plugin: 'whats-next', key: 'overview' } as const, { kind
 const picked = atom({ plugin: 'whats-next', key: 'picked' } as const, null)
 const detail = atom({ plugin: 'whats-next', key: 'detail' } as const, { kind: 'idle' })
 const trail = atom({ plugin: 'whats-next', key: 'trail' } as const, [])
+// How an issue's detail opens (DRAWING.md, A detail scrolls): Description
+// folded, Comments open on the newest comment alone.
+const FOLDED: DetailFolds = { description: false, commentsShut: false, comments: null, whole: [] }
+const folds = atom({ plugin: 'whats-next', key: 'folds' } as const, FOLDED)
+const scrolled = atom({ plugin: 'whats-next', key: 'scrolled' } as const, 0)
+const menuOpen = atom({ plugin: 'whats-next', key: 'menuOpen' } as const, false)
 const iconsChosen = atom({ plugin: 'whats-next', key: 'icons' } as const, null)
 const compactChosen = atom({ plugin: 'whats-next', key: 'compact' } as const, null)
 const epics = atom({ plugin: 'whats-next', key: 'epics' } as const, { kind: 'idle' })
@@ -111,16 +118,17 @@ let configDebug = false
 // installed from once session.start has read it off /config.
 let configure = configureCommand([])
 
-// Nerd Font icons for the buttons (Material Design set).
+// Text cut to its first 3 lines and `… n more lines` is cut only from 5
+// lines on: a 4th line takes the row the button would.
+const FOLD_AT = 4
+
+// Nerd Font icons (Material Design set): Prompt's, and three more the
+// one-time choice shows, so a font that lacks them is seen to.
 const ICON = {
   refresh: '\u{F0450}',
   work: '\u{F0674}',
   open: '\u{F03CC}',
   back: '\u{F004D}',
-  assign: '\u{F0014}',
-  unassign: '\u{F0015}',
-  close: '\u{F012C}',
-  reopen: '\u{F099B}',
 } as const
 
 // Saves the Icons choice: in /config where the session offers it, and in the
@@ -297,9 +305,13 @@ async function foldMilestone($: EngineInterface, title: string) {
 
 // Opens milestone `title` in its detail, or the list again for null. Its
 // issues are asked unless a fold already did.
+// It opens as its rules say, every time (DRAWING.md, A detail scrolls).
 async function openMilestone($: EngineInterface, title: string | null) {
   await update($, milestoneOpen, () => title)
   await update($, milestoneError, () => null)
+  await update($, issuesFolded, () => false)
+  await update($, descriptionUnfolded, () => false)
+  await startOver($, MILESTONES_PANE)
   const r = await read($, repo)
   if (!r || title === null || title in (await read($, msIssues))) return
   await counted($, title, () => showMilestone($, r, title))
@@ -405,19 +417,23 @@ const issuesRead = new Map<string, IssueDetail>()
 async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) {
   const key = `${r.host}/${slug(r)}#${n}`
   const known = issuesRead.get(key)
+  // The issue it is a child of, from what the lists know: one request the
+  // first time, none once Next has asked.
+  const parentOf = async () => (memory ? await parentRef(tracker($, r), memory, n).catch(() => null) : null)
   if (known) {
-    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue: known }))
+    const parent = await parentOf()
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue: known, parent }))
     return
   }
   await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'loading', number: n }))
   try {
     const s = await read($, setup)
     const features = s.kind === 'ready' ? s.features : { time: true, deps: true, epics: true }
-    const issue = await tracker($, r).issue(n, features)
+    const [issue, parent] = await Promise.all([tracker($, r).issue(n, features), parentOf()])
     issuesRead.set(key, issue)
     // Another issue opened while this one loaded wins.
     if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
-    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue }))
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue, parent }))
   } catch (err) {
     if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
     await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'error', number: n, message: message(err) }))
@@ -447,7 +463,16 @@ async function goBack($: EngineInterface, pane: string) {
   await showIssue($, pane, from)
 }
 
+// Another issue, or the same one again, opens as its rules say: folded
+// where they say so, at its top, its menu shut (DRAWING.md, A detail scrolls).
+async function startOver($: EngineInterface, pane: string) {
+  await update($, memberOf(folds, { requestId: pane }), () => FOLDED)
+  await update($, memberOf(scrolled, { requestId: pane }), () => 0)
+  await update($, memberOf(menuOpen, { requestId: pane }), () => false)
+}
+
 async function showIssue($: EngineInterface, pane: string, n: number | null) {
+  await startOver($, pane)
   await update($, memberOf(picked, { requestId: pane }), () => n)
   const r = await read($, repo)
   if (n === null || !r) {
@@ -459,6 +484,7 @@ async function showIssue($: EngineInterface, pane: string, n: number | null) {
 
 // Pane `pane` shows its list again: What's next or the epics.
 async function backToList($: EngineInterface, pane: string) {
+  await startOver($, pane)
   await update($, memberOf(trail, { requestId: pane }), () => [])
   await update($, memberOf(picked, { requestId: pane }), () => null)
   await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
@@ -594,9 +620,9 @@ async function assignMe($: EngineInterface, pane: string, i: IssueDetail, on: bo
   return writeIssue($, pane, i.number, t => t.assign(i.number, assignees), on ? 'assign' : 'unassign')
 }
 
-// What a draft is made from: the issue, and its last comment when known.
+// What a draft is made from: the issue, and its comments when known.
 type DraftSource = Pick<IssueRow, 'number' | 'title' | 'url' | 'body'> & {
-  lastComment?: { author: string; body: string } | null
+  commentList?: Comment[] | null
 }
 
 // The prompt What's Next drafts for an issue: what to do, where the issue is, what it
@@ -605,8 +631,9 @@ function draftFor(i: DraftSource): string {
   const parts = [`Work on #${i.number}: ${i.title}\n${i.url}`]
   const body = i.body.trim()
   if (body) parts.push(body)
-  const last = i.lastComment?.body.trim()
-  if (last) parts.push(`Last comment, by ${i.lastComment?.author}:\n${last}`)
+  const latest = i.commentList?.at(-1)
+  const last = latest?.body.trim()
+  if (last) parts.push(`Last comment, by ${latest?.author}:\n${last}`)
   return parts.join('\n\n')
 }
 
@@ -755,6 +782,60 @@ function todo(s: Setup, r: Repo | null, t: Tracker | null): string[] {
   }
 }
 
+// A detail as last drawn in each pane, by pane id: how many rows it has,
+// how many show, and the row each Button starts on. A pane showing a list
+// has none: the engine's window stays where it is.
+const views = new Map<string, { rows: number; room: number; at: Map<string, number> }>()
+
+// The Buttons each pane draws hidden, for the hotkeys of its menu while it
+// is shut (DRAWING.md, The menu), and the first control drawn after them.
+const hidden = new Map<string, { keys: Set<string>; first: string }>()
+// The element that last took the focus ring, by pane id.
+const lastFocus = new Map<string, string | undefined>()
+
+// A detail scrolls its own rows, between its top row and its bottom line,
+// which stay in place: the wheel and the page keys move them by `e.by`.
+const scrollDetail: Hook<'ui.scroll'> = async ($, e, next) => {
+  const v = views.get(e.requestId)
+  if (!v) return next(e)
+  const max = Math.max(0, v.rows - v.room)
+  await update($, memberOf(scrolled, { requestId: e.requestId }), o => Math.min(max, Math.max(0, o + e.by)))
+  return {}
+}
+
+// Tab and the arrows pass over the hidden hotkeys: on to the first control,
+// or, coming back from it, no further. A control out of a detail's view is
+// scrolled into it; the last control scrolls the detail to its end, so the
+// text after it is reached too, and the first to its top.
+const focusMoved: Hook<'ui.focus'> = async ($, e, next) => {
+  const h = hidden.get(e.requestId)
+  if (e.element !== undefined && h?.keys.has(e.element)) {
+    if (lastFocus.get(e.requestId) === h.first) return {}
+    lastFocus.set(e.requestId, h.first)
+    return next({ ...e, element: h.first })
+  }
+  lastFocus.set(e.requestId, e.element)
+  const v = views.get(e.requestId)
+  const row = e.element === undefined ? undefined : v?.at.get(e.element)
+  if (v && row !== undefined) {
+    const at = memberOf(scrolled, { requestId: e.requestId })
+    const off = await read($, at)
+    const rows = [...v.at.values()]
+    const to =
+      row === Math.max(...rows)
+        ? Math.max(0, v.rows - v.room)
+        : row === Math.min(...rows)
+          ? 0
+          : row < off
+            ? row
+            : row >= off + v.room
+              ? row - v.room + 1
+              : off
+    if (to !== off) await update($, at, () => to)
+  }
+  return next(e)
+}
+
 // A pane closing, by What's Next or by the person: the other one, now without a tab,
 // names itself in its title row again.
 const paneClosed: Hook<'ui.close'> = async ($, e, next) => {
@@ -800,6 +881,9 @@ function builtVersion($: EngineInterface): Promise<string | null> {
 // Both panes draw here: they share setup, the detail view and the bottom line.
 async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
+  // A list draws no detail; the detail below sets its own again.
+  views.delete(e.requestId)
+  hidden.delete(e.requestId)
   const inEpics = e.requestId === EPICS_PANE
   const r = await read($, repo)
   const v = await read($, version)
@@ -829,6 +913,15 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     <Text key={key} wrap="truncate-end" {...props}>
       {text}
     </Text>
+  )
+  // `… n more lines` under text cut to its first lines, Description's or a
+  // comment's: a dim button that shows the rest (DRAWING-issue.md).
+  const moreLine = (key: string, n: number, onPress: () => unknown) => (
+    <Box key={`${key}-row`} height={1} flexShrink={0}>
+      <Button key={key} plain dimColor onPress={onPress}>
+        {`… ${n} more lines`}
+      </Button>
+    </Box>
   )
   // A dim line that keeps its row when the list or detail under it is too
   // long for the pane: that is cut at its bottom, never by squeezing this out.
@@ -1081,7 +1174,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // Checking again is the guide's last step, so its button ends it.
     body.push(
       <Box key="again" height={1} marginTop={1} paddingLeft={3}>
-        <Button key="refresh" label="Check again" hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
+        <Button key="refresh" label="Check Again" hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
       </Box>,
     )
   }
@@ -1334,19 +1427,91 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // "without a milestone", or nothing for All. The section rules leave it
   // out: the milestone filter shows it.
   const within = !pk || pk.pick === 'all' ? '' : pk.pick === 'none' ? ' without a milestone' : ` in ${pickedOption?.label ?? ''}`
+  // What a pane can do, in its menu (DRAWING.md, The menu): each its words,
+  // its hotkey and what pressing it does. Pressing one shuts the menu.
+  type Action = { key: string; label: string; hotkey: string; onPress: () => unknown }
+  const refreshAction: Action = { key: 'refresh', label: 'Refresh', hotkey: 'r', onPress: () => counted($, 'Refresh', () => refresh($)) }
+  const menuShown = await read($, memberOf(menuOpen, e))
+  const run = (a: Action) => async () => {
+    await update($, memberOf(menuOpen, e), () => false)
+    await a.onPress()
+  }
+  // [ ☰ ] at the right of a top row; it shuts the milestone filter's list,
+  // as that shuts the menu: one list under the top row at a time.
+  const menuButton = (
+    <Button
+      key="menu"
+      label="☰"
+      onPress={async () => {
+        await update($, pickerOpen, () => false)
+        await update($, memberOf(menuOpen, e), o => !o)
+      }}
+    />
+  )
+  // A list opened under the top row at its right, the menu's or the
+  // milestone filter's: drawn over the rows beneath, which stay where they
+  // are, in a dim frame. `width` is its lines', each padded to it so it
+  // covers what is under it. The last child of the pane, so it is painted last.
+  const overlay = (key: string, width: number, lines: RenderChildren[]) => (
+    <Box
+      key={key}
+      position="absolute"
+      top={1}
+      left={Math.max(0, columns - width - 2)}
+      width={Math.min(columns, width + 2)}
+      flexDirection="column"
+      borderStyle="single"
+      borderDimColor
+    >
+      {lines}
+    </Box>
+  )
+  // The menu open: each action's words and, dim at the right, its hotkey;
+  // `note`, dim under them, says what it lacks.
+  const MENU = 17
+  const menuLines = (actions: readonly Action[], note?: string) =>
+    menuShown &&
+    overlay('menu-lines', MENU, [
+      ...actions.map(a => (
+        <Box key={`menu-line-${a.key}`} height={1} flexShrink={0}>
+          <Button key={`menu-${a.key}`} plain onPress={run(a)}>
+            <Text>
+              {fit(a.label, MENU - 2).padEnd(MENU - 1)}
+              <Text dimColor>{a.hotkey}</Text>
+            </Text>
+          </Button>
+        </Box>
+      )),
+      ...(note
+        ? wrap(note, MENU).map((t, k) => (
+            <Box key={`menu-note-${k}`} height={1} flexShrink={0}>
+              <Text dimColor>{t}</Text>
+              {t.length < MENU && <Text>{' '.repeat(MENU - t.length)}</Text>}
+            </Box>
+          ))
+        : []),
+    ])
+  // Every action's hotkey, the menu shut or open: Buttons drawn hidden, at
+  // the start of the top row, before `first`, the first control drawn.
+  const hotkeys = (actions: readonly Action[], first: string) => {
+    hidden.set(e.requestId, { keys: new Set(actions.map(a => a.key)), first })
+    return (
+      <Box key="hotkeys" display="none">
+        {actions.map(a => (
+          <Button key={a.key} label={a.label} hotkey={a.hotkey} onPress={run(a)} />
+        ))}
+      </Box>
+    )
+  }
   // The title row both lists share: the pane's name when no tab names it,
-  // the milestone filter, Refresh; with the milestone filter open, its list
-  // under it at the right, each milestone with its due date and the one set in bold.
-  // Milestones, which shows every milestone, has no milestone filter.
+  // the milestone filter, the menu. Milestones, which shows every milestone,
+  // has no milestone filter.
   const titleRow = async (name: string, withPicker = true) => {
     const shown = withPicker ? pickedOption : undefined
-    const listOpen = pk !== null && shown !== undefined && (await read($, pickerOpen))
-    const today = await $.clock.now()
-    // One block that keeps its rows however long the list under it: a long
-    // list once squeezed the title row out of the pane.
     return (
       <Box key="top" flexDirection="column" flexShrink={0}>
         <Box key="title" height={1} flexShrink={0}>
+          {hotkeys([refreshAction], shown ? 'milestone' : 'menu')}
           {!tabbed && (
             <Text bold wrap="truncate-end">
               {name}
@@ -1354,23 +1519,71 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )}
           <Box flexGrow={1} />
           {shown && (
-            <Button key="milestone" label={`${shown.label} ▾`} hotkey="m" onPress={() => update($, pickerOpen, o => !o)} />
+            <Button
+              key="milestone"
+              label={`${shown.label} ▾`}
+              hotkey="m"
+              onPress={async () => {
+                await update($, memberOf(menuOpen, e), () => false)
+                await update($, pickerOpen, o => !o)
+              }}
+            />
           )}
           <Box width={2} />
-          <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
+          {menuButton}
         </Box>
-        {listOpen && pk && (
-          <Box key="choices" flexDirection="column" flexShrink={0} paddingLeft={Math.max(0, columns - 20)}>
-            {pk.options.map(o => (
-              <Button key={`milestone-${o.value}`} plain onPress={() => pickMilestone($, o.value)}>
-                <Text bold={o.value === pk.pick}>
-                  {o.label.padEnd(14)}
-                  {dueDate('due', o.due ?? null, today, { form: 'short', bare: true, width: 6 })}
-                </Text>
-              </Button>
-            ))}
+      </Box>
+    )
+  }
+  // What a list draws over its rows: the milestone filter's list, open, each
+  // milestone with its due date and the one set in bold; or the menu.
+  const listOverlay = async (withPicker = true) => {
+    const listOpen = withPicker && pk !== null && pickedOption !== undefined && (await read($, pickerOpen))
+    const today = await $.clock.now()
+    if (listOpen && pk) {
+      return overlay(
+        'choices',
+        20,
+        pk.options.map(o => (
+          <Box key={`choice-${o.value}`} height={1} flexShrink={0}>
+            <Button key={`milestone-${o.value}`} plain onPress={() => pickMilestone($, o.value)}>
+              <Text bold={o.value === pk.pick}>
+                {fit(o.label, 13).padEnd(14)}
+                {dueDate('due', o.due ?? null, today, { form: 'short', bare: true, width: 6 })}
+              </Text>
+            </Button>
           </Box>
-        )}
+        )),
+      )
+    }
+    return menuLines([refreshAction])
+  }
+  // A detail: its top row, which stays, then its rows, scrolled by the mod
+  // (DRAWING.md, A detail scrolls), then the bottom line, which stays.
+  const detailFrame = async (top: RenderChildren, body: RenderChildren[], over: RenderChildren) => {
+    const shown = measure(body)
+    const room = Math.max(1, height - measure(top).rows - 1 - 2 - (counter ? 1 : 0))
+    const offset = Math.min(Math.max(0, shown.rows - room), await read($, memberOf(scrolled, e)))
+    views.set(e.requestId, { rows: shown.rows, room, at: shown.at })
+    return (
+      <Box flexDirection="column" height={height}>
+        {top}
+        <Box key="gap" height={1} flexShrink={0} />
+        <Box key="detail" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          {/* As tall as its rows, measured, and moved up by a negative margin:
+              without a height the engine fits it to the room and squeezes rows
+              out of it, and a placed Box's negative top it does not keep. */}
+          <Box key="rows" marginTop={-offset} width={columns} height={shown.rows} flexShrink={0} flexDirection="column">
+            {body}
+          </Box>
+        </Box>
+        {fixedLine('where-rule', '─'.repeat(columns))}
+        <Box key="where" height={1} flexShrink={0}>
+          <Box flexGrow={1} />
+          {ours}
+        </Box>
+        {counter}
+        {over}
       </Box>
     )
   }
@@ -1386,7 +1599,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Text>
       )}
       <Box flexGrow={1} />
-      {action && <Button key="refresh" label={say(ICON.refresh, action.label)} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />}
+      {action && <Button key="refresh" label={action.label} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />}
     </Box>
   )
 
@@ -1394,7 +1607,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   if (s.kind === 'ready' && r && icons === 'ask') {
     const glyphs = [
       { icon: ICON.refresh, name: 'refresh' },
-      { icon: ICON.work, name: 'work on' },
+      { icon: ICON.work, name: 'prompt' },
       { icon: ICON.open, name: 'browser' },
       { icon: ICON.back, name: 'back' },
     ]
@@ -1428,9 +1641,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {line('look', 'Buttons would look like this:', { dimColor: true })}
           <Text key="sample">{glyphs.map(g => `[ ${g.icon} ]`).join('  ')}</Text>
           <Box key="choose" height={1} marginTop={1}>
-            <Button key="use-icons" label="Use icons" onPress={() => chooseIcons($, 'icons')} />
+            <Button key="use-icons" label="Use Icons" onPress={() => chooseIcons($, 'icons')} />
             <Text>{'  '}</Text>
-            <Button key="keep-text" label="Keep text" onPress={() => chooseIcons($, 'text')} />
+            <Button key="keep-text" label="Keep Text" onPress={() => chooseIcons($, 'text')} />
           </Box>
           <Box key="gap-later" height={1} />
           {para('later', "Asked once. Change it later in /config, under What's Next: Icons.", { dimColor: true })}
@@ -1474,7 +1687,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {line('without', 'Compact', { dimColor: true })}
           {sample(false)}
           <Box key="choose" height={1} marginTop={1}>
-            <Button key="keep-space" label="Keep space" onPress={() => chooseCompact($, 'off')} />
+            <Button key="keep-space" label="Keep Space" onPress={() => chooseCompact($, 'off')} />
             <Text>{'  '}</Text>
             <Button key="compact" label="Compact" onPress={() => chooseCompact($, 'on')} />
           </Box>
@@ -1490,49 +1703,56 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   if (s.kind === 'ready' && r && open !== null) {
     const d = await read($, memberOf(detail, e))
     const now = await $.clock.now()
-    // Back names where it goes: the issue this one was reached from, else the list.
-    const from = (await read($, memberOf(trail, e))).at(-1)
-    const top = (
-      <Box key="title" height={1} flexShrink={0}>
-        <Button
-          key="back"
-          label={from !== undefined ? say(`${ICON.back} #${from}`, `← #${from}`) : say(ICON.back, inEpics ? '← Epics' : e.requestId === MILESTONES_PANE ? '← Milestones' : "← What's next")}
-          hotkey="b"
-          onPress={() => goBack($, e.requestId)}
-        />
-        <Box flexGrow={1} />
-        <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
-      </Box>
-    )
+    const f = await read($, memberOf(folds, e))
+    const setFolds = (change: (x: DetailFolds) => DetailFolds) => () => update($, memberOf(folds, e), change)
     const body: RenderChildren[] = []
+    const gapRow = (key: string) => <Box key={key} height={1} flexShrink={0} />
+    // Lines of text that may run long, each cut to the pane: a detail counts its rows.
+    const lines = (key: string, text: string, props: Record<string, unknown> = {}) =>
+      wrap(text, columns).map((t, k) => line(`${key}-${k}`, t || ' ', props))
+    let actions: Action[] = [refreshAction]
+    let note: string | undefined
+    let prompt: RenderChildren = null
     if (d.kind === 'loading' || d.kind === 'idle') body.push(line('loading', `Loading #${open}…`, { dimColor: true }))
-    if (d.kind === 'error') body.push(para('error', `Could not load #${d.number}: ${d.message}.`, { color: 'error' }))
+    if (d.kind === 'error') body.push(...lines('error', `Could not load #${d.number}: ${d.message}.`, { color: 'error' }))
     if (d.kind === 'ok') {
       const i = d.issue
-      const KEY = 15
+      // Every key of the detail in one gutter, as wide as the longest, Blocked by.
+      const KEY = 11
       const keyed = (key: string, label: string, content: RenderChildren) => (
         <Box key={key} height={1} flexShrink={0}>
           <Text dimColor>{label.padEnd(KEY)}</Text>
           {content}
         </Box>
       )
+      // The issue it is a child of, and what it blocks but that epic.
+      const parent = d.parent ?? null
+      const blocks = (i.blocks ?? []).filter(x => !(parent?.epic && x.number === parent.number))
+      // Pull requests under the forge's word, and on GitLab its sign: !61 there is a merge request, #61 an issue.
+      const gitlab = t?.name === 'GitLab'
       // One issue or pull request on a line: number, title, state. Numbers
       // sit at the right of one column, states at the right of the line, so
       // titles start in one column. Closed is a grey ✓; an open blocker that
-      // is itself blocked says so, dim. Blocked by and Blocks lines are
+      // is itself blocked says so, dim. All but pull request lines are
       // buttons that open their issue here.
-      type RefKind = 'blocker' | 'blocks' | 'pull'
-      const refs = [...(i.blockedBy ?? []), ...(i.blocks ?? []), ...(i.pulls ?? [])]
+      type RefKind = 'parent' | 'blocker' | 'blocks' | 'pull'
+      const numberOf = (x: Ref, kind: RefKind) => `${kind === 'pull' && gitlab ? '!' : '#'}${x.number}`
+      const refs: [Ref, RefKind][] = [
+        ...(parent ? [[parent, 'parent'] as [Ref, RefKind]] : []),
+        ...(i.blockedBy ?? []).map((x): [Ref, RefKind] => [x, 'blocker']),
+        ...blocks.map((x): [Ref, RefKind] => [x, 'blocks']),
+        ...(i.pulls ?? []).map((x): [Ref, RefKind] => [x, 'pull']),
+      ]
       const stateOf = (x: Ref) => (x.state === 'closed' ? '✓' : x.blocked ? 'blocked' : x.state)
-      const refNum = Math.max(0, ...refs.map(x => `#${x.number}`.length))
-      const refState = Math.max(0, ...refs.map(x => stateOf(x).length))
+      const refNum = Math.max(0, ...refs.map(([x, kind]) => numberOf(x, kind).length))
+      const refState = Math.max(0, ...refs.map(([x]) => stateOf(x).length))
       const refLine = (key: string, label: string, x: Ref, kind: RefKind) => {
         const state = stateOf(x)
         const done = x.state === 'closed'
         const room = columns - KEY - refNum - 1 - 1 - refState
         const row = (
           <Text wrap="truncate-end">
-            <Text color={done ? 'inactive' : kind === 'blocker' ? 'error' : 'suggestion'}>{`#${x.number}`.padStart(refNum)}</Text>
+            <Text color={done ? 'inactive' : kind === 'blocker' ? 'error' : 'suggestion'}>{numberOf(x, kind).padStart(refNum)}</Text>
             <Text color={done ? 'inactive' : undefined}>{` ${fit(x.title, room).padEnd(room)} `}</Text>
             <Text
               color={
@@ -1556,10 +1776,17 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ),
         )
       }
+      // The facts, in the facts line's order, then what only the detail has
+      // (DRAWING-issue.md, Detail lines that name an issue).
       const facts: RenderChildren[] = []
-      if (i.due) {
-        facts.push(keyed('due', 'Due', dueDate('due-date', i.due, now, { form: 'long', bare: true })))
+      if (parent) facts.push(refLine('parent', parent.epic ? 'Epic' : 'Parent', parent, 'parent'))
+      ;(i.blockedBy ?? []).forEach((x, k) => facts.push(refLine(`blocked-${k}`, k === 0 ? 'Blocked by' : '', x, 'blocker')))
+      blocks.forEach((x, k) => facts.push(refLine(`blocks-${k}`, k === 0 ? 'Blocks' : '', x, 'blocks')))
+      if (i.due) facts.push(keyed('due', 'Due', dueDate('due-date', i.due, now, { form: 'long', bare: true })))
+      if (i.milestone) {
+        facts.push(keyed('milestone', 'Milestone', partsLine('milestone-parts', 0, [{ text: i.milestone.title }, ...duePart('milestone-due', i.milestone.due, now, { form: 'short' })])))
       }
+      if (i.labels.length > 0) facts.push(keyed('labels', 'Labels', <Text wrap="truncate-end">{labelTexts(i.labels)}</Text>))
       if (i.branch) facts.push(keyed('branch', 'Branch', <Text>{i.branch}</Text>))
       const time = i.logged
         ? `${duration(i.logged)} logged${i.estimate ? ` of ${duration(i.estimate)} estimated` : ''}`
@@ -1567,32 +1794,24 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ? `${duration(i.estimate)} estimated`
           : null
       if (time) facts.push(keyed('time', 'Time', <Text>{time}</Text>))
-      if (i.labels.length > 0) {
-        facts.push(
-          keyed(
-            'labels',
-            'Labels',
-            <Text wrap="truncate-end">{labelTexts(i.labels)}</Text>,
-          ),
-        )
-      }
-      ;(i.blockedBy ?? []).forEach((x, k) => facts.push(refLine(`blocked-${k}`, k === 0 ? 'Blocked by' : '', x, 'blocker')))
-      ;(i.blocks ?? []).forEach((x, k) => facts.push(refLine(`blocks-${k}`, k === 0 ? 'Blocks' : '', x, 'blocks')))
-      ;(i.pulls ?? []).forEach((x, k) => facts.push(refLine(`pull-${k}`, k === 0 ? 'Pull requests' : '', x, 'pull')))
-      ;(i.commits ?? []).slice(0, 3).forEach((c, k) =>
+      ;(i.pulls ?? []).forEach((x, k) => facts.push(refLine(`pull-${k}`, k === 0 ? (gitlab ? 'MRs' : 'PRs') : '', x, 'pull')))
+      // One text, as a line naming an issue: sha dim, message padded to its
+      // room, age dim at the right. Pieces side by side were squeezed out.
+      ;(i.commits ?? []).slice(0, 3).forEach((c, k) => {
+        const ago = ` ${age(c.when, now)} ago`
+        const room = Math.max(0, columns - KEY - c.sha.length - 1 - ago.length)
         facts.push(
           keyed(
             `commit-${k}`,
             k === 0 ? 'Commits' : '',
-            <>
+            <Text wrap="truncate-end">
               <Text dimColor>{`${c.sha} `}</Text>
-              <Text wrap="truncate-end">{fit(c.message, columns - KEY - c.sha.length - 1 - `${age(c.when, now)} ago`.length - 1)}</Text>
-              <Box flexGrow={1} />
-              <Text dimColor>{` ${age(c.when, now)} ago`}</Text>
-            </>,
+              {fit(c.message, room).padEnd(room)}
+              <Text dimColor>{ago}</Text>
+            </Text>,
           ),
-        ),
-      )
+        )
+      })
 
       // The heading wraps over two lines at most; a longer title ends the
       // second in ….
@@ -1600,139 +1819,147 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const wrapped = wrap(headText, columns)
       const titleLines =
         wrapped.length > 2 ? [wrapped[0] ?? '', fit(headText.slice((wrapped[0] ?? '').length).trimStart(), columns)] : wrapped
-      const milestoneDue = i.milestone?.due ?? null
-      const comments = `${i.comments} ${i.comments === 1 ? 'comment' : 'comments'}`
-
-      // What is left for the description and the last comment; the rule
-      // above the bottom line is one of the rows kept.
       // Assign and close, when What's Next may: setup's Actions step says so.
       const acts = s.kind === 'ready' ? s.actions : ({ kind: 'read-only', reason: 'scope' } as const)
       const canAct = acts.kind !== 'read-only'
       const mine = s.kind === 'ready' && i.assignees.includes(s.login)
       const closed = i.state === 'closed'
-      const error = d.kind === 'ok' ? d.error : undefined
-      const actionRows = 2 + (canAct ? 0 : 2) + (error ? 2 : 0)
-      const fixed = 1 + titleLines.length + 2 + actionRows + (facts.length > 0 ? facts.length + 1 : 0) + 1 + 1 + 1 + 1 + 1
-      const last = i.lastComment
-      const lastLines = last ? wrap(last.body.trim(), columns) : []
-      const lastShown = Math.min(3, lastLines.length)
-      const lastRows = last ? 1 + 1 + lastShown + 1 : 0
-      const descLines = wrap(i.body.trim(), columns)
-      const descRoom = Math.max(2, height - fixed - lastRows - 2)
-      const descShown = descLines.length > descRoom ? descRoom - 1 : descLines.length
-
-      body.push(
-        <Box key="head" flexDirection="column" flexShrink={0}>
-          {/* Closed: grey as a whole, number and title. */}
-          {titleLines.map((t, k) => (
-            <Text key={`t-${k}`} bold wrap="truncate-end" color={closed ? 'inactive' : undefined}>
-              {k === 0 && !closed ? <Text color="suggestion">{`#${i.number}`}</Text> : null}
-              {k === 0 && !closed ? t.slice(`#${i.number}`.length) : t}
-            </Text>
-          ))}
-          {partsLine('state', 0, [
-            { text: i.state },
-            { text: i.milestone ? i.milestone.title : 'no milestone' },
-            ...(milestoneDue ? [{ text: '', node: dueDate('milestone-due', milestoneDue, now, { form: 'short' }) }] : []),
-            { text: comments },
-          ])}
-          <Text dimColor wrap="truncate-end">{`opened ${age(i.created, now)} ago by ${i.author} · updated ${age(i.updated, now)} ago`}</Text>
-        </Box>,
-      )
-      // Right under the title, so they never scroll away with a long issue.
-      body.push(
-        <Box key="actions" flexDirection="column" flexShrink={0} marginTop={1}>
-          <Box height={1}>
-            <Button
-              key="work"
-              label={say(ICON.work, 'Work on this')}
-              hotkey="w"
-              onPress={() => workOn($, i, { pane: e.requestId, issue: i })}
-            />
-            {canAct && <Text>{'  '}</Text>}
-            {canAct && (
-              <Button
-                key="assign"
-                label={say(mine ? ICON.unassign : ICON.assign, mine ? 'Unassign me' : 'Assign me')}
-                hotkey="a"
-                onPress={() => counted($, `${mine ? 'unassign' : 'assign'} #${i.number}`, () => assignMe($, e.requestId, i, !mine))}
-              />
-            )}
-            {canAct && <Text>{'  '}</Text>}
-            {canAct && (
-              <Button
-                key="close"
-                label={say(closed ? ICON.reopen : ICON.close, closed ? 'Reopen' : 'Close')}
-                hotkey="c"
-                onPress={() =>
+      actions = [
+        ...(canAct
+          ? [
+              {
+                key: 'assign',
+                label: mine ? 'Unassign Me' : 'Assign Me',
+                hotkey: 'a',
+                onPress: () => counted($, `${mine ? 'unassign' : 'assign'} #${i.number}`, () => assignMe($, e.requestId, i, !mine)),
+              },
+              {
+                key: 'close',
+                label: closed ? 'Reopen' : 'Close',
+                hotkey: 'c',
+                onPress: () =>
                   counted($, `${closed ? 'reopen' : 'close'} #${i.number}`, () =>
                     writeIssue($, e.requestId, i.number, t => t.close(i.number, !closed), closed ? 'reopen' : 'close'),
-                  )
-                }
-              />
-            )}
-          </Box>
-          <Box height={1}>
-            <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, i.url)} />
-          </Box>
-          {!canAct &&
-            para(
-              'read-only',
-              acts.kind === 'read-only' && acts.reason === 'later'
-                ? `What's Next cannot assign or close ${t?.name ?? 'its'} issues yet.`
-                : acts.kind === 'read-only' && acts.reason === 'role'
-                  ? `Assign and close need Reporter or higher on ${slug(r)}.`
-                  : acts.kind === 'read-only' && acts.reason === 'push'
-                    ? `Assign and close need push rights on ${slug(r)}.`
-                    : `Assign and close need a token with ${t?.writeScope ?? 'write:issue'}: the setup guide's steps make one.`,
-              { dimColor: true },
-            )}
-          {error && para('action-error', error, { color: 'error' })}
-        </Box>,
+                  ),
+              },
+            ]
+          : []),
+        { key: 'open', label: 'Open in Browser', hotkey: 'o', onPress: () => openUrl($, i.url) },
+        refreshAction,
+      ]
+      note = canAct
+        ? undefined
+        : acts.kind === 'read-only' && acts.reason === 'later'
+          ? `What's Next cannot assign or close ${t?.name ?? 'its'} issues yet.`
+          : acts.kind === 'read-only' && acts.reason === 'role'
+            ? `Assign and close need Reporter or higher on ${slug(r)}.`
+            : acts.kind === 'read-only' && acts.reason === 'push'
+              ? `Assign and close need push rights on ${slug(r)}.`
+              : `Assign and close need a token with ${t?.writeScope ?? 'write:issue'}: the setup guide's steps make one.`
+      prompt = <Button key="prompt" label={say(ICON.work, 'Prompt')} hotkey="p" onPress={() => workOn($, i, { pane: e.requestId, issue: i })} />
+
+      // Closed: grey as a whole, number and title. Under it the state and who
+      // opened it when (DRAWING-issue.md, The issue detail's heading).
+      titleLines.forEach((tl, k) =>
+        body.push(
+          <Text key={`t-${k}`} bold wrap="truncate-end" color={closed ? 'inactive' : undefined}>
+            {k === 0 && !closed ? <Text color="suggestion">{`#${i.number}`}</Text> : null}
+            {k === 0 && !closed ? tl.slice(`#${i.number}`.length) : tl}
+          </Text>,
+        ),
       )
-      if (facts.length > 0) {
-        body.push(
-          <Box key="facts" flexDirection="column" flexShrink={0} marginTop={1}>
-            {facts}
-          </Box>,
-        )
-      }
-      body.push(<Box key="gap-desc" height={1} flexShrink={0} />, rule('desc', 'Description'))
+      body.push(partsLine('state', 0, [{ text: i.state }, { text: `✎ ${age(i.created, now)} ${i.author}` }]))
+      if (d.error) body.push(gapRow('gap-error'), ...lines('action-error', d.error, { color: 'error' }))
+      if (facts.length > 0) body.push(gapRow('gap-facts'), ...facts)
+
+      // Description folds from 5 lines on (FOLD_AT): folded, its first 3 and
+      // how many more.
+      const descLines = i.body.trim() === '' ? [] : wrap(i.body.trim(), columns)
+      const descShown = f.description || descLines.length <= FOLD_AT ? descLines.length : 3
+      body.push(
+        gapRow('gap-desc'),
+        descLines.length > FOLD_AT
+          ? rule('description-rule', 'Description', [], { key: 'description-section', open: f.description, onPress: setFolds(x => ({ ...x, description: !x.description })) })
+          : rule('desc', 'Description'),
+      )
       if (descLines.length === 0) body.push(line('no-desc', 'No description.', { dimColor: true }))
-      descLines.slice(0, descShown).forEach((t, k) => body.push(line(`d-${k}`, t || ' ')))
-      if (descShown < descLines.length) {
-        body.push(line('d-more', `… ${descLines.length - descShown} more lines`, { dimColor: true }))
-      }
-      if (last) {
+      descLines.slice(0, descShown).forEach((tl, k) => body.push(line(`d-${k}`, tl || ' ')))
+      if (descShown < descLines.length) body.push(moreLine('description-more', descLines.length - descShown, setFolds(x => ({ ...x, description: true }))))
+
+      // Comments, newest first: the newest unfolded, each older one a dim
+      // line that unfolds it (DRAWING-issue.md, The issue detail's comments).
+      const said = i.commentList
+      const count = said ? said.length : i.comments
+      if (count > 0) {
         body.push(
-          <Box key="gap-last" height={1} flexShrink={0} />,
-          rule('last', 'Last comment', [{ text: last.author }, { text: `${age(last.when, now)} ago` }]),
+          gapRow('gap-comments'),
+          rule('comments-rule', 'Comments', [{ text: `${count}` }], { key: 'comments-section', open: !f.commentsShut, onPress: setFolds(x => ({ ...x, commentsShut: !x.commentsShut })) }),
         )
-        lastLines.slice(0, lastShown).forEach((t, k) => body.push(line(`c-${k}`, t || ' ')))
-        if (lastShown < lastLines.length) {
-          body.push(line('c-more', `… ${lastLines.length - lastShown} more lines`, { dimColor: true }))
-        }
-        if (i.comments > 1) {
-          const earlier = i.comments - 1
-          body.push(line('earlier', `${earlier} earlier ${earlier === 1 ? 'comment' : 'comments'}`, { dimColor: true }))
-        }
+      }
+      if (count > 0 && !f.commentsShut && !said) body.push(line('comments-unknown', 'comments unknown', { dimColor: true }))
+      if (count > 0 && !f.commentsShut && said) {
+        const newest = [...said].reverse()
+        const idOf = (c: Comment) => `${c.when} ${c.author}`
+        const first = newest[0] ? [idOf(newest[0])] : []
+        const unfoldedOnes = new Set(f.comments ?? first)
+        const fold = (id: string, on: boolean) =>
+          setFolds(x => {
+            const was = (x.comments ?? first).filter(y => y !== id)
+            return { ...x, comments: on ? [...was, id] : was }
+          })
+        newest.forEach((c, k) => {
+          const id = idOf(c)
+          const ago = `${age(c.when, now)} ago`
+          const author = fit(c.author, columns - 2)
+          if (unfoldedOnes.has(id)) {
+            body.push(
+              <Box key={`comment-row-${k}`} height={1} flexShrink={0}>
+                <Button key={`comment-${k}`} plain onPress={fold(id, false)}>
+                  <Text>
+                    {'− '}
+                    <Text bold>{author}</Text>
+                    <Text dimColor>{fit(` · ${ago}`, columns - 2 - author.length)}</Text>
+                  </Text>
+                </Button>
+              </Box>,
+            )
+            // Its first 3 lines, and how many more: pressed, the rest.
+            const text = wrap(c.body.trim(), columns)
+            const whole = f.whole.includes(id) || text.length <= FOLD_AT
+            text.slice(0, whole ? text.length : 3).forEach((tl, j) => body.push(line(`comment-${k}-${j}`, tl || ' ')))
+            if (!whole) body.push(moreLine(`comment-more-${k}`, text.length - 3, setFolds(x => ({ ...x, whole: [...x.whole, id] }))))
+            return
+          }
+          const head = `+ ${author} · ${ago} · `
+          const words = fit(c.body.replace(/\s+/g, ' ').trim(), columns - head.length)
+          body.push(
+            <Box key={`comment-row-${k}`} height={1} flexShrink={0}>
+              <Button key={`comment-${k}`} plain onPress={fold(id, true)}>
+                <Text>
+                  <Text dimColor>{'+ '}</Text>
+                  <Text bold>{author}</Text>
+                  <Text dimColor>{fit(` · ${ago} · ${words}`, columns - 2 - author.length)}</Text>
+                </Text>
+              </Button>
+            </Box>,
+          )
+        })
       }
     }
-    return (
-      <Box flexDirection="column" height={height}>
-        {top}
-        <Box key="gap" height={1} flexShrink={0} />
-        <Box key="detail" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-          {body}
-        </Box>
-        {fixedLine('where-rule', '─'.repeat(columns))}
-        <Box key="where" height={1} flexShrink={0}>
+    // [ ← ] and the menu, with Prompt before it once the issue is read.
+    const top = (
+      <Box key="top" flexDirection="column" flexShrink={0}>
+        <Box key="title" height={1} flexShrink={0}>
+          {hotkeys(actions, 'back')}
+          <Button key="back" label="←" hotkey="b" onPress={() => goBack($, e.requestId)} />
           <Box flexGrow={1} />
-          {ours}
+          {prompt}
+          {prompt && <Box width={2} />}
+          {menuButton}
         </Box>
-        {counter}
       </Box>
     )
+    return detailFrame(top, body, menuLines(actions, note))
   }
 
   // The Milestones pane, once setup passes: each open milestone folded, due
@@ -1840,16 +2067,27 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const text = (shownMs.description ?? '').trim()
       const descLines = text === '' ? [] : wrap(text, columns)
       const descOpen = await read($, descriptionUnfolded)
-      const descShown = descOpen || descLines.length <= 3 ? descLines.length : 3
+      const descShown = descOpen || descLines.length <= FOLD_AT ? descLines.length : 3
+      // The title, its state under it, then its due date as a fact under
+      // Due, in the issue detail's gutter (DRAWING-issue.md, The issue
+      // detail's heading): the long form while open, short and dim once closed.
       const body: RenderChildren[] = [
-        <Box key="head" flexDirection="column" flexShrink={0}>
-          {titleLines.map((t, k) => (
-            <Text key={`t-${k}`} bold wrap="truncate-end" color={isClosed ? 'inactive' : undefined}>
-              {t}
-            </Text>
-          ))}
-          {partsLine('state', 0, [{ text: state }, ...duePart('due', shownMs.due, now, { form: isClosed ? 'short' : 'long', done: isClosed })])}
-        </Box>,
+        ...titleLines.map((tl, k) => (
+          <Text key={`t-${k}`} bold wrap="truncate-end" color={isClosed ? 'inactive' : undefined}>
+            {tl}
+          </Text>
+        )),
+        partsLine('state', 0, [{ text: state }]),
+      ]
+      if (shownMs.due) {
+        body.push(
+          <Box key="due" height={1} flexShrink={0} marginTop={1}>
+            <Text dimColor>{'Due'.padEnd(11)}</Text>
+            {dueDate('due-date', shownMs.due, now, { form: isClosed ? 'short' : 'long', bare: true, done: isClosed })}
+          </Box>,
+        )
+      }
+      body.push(
         <Box key="progress" flexDirection="column" flexShrink={0} marginTop={1}>
           <Text wrap="truncate-end">
             {barText(shownMs.closed, shownMs.total)}
@@ -1860,30 +2098,29 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {issues === null && line('ms-unknown', 'issues unknown', { dimColor: true })}
           {issues && partsLine('for-you', 0, parts)}
         </Box>,
-      ]
-      // No Work on this or Assign: a milestone is not work you pick up. Close
-      // and Reopen as on Issue detail, not where the token is read only.
+      )
+      // No Prompt or Assign: a milestone is not work you pick up. Close and
+      // Reopen as on Issue detail, not where the token is read only; all in
+      // the menu (DRAWING.md, The menu).
       const url = shownMs.url
       const canClose = shownMs.id !== undefined && s.actions.kind !== 'read-only'
+      const actions: Action[] = [
+        ...(url ? [{ key: 'open', label: 'Open in Browser', hotkey: 'o', onPress: () => openUrl($, url) }] : []),
+        ...(canClose
+          ? [
+              {
+                key: 'close',
+                label: isClosed ? 'Reopen' : 'Close',
+                hotkey: 'c',
+                onPress: () => counted($, `${isClosed ? 'reopen' : 'close'} ${shownMs.title}`, () => closeMilestone($, shownMs, !isClosed)),
+              },
+            ]
+          : []),
+        refreshAction,
+      ]
       const error = await read($, milestoneError)
-      if (url || canClose) {
-        body.push(
-          <Box key="actions" flexDirection="column" flexShrink={0} marginTop={1}>
-            <Box height={1}>
-              {url && <Button key="open" label={say(ICON.open, 'Open in browser')} hotkey="o" onPress={() => openUrl($, url)} />}
-              {url && canClose && <Text>{'  '}</Text>}
-              {canClose && (
-                <Button
-                  key="close"
-                  label={say(isClosed ? ICON.reopen : ICON.close, isClosed ? 'Reopen' : 'Close')}
-                  hotkey="c"
-                  onPress={() => counted($, `${isClosed ? 'reopen' : 'close'} ${shownMs.title}`, () => closeMilestone($, shownMs, !isClosed))}
-                />
-              )}
-            </Box>
-            {error && para('action-error', error, { color: 'error' })}
-          </Box>,
-        )
+      if (error) {
+        body.push(<Box key="gap-error" height={1} flexShrink={0} />, ...wrap(error, columns).map((tl, k) => line(`action-error-${k}`, tl, { color: 'error' })))
       }
       // Two sections, each folding on its rule as Closed does: Issues, the
       // milestone's issues as a tree, unfolded at first; then Description.
@@ -1910,39 +2147,31 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>,
         )
       }
-      // Three lines or fewer: nothing to fold, the rule as on Issue detail.
+      // Four lines or fewer: nothing to fold, the rule as on Issue detail.
       // One empty line before it: the last issue row leaves one without Compact.
       const endsInRow = !issuesShut && shownMs.closed === 0 && Array.isArray(issues) && issues.length > 0
       body.push(
         ...(endsInRow ? sectionEnd('desc') : [<Box key="gap-desc" height={1} flexShrink={0} />]),
-        descLines.length > 3
+        descLines.length > FOLD_AT
           ? rule('description-section-rule', 'Description', [], { key: 'description-section', open: descOpen, onPress: () => update($, descriptionUnfolded, o => !o) })
           : rule('desc', 'Description'),
       )
       if (descLines.length === 0) body.push(line('no-desc', 'No description.', { dimColor: true }))
-      descLines.slice(0, descShown).forEach((t, k) => body.push(line(`d-${k}`, t || ' ')))
+      descLines.slice(0, descShown).forEach((tl, k) => body.push(line(`d-${k}`, tl || ' ')))
       if (descShown < descLines.length) {
-        body.push(line('d-more', `… ${descLines.length - descShown} more lines`, { dimColor: true }))
+        body.push(moreLine('description-more', descLines.length - descShown, () => update($, descriptionUnfolded, () => true)))
       }
-      return (
-        <Box flexDirection="column" height={height}>
+      const top = (
+        <Box key="top" flexDirection="column" flexShrink={0}>
           <Box key="title" height={1} flexShrink={0}>
-            <Button key="back" label={say(ICON.back, '← Milestones')} hotkey="b" onPress={() => openMilestone($, null)} />
+            {hotkeys(actions, 'back')}
+            <Button key="back" label="←" hotkey="b" onPress={() => openMilestone($, null)} />
             <Box flexGrow={1} />
-            <Button key="refresh" label={say(ICON.refresh, 'Refresh')} hotkey="r" onPress={() => counted($, 'Refresh', () => refresh($))} />
+            {menuButton}
           </Box>
-          <Box key="gap" height={1} flexShrink={0} />
-          <Box key="detail" flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-            {body}
-          </Box>
-          {fixedLine('where-rule', '─'.repeat(columns))}
-          <Box key="where" height={1} flexShrink={0}>
-            <Box flexGrow={1} />
-            {ours}
-          </Box>
-          {counter}
         </Box>
       )
+      return detailFrame(top, body, menuLines(actions))
     }
     // Bar and count at the right of a row.
     const titleWidth = Math.max(0, columns - 2 - COUNT)
@@ -2048,6 +2277,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {ours}
         </Box>
         {counter}
+        {await listOverlay(false)}
       </Box>
     )
   }
@@ -2126,6 +2356,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {ours}
         </Box>
         {counter}
+        {await listOverlay()}
       </Box>
     )
   }
@@ -2298,6 +2529,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         {fixedLine('where-rule', '─'.repeat(columns))}
         {bottomLine}
         {counter}
+        {await listOverlay()}
       </Box>
     )
   }
@@ -2363,7 +2595,8 @@ async function runNext($: EngineInterface, name: string, word: string) {
   const o = await read($, overview)
   if (s.kind !== 'ready' || !r) return { text: "What's Next needs setting up: see its pane." }
   const pk = await read($, picker)
-  const showing = pk?.options.find(x => x.value === pk.pick)?.label ?? 'All'
+  // The filter's word, but None, which reads as nothing in a sentence.
+  const showing = pk?.pick === 'none' ? 'no milestone' : (pk?.options.find(x => x.value === pk.pick)?.label ?? 'All')
   if (want === 'epics' && ep.kind === 'ok') {
     return { text: `Epics for ${slug(r)}: ${ep.openEpics} open, showing ${showing}.` }
   }
@@ -2435,6 +2668,10 @@ export const register: Register = (on, options) => {
   on('ui.close', { id: PANE }, paneClosed)
   on('ui.close', { id: EPICS_PANE }, paneClosed)
   on('ui.close', { id: MILESTONES_PANE }, paneClosed)
+  for (const requestId of [PANE, EPICS_PANE, MILESTONES_PANE]) {
+    on('ui.scroll', { requestId }, scrollDetail)
+    on('ui.focus', { requestId }, focusMoved)
+  }
   on('ui.render', { component: 'Pane', requestId: PANE }, renderPane)
   on('ui.render', { component: 'Pane', requestId: EPICS_PANE }, renderPane)
   on('ui.render', { component: 'Pane', requestId: MILESTONES_PANE }, renderPane)

@@ -392,10 +392,9 @@ test('clicking an issue in the queue opens its detail, and back returns', TOKEN,
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   await ui.press({ key: 'pick-51' })
-  const back = (await ui.find({ key: 'back' })) as unknown as { props: Record<string, unknown> }
-  expect(back.props.label).toBe("← What's next")
   await ui.press({ key: 'back' })
   expect((await texts(ui))[0]).toBe("What's next")
+  await expect(ui.find({ key: 'pick-51' })).resolves.toBeDefined()
 })
 
 test('the bottom line sits at the bottom of the pane, however long the list', TOKEN, async ($, on) => {
@@ -484,7 +483,7 @@ test('a manifest that cannot be read leaves the version out', TOKEN, async ($, o
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`the title row holds Refresh on ${surface}`, TOKEN, async ($, on) => {
+  test(`the title row holds the menu, with Refresh in it and on r, on ${surface}`, TOKEN, async ($, on) => {
     const asked: string[] = []
     world(on, REPO, asked)
 
@@ -492,11 +491,23 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
 
     expect((await texts(ui))[0]).toBe("What's next")
+    const menu = (await ui.find({ key: 'menu' })) as unknown as { props: Record<string, unknown> }
+    expect(menu.props.label).toBe('☰')
+    // Refresh hidden, for its hotkey.
     const button = (await ui.find({ key: 'refresh' })) as unknown as { props: Record<string, unknown> }
     expect(button.props).toEqual(expect.objectContaining({ label: 'Refresh', hotkey: 'r' }))
     const before = asked.length
     await ui.press({ key: 'refresh' })
     expect(asked.length).toBeGreaterThan(before)
+
+    // The menu open: Refresh a line in it, which refreshes and shuts the menu.
+    await expect(ui.find({ key: 'menu-refresh' })).resolves.toBeUndefined()
+    await ui.press({ key: 'menu' })
+    expect((await texts(ui)).some(t => t.startsWith('Refresh') && t.trimEnd().endsWith(' r'))).toBe(true)
+    const again = asked.length
+    await ui.press({ key: 'menu-refresh' })
+    expect(asked.length).toBeGreaterThan(again)
+    await expect(ui.find({ key: 'menu-refresh' })).resolves.toBeUndefined()
   })
 }
 
@@ -549,7 +560,7 @@ test('picking No milestone shows the issues without one, and All shows every one
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-none' })
   let all = await texts(ui)
-  expect(await pickerLabel(ui)).toBe('No milestone ▾')
+  expect(await pickerLabel(ui)).toBe('None ▾')
   expect(all).toContain(rule('In progress · 0'))
   expect(all).toContain('○ #29 Issue 29')
   expect(all).toContain('⊘ #33 Issue 33')
@@ -567,7 +578,7 @@ for (const rows of [60, 12]) {
     world(on, { ...REPO, open: [[...(REPO.open?.[0] ?? []), ...many]], milestones: MILESTONES })
     await $.command.run(RUN)
     const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: rows } }, surface: 'terminal' })
-    for (const [pick, label] of [['none', 'No milestone ▾'], ['all', 'All ▾'], ['m:v1.2', 'v1.2 ▾']] as const) {
+    for (const [pick, label] of [['none', 'None ▾'], ['all', 'All ▾'], ['m:v1.2', 'v1.2 ▾']] as const) {
       await ui.press({ key: 'milestone' })
       await ui.press({ key: `milestone-${pick}` })
       expect(await pickerLabel(ui)).toBe(label)
@@ -828,7 +839,7 @@ test('Next follows on in the epic of the issue you closed last; the Queue says e
   const all = found.map(t => t.text)
 
   // #41 has no milestone: the milestone filter starts on No milestone.
-  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 0 in progress, next is #43, in epic #30 (No milestone)." }))
+  expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 0 in progress, next is #43, in epic #30 (no milestone)." }))
   expect(all).toContain(rule('Next · in epic #30'))
   expect(all).toContain(rule('Queue · in epic #30'))
   expect(all).toContain(rule('Queue'))

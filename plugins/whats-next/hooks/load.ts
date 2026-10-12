@@ -1,4 +1,4 @@
-import type { Epic, EpicChild, EpicGroup, IssueDetail, IssueRow, LastClosed, MilestoneIssue, Scope } from '../types'
+import type { Epic, EpicChild, EpicGroup, IssueDetail, IssueRow, LastClosed, MilestoneIssue, Ref, Scope } from '../types'
 import { groupsFor, roots, tree, type MilestoneRow } from './epics'
 import { order, pickNext, type Scoped } from './next'
 import { message, type Closed, type EpicRow, type OpenIssue, type Tracker } from './tracker'
@@ -158,7 +158,10 @@ export async function whatsNext(t: Tracker, known: Memory, pick: string, deps: b
   }
   const ms = from?.milestone ?? null
   if (pick === 'all' && ms !== null) scopes.push({ scope: { kind: 'milestone', title: ms }, holds: i => i.milestone === ms })
-  const waitingOn = (n: number) => [...known.blockers.values()].filter(by => by?.includes(n)).length
+  // An epic that waits on its children is no issue they unblock: it is
+  // their epic (DRAWING-issue.md, The facts line).
+  const epicNumbers = new Set(known.epics.map(e => e.number))
+  const waitingOn = (n: number) => [...known.blockers].filter(([w, by]) => !epicNumbers.has(w) && by?.includes(n)).length
   const unblocksOf = (i: IssueRow) => i.unblocks ?? waitingOn(i.number)
   const due = new Map(known.milestones.map(m => [m.title, m.due]))
   const ordered = order(free, { scopes, milestoneDue: title => due.get(title) ?? null, unblocks: unblocksOf, now })
@@ -200,6 +203,18 @@ export async function lastClosedIn(t: Tracker, known: Memory, pick: string, me: 
 async function parentOf(t: Tracker, known: Memory, n: number): Promise<number | null> {
   if (!known.parents.has(n)) known.parents.set(n, await t.parentOf(n).catch(() => null))
   return known.parents.get(n) ?? null
+}
+
+// The issue `n` is a child of, as the issue detail names it: its number,
+// title and state, and whether it is an epic. null for none, or one that is
+// not among the open issues and epics known.
+export async function parentRef(t: Tracker, known: Memory, n: number): Promise<(Ref & { epic: boolean }) | null> {
+  const p = await parentOf(t, known, n)
+  if (p === null) return null
+  const epic = known.epics.find(e => e.number === p)
+  if (epic) return { number: p, title: epic.title, state: epic.state, epic: true }
+  const issue = [...known.mine, ...known.free, ...known.taken].find(i => i.number === p)
+  return issue ? { number: p, title: issue.title, state: 'open', epic: false } : null
 }
 
 // The epics above issue `n`, nearest first: its epic, and on a forge where

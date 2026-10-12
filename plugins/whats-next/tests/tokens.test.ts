@@ -181,8 +181,12 @@ test('Close: a refusal that echoes the request shows without the token', GH, asy
   await ui.press({ key: 'close' })
   said.push(...(await texts(ui)))
 
-  expect(said.some(s => s.startsWith('Could not close #14') && s.includes('Bearer <token>'))).toBe(true)
-  noToken(said)
+  // The refusal in red, wrapped to the pane, each line its own Text: whole again, it still has no token.
+  const red = ((await ui.findAll({ type: 'Text' })) as { text: string; props: Record<string, unknown> }[]).filter(t => t.props.color === 'error')
+  const refusal = red.map(t => t.text).join(' ')
+  expect(refusal.startsWith('Could not close #14')).toBe(true)
+  expect(refusal).toContain('Bearer <token>')
+  noToken([...said, refusal])
 })
 
 test('Last closed: an issue whose title names the token, and the requests for where you work, carry no token', GH, async ($, on) => {
@@ -217,11 +221,11 @@ test('Last closed: an issue whose title names the token, and the requests for wh
   noToken(said)
 })
 
-test('Work on this: the prompt it drafts, its toast and the Debug counter carry no token, even from an issue that names it', GH, async ($, on) => {
+test('Prompt: the prompt it drafts, its toast and the Debug counter carry no token, even from an issue that names it', GH, async ($, on) => {
   const said = world(on, { title: `Rotate ${TOKEN}` })
   const ui = await shown($)
   await ui.press({ key: 'pick-14' })
-  await ui.press({ key: 'work' })
+  await ui.press({ key: 'prompt' })
   said.push(...(await texts(ui)))
 
   expect(said.some(s => s.startsWith('Work on #14: Rotate <token>'))).toBe(true)

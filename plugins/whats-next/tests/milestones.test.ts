@@ -147,6 +147,15 @@ type Btn = { key: string }
 const rowKeys = async (ui: Ui) =>
   ((await ui.findAll({ type: 'Button' })) as unknown as Btn[]).map(b => b.key).filter(k => k.startsWith('milestone-'))
 
+// On Issue detail, reached from a row: Back is ← alone, and goes to Milestones.
+type Pane = Ui & { find: (q: { key: string }) => Promise<{ props: Record<string, unknown> } | undefined>; press: (q: { key: string }) => Promise<unknown> }
+const backToMilestones = async (pane: Pane) => {
+  expect(await rowKeys(pane)).toEqual([])
+  expect((await pane.find({ key: 'back' }))?.props.label).toBe('←')
+  await pane.press({ key: 'back' })
+  expect((await rowKeys(pane)).length).toBeGreaterThan(0)
+}
+
 const milestone = (title: string, due: string | null, open: number, closed: number, id = 1, description = '') => ({
   id,
   title,
@@ -327,6 +336,8 @@ test('the Milestones pane has Refresh and no milestone picker', TOKEN, async ($,
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await expect(pane.find({ key: 'refresh' })).resolves.toBeDefined()
   await expect(pane.find({ key: 'milestone' })).resolves.toBeUndefined()
+  await pane.press({ key: 'menu' })
+  await expect(pane.find({ key: 'menu-refresh' })).resolves.toBeDefined()
 })
 
 test('the Milestones pane asks the forge nothing of its own', TOKEN, async ($, on) => {
@@ -391,7 +402,8 @@ test('a row opens Issue detail, and Back returns to Milestones', TOKEN, async ($
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'ms-fold-GitHub' })
   await pane.press({ key: 'ms-issue-33' })
-  expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
+  expect((await pane.find({ key: 'back' }))?.props.label).toBe('←')
+  expect(await rowKeys(pane)).toEqual([])
   await pane.press({ key: 'back' })
   await expect(pane.find({ key: 'ms-issue-33' })).resolves.toBeDefined()
 })
@@ -490,7 +502,7 @@ test('an epic in a milestone unfolds on its tree, its mark first so Tab stops on
   ])
   expect(t.some(x => x.startsWith('        ● 1'))).toBe(false)
   await pane.press({ key: 'ms-issue-30' })
-  expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
+  await backToMilestones(pane)
 })
 
 test('what is unfolded is shared with Epics, and holds over Refresh and Back', TOKEN, async ($, on) => {
@@ -550,7 +562,7 @@ test("an epic is not blocked by its own children, and opens its detail", TOKEN, 
   await pane.press({ key: 'ms-fold-GitHub' })
   expect((await texts(pane)).some(x => x.startsWith('  ⊘ #29'))).toBe(false)
   await pane.press({ key: 'ms-issue-29' })
-  expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
+  await backToMilestones(pane)
 })
 
 test("an epic's children are asked once, for Milestones and Epics both", TOKEN, async ($, on) => {
@@ -644,7 +656,7 @@ test('a closed milestone unfolded: its epics grey, how many are closed, and issu
   expect(n.map(x => x.text)).toContain('  ✓ 11 closed')
   expect(n.some(x => x.text.startsWith('  ○ #44 GitLab leftovers'))).toBe(true)
   await pane.press({ key: 'ms-issue-12' })
-  expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
+  await backToMilestones(pane)
 })
 
 test('without a closed milestone there is no Closed rule', TOKEN, async ($, on) => {
@@ -663,22 +675,47 @@ test("the rest of a milestone's row opens its detail, in place of the list", TOK
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
-  expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
+  expect((await pane.find({ key: 'back' }))?.props.label).toBe('←')
   await expect(pane.find({ key: 'refresh' })).resolves.toBeDefined()
+  await expect(pane.find({ key: 'menu' })).resolves.toBeDefined()
   expect(await rowKeys(pane)).toEqual([])
   const n = await nodes(pane)
   expect(n.find(x => x.text === 'GitHub')?.props.bold).toBe(true)
 })
 
-test('the head of a milestone detail: open, and its due date in its colour', TOKEN, async ($, on) => {
+test('the head of a milestone detail: open, then its due date under Due, in its colour', TOKEN, async ($, on) => {
   const clock = world(on, REPO)
   await clock.set(NOW)
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
   const n = await nodes(pane)
-  expect(n.find(x => x.text === 'open')?.props.dimColor).toBe(true)
-  expect(n.find(x => x.text === '⧗ 13 Oct, in 4 days')?.props.color).toBe('warning')
+  // The state line holds one part, dim.
+  const at = n.findIndex(x => x.text === 'open' && x.props.dimColor === true)
+  expect(at).toBeGreaterThan(-1)
+  expect(n[at - 1]?.text).toBe('open')
+  expect(n.some(x => x.text.includes('⧗'))).toBe(false)
+  const key = n.findIndex(x => x.text === 'Due'.padEnd(11))
+  expect(key).toBeGreaterThan(at)
+  expect(n[key]?.props.dimColor).toBe(true)
+  expect(n[key + 1]?.text).toBe('13 Oct, in 4 days')
+  expect(n[key + 1]?.props.color).toBe('warning')
+})
+
+test("a closed milestone's due date is short and dim", TOKEN, async ($, on) => {
+  const due = { ...shut('Done', '2026-10-06T10:00:00Z', 0, 4, 8), due_on: '2026-10-05T00:00:00Z' }
+  const clock = world(on, { ...REPO, closedMilestones: [due] })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'closed-section' })
+  await pane.press({ key: 'milestone-Done' })
+  const n = await nodes(pane)
+  expect(n.map(x => x.text)).toContain('closed 3 days ago')
+  const key = n.findIndex(x => x.text === 'Due'.padEnd(11))
+  expect(n[key + 1]?.text).toBe('5 Oct')
+  expect(n[key + 1]?.props.color).toBeUndefined()
+  expect(n[key + 1]?.props.dimColor).toBe(true)
 })
 
 test('a milestone detail without a due date says nothing of it', TOKEN, async ($, on) => {
@@ -689,7 +726,7 @@ test('a milestone detail without a due date says nothing of it', TOKEN, async ($
   await pane.press({ key: 'milestone-Panes' })
   const t = await texts(pane)
   expect(t).toContain('open')
-  expect(t.some(x => x.includes('due') || x.includes('⧗'))).toBe(false)
+  expect(t.some(x => x.includes('Due') || x.includes('due') || x.includes('⧗'))).toBe(false)
 })
 
 test("a milestone detail's progress: the bar, closed of all, how many open, and what there is for you", TOKEN, async ($, on) => {
@@ -737,10 +774,15 @@ test('a milestone detail: Issues, its tree, unfolded at first, folds on its rule
   t = await texts(pane)
   expect(t.some(x => x.startsWith('+ Issues · 8 open ─'))).toBe(true)
   expect(t.some(x => x.includes('#29') || x.includes('#40'))).toBe(false)
-  // Shut for every milestone, and over Back.
+  // Refresh keeps it shut; every milestone opens with it unfolded, this one again too.
+  await pane.press({ key: 'refresh' })
+  expect((await texts(pane)).some(x => x.startsWith('+ Issues · 8 open ─'))).toBe(true)
   await pane.press({ key: 'back' })
   await pane.press({ key: 'milestone-Jira' })
-  expect((await texts(pane)).some(x => x.startsWith('+ Issues · 6 open ─'))).toBe(true)
+  expect((await texts(pane)).some(x => x.startsWith('− Issues · 6 open ─'))).toBe(true)
+  await pane.press({ key: 'back' })
+  await pane.press({ key: 'milestone-GitHub' })
+  expect((await texts(pane)).some(x => x.startsWith('− Issues · 8 open ─'))).toBe(true)
 })
 
 test('a milestone detail: a description over three lines folds to three and how many more; unfolded, all of it', TOKEN, async ($, on) => {
@@ -754,25 +796,32 @@ test('a milestone detail: a description over three lines folds to three and how 
   expect(t.some(x => x.startsWith('+ Description ─'))).toBe(true)
   expect(t).toContain('Two.')
   expect(t).not.toContain('Three.')
-  expect(t).toContain('… 4 more lines')
+  expect(((await pane.find({ key: 'description-more' })) as { props: { label: string } } | undefined)?.props.label).toBe('… 4 more lines')
   await pane.press({ key: 'description-section' })
   t = await texts(pane)
   expect(t.some(x => x.startsWith('− Description ─'))).toBe(true)
   expect(t).toContain('Four.')
-  expect(t.some(x => x.includes('more lines'))).toBe(false)
+  await expect(pane.find({ key: 'description-more' })).resolves.toBeUndefined()
+  // Back and in again: folded, as it opens every time.
+  await pane.press({ key: 'back' })
+  await pane.press({ key: 'milestone-GitHub' })
+  expect((await texts(pane)).some(x => x.startsWith('+ Description ─'))).toBe(true)
 })
 
-test("Open in browser opens the milestone's page on Forgejo", TOKEN, async ($, on) => {
+test("Open in Browser opens the milestone's page on Forgejo", TOKEN, async ($, on) => {
   const ran: string[] = []
   const clock = world(on, { ...REPO, ran })
   await clock.set(NOW)
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
-  expect(await pane.find({ key: 'work' })).toBeUndefined()
+  expect(await pane.find({ key: 'prompt' })).toBeUndefined()
   expect(await pane.find({ key: 'assign' })).toBeUndefined()
-  await pane.press({ key: 'open' })
+  await pane.press({ key: 'menu' })
+  await pane.press({ key: 'menu-open' })
   expect(ran).toContain('open https://git.example.org/boats/radar/milestone/2')
+  await pane.press({ key: 'open' })
+  expect(ran.filter(x => x === 'open https://git.example.org/boats/radar/milestone/2')).toHaveLength(2)
 })
 
 test("opening a milestone's detail asks its issues once, shared with the fold", TOKEN, async ($, on) => {
@@ -811,7 +860,8 @@ test('Refresh keeps a milestone detail open and asks its issues again', TOKEN, a
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
   await pane.press({ key: 'refresh' })
-  expect((await pane.find({ key: 'back' }))?.props.label).toBe('← Milestones')
+  expect(await rowKeys(pane)).toEqual([])
+  expect((await texts(pane)).filter(x => x === 'GitHub')).toHaveLength(1)
   expect(await texts(pane)).toContain('● 1')
   expect(DEPS(asked).filter(u => u.includes('/issues/36/'))).toHaveLength(2)
 })
@@ -899,12 +949,15 @@ test('read only: a milestone detail has no Close', TOKEN, async ($, on) => {
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
-  // The actions, before the sections.
-  const keys = (await buttons(pane)).map(b => b.key)
-  expect(keys.slice(0, keys.indexOf('issues-section'))).toEqual(['back', 'refresh', 'open'])
+  // The top row, before the sections: the hidden hotkeys, Back, the menu.
+  let keys = (await buttons(pane)).map(b => b.key)
+  expect(keys.slice(0, keys.indexOf('issues-section'))).toEqual(['open', 'refresh', 'back', 'menu'])
+  await pane.press({ key: 'menu' })
+  keys = (await buttons(pane)).map(b => b.key)
+  expect(keys.filter(k => k.startsWith('menu-'))).toEqual(['menu-open', 'menu-refresh'])
 })
 
-test('Close sits after Open in browser and closes the milestone at once, open issues and all', TOKEN, async ($, on) => {
+test('the menu holds Open in Browser, Close, Refresh, and Close closes the milestone at once, open issues and all', TOKEN, async ($, on) => {
   const sent: World['sent'] = []
   const w: World = { ...WORK, milestones: [...(WORK.milestones ?? [])], write: true, sent }
   const clock = world(on, w)
@@ -912,10 +965,17 @@ test('Close sits after Open in browser and closes the milestone at once, open is
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
-  const keys = (await buttons(pane)).map(b => b.key)
-  expect(keys.slice(keys.indexOf('open'), keys.indexOf('issues-section'))).toEqual(['open', 'close'])
+  let keys = (await buttons(pane)).map(b => b.key)
+  expect(keys.slice(0, keys.indexOf('issues-section'))).toEqual(['open', 'close', 'refresh', 'back', 'menu'])
   expect((await buttons(pane)).find(b => b.key === 'close')?.props.label).toBe('Close')
-  await pane.press({ key: 'close' })
+  await pane.press({ key: 'menu' })
+  keys = (await buttons(pane)).map(b => b.key)
+  expect(keys.filter(k => k.startsWith('menu-'))).toEqual(['menu-open', 'menu-close', 'menu-refresh'])
+  const t = await texts(pane)
+  const words = ['Open in Browser', 'Close', 'Refresh'].map(w => t.findIndex(x => x.startsWith(`${w} `)))
+  expect(words.every(i => i > -1)).toBe(true)
+  expect([...words].sort((a, b) => a - b)).toEqual(words)
+  await pane.press({ key: 'menu-close' })
   expect(sent).toEqual([{ path: '/api/v1/repos/boats/radar/milestones/2', body: { state: 'closed' } }])
   // Back on the list, read again: GitHub has left the open milestones for Closed.
   expect(await pane.find({ key: 'back' })).toBeUndefined()
@@ -941,20 +1001,25 @@ test('Reopen opens a closed milestone again, back among the open ones', TOKEN, a
   expect(await rowKeys(pane)).toContain('milestone-GitLab')
 })
 
-test('a refused Close keeps the detail open and says why, in red under the buttons', TOKEN, async ($, on) => {
-  const w: World = { ...REPO, write: true, sent: [], refuse: { status: 403, message: 'token may not do this' } }
+test('a refused Close keeps the detail open and says why, in red under the heading, one text per line', TOKEN, async ($, on) => {
+  const why = 'token may not do this, ask an owner of boats/radar for write rights'
+  const w: World = { ...REPO, write: true, sent: [], refuse: { status: 403, message: why } }
   const clock = world(on, w)
   await clock.set(NOW)
   await $.command.run(RUN)
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'milestone-GitHub' })
   await pane.press({ key: 'close' })
-  const line = (await nodes(pane)).find(x => x.text === 'Could not close GitHub: token may not do this.')
-  expect(line?.props.color).toBe('error')
+  const n = await nodes(pane)
+  const at = n.findIndex(x => x.text.startsWith('Could not close GitHub:'))
+  const red = n.slice(at).filter(x => x.props.color === 'error')
+  expect(red.length).toBeGreaterThan(1)
+  expect(red.map(x => x.text).join(' ')).toBe(`Could not close GitHub: ${why}.`)
+  expect(at).toBeLessThan(n.findIndex(x => x.text.startsWith('− Issues')))
   await expect(pane.find({ key: 'back' })).resolves.toBeDefined()
   // Back and in again: the refusal is gone.
   await pane.press({ key: 'back' })
   await pane.press({ key: 'milestone-GitHub' })
-  expect(await texts(pane)).not.toContain('Could not close GitHub: token may not do this.')
+  expect((await texts(pane)).some(x => x.startsWith('Could not close'))).toBe(false)
 })
 

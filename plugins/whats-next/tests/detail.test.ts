@@ -191,32 +191,41 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(all).not.toContain("What's next")
     for (const want of [
       '#29 Docs: config keys',
-      'open · v0.3.0 · ⧗ 31 Oct · 2 comments',
-      'opened 3w ago by alice · updated 2d ago',
+      'open · ✎ 3w alice',
+      'Due        ',
       '14 Oct, in 5 days',
+      'Milestone  ',
+      'v0.3.0 · ⧗ 31 Oct',
       '29-config-docs',
       '1h 20m logged',
       'docs',
       'needs-triage',
-      'Blocked by     ',
+      'Blocked by ',
       'Settings screen rework',
       'Drop FORGEJO_TOKEN',
-      'Blocks         ',
+      'Blocks     ',
       'Release notes for 0.3.0',
-      'Pull requests  ',
+      'PRs        ',
       ' merged',
-      'Commits        ',
+      'Commits    ',
       'a1b2c3d ',
       "docs: list the Token's scopes",
+      '── Description',
       'The README lists the old settings.',
       'Document the Token.',
+      '− Comments · 2',
+      '− jdoe · 2d ago',
       'Also mention the desktop app.',
-      '1 earlier comment',
+      '+ maria · 8d ago · First.',
     ]) {
       expect(all.some(t => t === want || t.includes(want))).toBe(true)
     }
-    expect(all.some(t => t.startsWith('── Last comment · jdoe · 2d ago'))).toBe(true)
-    await expect(ui.find({ key: 'work' })).resolves.toBeDefined()
+    // The facts in their order: Blocked by, Blocks, Due, Milestone, Labels, Branch, Time, PRs, Commits.
+    const order = ['Blocked by ', 'Blocks     ', 'Due        ', 'Milestone  ', 'Labels     ', 'Branch     ', 'Time       ', 'PRs        ', 'Commits    ']
+    expect(order.every(k => all.includes(k))).toBe(true)
+    expect(order.map(k => all.indexOf(k))).toEqual(order.map(k => all.indexOf(k)).sort((a, b) => a - b))
+    expect(all.some(t => t.startsWith('opened '))).toBe(false)
+    await expect(ui.find({ key: 'prompt' })).resolves.toBeDefined()
     await expect(ui.find({ key: 'open' })).resolves.toBeDefined()
   })
 }
@@ -295,17 +304,15 @@ test('a blocker opens its issue in the same pane; Back returns to the issue it w
   const ui = await opened($)
   await ui.press({ key: 'follow-24' })
   expect((await texts(ui)).some(t => t.includes('#24 Settings screen rework'))).toBe(true)
-  expect(await labelOf(ui, 'back')).toBe('← #29')
 
   await ui.press({ key: 'follow-22' })
   expect((await texts(ui)).some(t => t.includes('#22 Settings schema v2'))).toBe(true)
-  expect(await labelOf(ui, 'back')).toBe('← #24')
+  expect(await labelOf(ui, 'back')).toBe('←')
 
   await ui.press({ key: 'back' })
   expect((await texts(ui)).some(t => t.includes('#24 Settings screen rework'))).toBe(true)
   await ui.press({ key: 'back' })
   expect((await texts(ui)).some(t => t.includes('#29 Docs: config keys'))).toBe(true)
-  expect(await labelOf(ui, 'back')).toBe("← What's next")
   await ui.press({ key: 'back' })
   expect((await texts(ui))[0]).toBe("What's next")
 })
@@ -316,7 +323,8 @@ test('Blocks lines open their issue too; pull requests are no buttons', TOKEN, a
   await expect(ui.find({ key: 'follow-61' })).resolves.toBeUndefined()
   await ui.press({ key: 'follow-31' })
   expect((await texts(ui)).some(t => t.includes('#31 Release notes for 0.3.0'))).toBe(true)
-  expect(await labelOf(ui, 'back')).toBe('← #29')
+  await ui.press({ key: 'back' })
+  expect((await texts(ui)).some(t => t.includes('#29 Docs: config keys'))).toBe(true)
 })
 
 test('an issue opened from the list again starts a new trail', TOKEN, async ($, on) => {
@@ -326,7 +334,8 @@ test('an issue opened from the list again starts a new trail', TOKEN, async ($, 
   await ui.press({ key: 'back' })
   await ui.press({ key: 'back' })
   await ui.press({ key: 'pick-29' })
-  expect(await labelOf(ui, 'back')).toBe("← What's next")
+  await ui.press({ key: 'back' })
+  expect((await texts(ui))[0]).toBe("What's next")
 })
 
 test('a passed due date is red', TOKEN, async ($, on) => {
@@ -350,7 +359,7 @@ test('a due date within 7 days is amber, a later one dim; the milestone\'s due d
   expect(due?.props.color).toBeUndefined()
 })
 
-test('a passed milestone due date is red in the heading', TOKEN, async ($, on) => {
+test('a passed milestone due date is red on its Milestone line', TOKEN, async ($, on) => {
   const clock = world(on, FULL)
   await clock.set(Date.parse('2026-11-02T12:00:00Z'))
   const all = await found(await opened($))
@@ -401,10 +410,11 @@ test('the lines with nothing to show are left out', TOKEN, async ($, on) => {
   const ui = await opened($)
   const all = await texts(ui)
 
-  for (const gone of ['Due', 'Branch', 'Time', 'Labels', 'Blocked by', 'Blocks', 'Pull requests', 'Commits']) {
+  for (const gone of ['Due', 'Branch', 'Time', 'Labels', 'Blocked by', 'Blocks', 'PRs', 'Commits']) {
     expect(all.some(t => t.trimEnd() === gone)).toBe(false)
   }
-  expect(all.some(t => t.startsWith('── Last comment'))).toBe(false)
+  expect(all.some(t => t.includes('Comments'))).toBe(false)
+  await expect(ui.find({ key: 'comments-section' })).resolves.toBeUndefined()
   expect(all).toContain('The README lists the old settings.')
 })
 
@@ -414,9 +424,16 @@ test('a long description is cut, with how much more there is', TOKEN, async ($, 
   const ui = await opened($)
   const all = await texts(ui)
 
-  expect(all).toContain('line 1')
-  expect(all).not.toContain('line 80')
-  expect(all.some(t => /^… \d+ more lines$/.test(t))).toBe(true)
+  expect(all).toContain('line 3')
+  expect(all).not.toContain('line 4')
+  expect(((await ui.find({ key: 'description-more' })) as { props: { label: string } } | undefined)?.props.label).toBe('… 77 more lines')
+  // Folded: its rule a button that unfolds it.
+  expect(all.some(t => t.startsWith('+ Description'))).toBe(true)
+  await ui.press({ key: 'description-section' })
+  const whole = await texts(ui)
+  expect(whole.some(t => t.startsWith('− Description'))).toBe(true)
+  expect(whole).toContain('line 80')
+  expect(whole.some(t => /^… \d+ more lines$/.test(t))).toBe(false)
 })
 
 test("What's next goes back to the overview", TOKEN, async ($, on) => {
@@ -426,7 +443,7 @@ test("What's next goes back to the overview", TOKEN, async ($, on) => {
 
   const all = await texts(ui)
   expect(all[0]).toBe("What's next")
-  await expect(ui.find({ key: 'work' })).resolves.toBeUndefined()
+  await expect(ui.find({ key: 'prompt' })).resolves.toBeUndefined()
 })
 
 test("the issue detail's bottom line is What's Next's version alone, no repo", TOKEN, async ($, on) => {
@@ -518,18 +535,48 @@ const keys = async (ui: { findAll: (q: { type: string }) => Promise<unknown[]> }
 const labelOf = async (ui: { find: (q: { key: string }) => Promise<unknown> }, key: string) =>
   ((await ui.find({ key })) as { props: Record<string, unknown> } | undefined)?.props.label
 
-test('with write:issue and push, Assign me and Close sit under the title, before the facts', TOKEN, async ($, on) => {
+test('with write:issue and push, Assign Me and Close are in the menu, and hidden for their hotkeys', TOKEN, async ($, on) => {
   const clock = world(on, FULL, [], [], 'open', { ...WRITE })
   await clock.set(NOW)
   const ui = await opened($)
-  expect(await keys(ui)).toEqual(['back', 'refresh', 'work', 'assign', 'close', 'open', 'follow-24', 'follow-19', 'follow-31'])
-  expect(await labelOf(ui, 'assign')).toBe('Assign me')
+  expect(await keys(ui)).toEqual([
+    'assign',
+    'close',
+    'open',
+    'refresh',
+    'back',
+    'prompt',
+    'menu',
+    'follow-24',
+    'follow-19',
+    'follow-31',
+    'comments-section',
+    'comment-0',
+    'comment-1',
+  ])
+  expect(await labelOf(ui, 'assign')).toBe('Assign Me')
   expect(await labelOf(ui, 'close')).toBe('Close')
+  const hotkey = async (key: string) => ((await ui.find({ key })) as { props: Record<string, unknown> }).props.hotkey
+  expect([await hotkey('assign'), await hotkey('close'), await hotkey('open'), await hotkey('refresh'), await hotkey('back'), await hotkey('prompt')]).toEqual(['a', 'c', 'o', 'r', 'b', 'p'])
   const all = await texts(ui)
-  expect(all.indexOf('opened 3w ago by alice · updated 2d ago')).toBeLessThan(all.indexOf('14 Oct, in 5 days'))
+  expect(all.indexOf('open · ✎ 3w alice')).toBeLessThan(all.indexOf('14 Oct, in 5 days'))
+
+  // The menu open: a line for each, its words then its hotkey.
+  await ui.press({ key: 'menu' })
+  const menu = (await keys(ui)).filter(k => k.startsWith('menu-'))
+  expect(menu).toEqual(['menu-assign', 'menu-close', 'menu-open', 'menu-refresh'])
+  const shown = await texts(ui)
+  for (const [label, key] of [
+    ['Assign Me', 'a'],
+    ['Close', 'c'],
+    ['Open in Browser', 'o'],
+    ['Refresh', 'r'],
+  ] as const) {
+    expect(shown.some(t => t.startsWith(label) && t.trimEnd().endsWith(` ${key}`))).toBe(true)
+  }
 })
 
-test('Assign me adds you, keeps the others, and the list follows: jdoe\'s alone, #29 leaves it', TOKEN, async ($, on) => {
+test('Assign Me adds you, keeps the others, and the list follows: jdoe\'s alone, #29 leaves it', TOKEN, async ($, on) => {
   const sent: Rights['sent'] = []
   const asked: string[] = []
   world(on, { ...FULL, '/issues/29': { ...ISSUE, assignees: [{ login: 'jdoe' }] } }, asked, [], 'open', { ...WRITE, sent })
@@ -542,7 +589,7 @@ test('Assign me adds you, keeps the others, and the list follows: jdoe\'s alone,
   expect((await texts(ui))[0]).toBe("What's next")
   await expect(ui.find({ key: 'pick-29' })).resolves.toBeDefined()
   await ui.press({ key: 'pick-29' })
-  expect(await labelOf(ui, 'assign')).toBe('Unassign me')
+  expect(await labelOf(ui, 'assign')).toBe('Unassign Me')
 
   // The search still lists #29 as yours, as a lagging forge would: the
   // issue as read again wins, and someone else's issue leaves What's next.
@@ -564,13 +611,16 @@ test('Close closes at once, and the lists leave it out though the search still h
   expect(all.some(t => t.includes('#29'))).toBe(false)
 })
 
-test('a refusal says why, in red under the buttons', TOKEN, async ($, on) => {
+test('a refusal says why, in red under the heading line', TOKEN, async ($, on) => {
   world(on, FULL, [], [], 'open', { ...WRITE, sent: [], refuse: { status: 422, message: 'it depends on open issues' } })
   const ui = await opened($)
   await ui.press({ key: 'close' })
   const found = (await ui.findAll({ type: 'Text' })) as unknown as { text: string; props: Record<string, unknown> }[]
   const line = found.find(t => t.text === 'Could not close #29: it depends on open issues.')
   expect(line?.props.color).toBe('error')
+  const all = await texts(ui)
+  expect(all.indexOf('open · ✎ 3w alice')).toBeLessThan(all.indexOf('Could not close #29: it depends on open issues.'))
+  expect(all.indexOf('Could not close #29: it depends on open issues.')).toBeLessThan(all.indexOf('Blocked by '))
   expect(await labelOf(ui, 'close')).toBe('Close')
   await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 })
@@ -586,7 +636,7 @@ test('Reopen goes back to the list it came from', TOKEN, async ($, on) => {
   await expect(ui.find({ key: 'back' })).resolves.toBeUndefined()
 })
 
-test('a refused assign keeps the issue open with why, and Work on this stays there too', TOKEN, async ($, on) => {
+test('a refused assign keeps the issue open with why, and Prompt stays there too', TOKEN, async ($, on) => {
   const toasts: string[] = []
   world(on, FULL, [], [], 'open', { ...WRITE, sent: [], refuse: { status: 403, message: 'forbidden' } })
   promptBox(on, '', [], true, toasts)
@@ -595,7 +645,7 @@ test('a refused assign keeps the issue open with why, and Work on this stays the
   expect(await texts(ui)).toContain('Could not assign #29: forbidden.')
   await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 
-  await ui.press({ key: 'work' })
+  await ui.press({ key: 'prompt' })
   expect(await texts(ui)).toContain('Could not assign #29: forbidden.')
   await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 })
@@ -604,11 +654,20 @@ for (const [why, rights, how] of [
   ['the token lacks write:issue', { push: true }, "Assign and close need a token with write:issue: the setup guide's steps make one."],
   ['alice may not push here', { push: false, scopes: ['write:issue'] }, 'Assign and close need push rights on boats/radar.'],
 ] as const) {
-  test(`read only (${why}): no Assign or Close, one line on how`, TOKEN, async ($, on) => {
+  test(`read only (${why}): no Assign or Close, one line on how in the menu`, TOKEN, async ($, on) => {
     world(on, FULL, [], [], 'open', { ...rights })
     const ui = await opened($)
-    expect(await keys(ui)).toEqual(['back', 'refresh', 'work', 'open', 'follow-24', 'follow-19', 'follow-31'])
-    expect(await texts(ui)).toContain(how)
+    expect(await keys(ui)).toEqual(['open', 'refresh', 'back', 'prompt', 'menu', 'follow-24', 'follow-19', 'follow-31', 'comments-section', 'comment-0', 'comment-1'])
+    // The line on how shows with the menu open, dim, under its lines.
+    expect(await texts(ui)).not.toContain(how)
+    await ui.press({ key: 'menu' })
+    expect((await keys(ui)).filter(k => k.startsWith('menu-'))).toEqual(['menu-open', 'menu-refresh'])
+    // Wrapped to the menu's width, each line its own Text.
+    const all = await found(ui)
+    const at = all.findIndex(t => t.text.startsWith('Assign and close'))
+    const note = all.slice(at).filter(t => t.props.dimColor === true && how.includes(t.text))
+    expect(note.map(t => t.text).join(' ')).toBe(how)
+    expect(note.every(t => t.props.dimColor === true)).toBe(true)
   })
 }
 
@@ -618,19 +677,19 @@ test('scopes not listed: the buttons show, and Forgejo has the last word', TOKEN
   expect(await keys(ui)).toContain('assign')
 })
 
-test('Work on this assigns you first when you are not yet assigned', TOKEN, async ($, on) => {
+test('Prompt assigns you first when you are not yet assigned', TOKEN, async ($, on) => {
   const sent: Rights['sent'] = []
   const toasts: string[] = []
   world(on, FULL, [], [], 'open', { ...WRITE, sent })
   promptBox(on, '', [], true, toasts)
   const ui = await opened($)
-  await ui.press({ key: 'work' })
+  await ui.press({ key: 'prompt' })
   expect(sent).toEqual([{ method: 'PATCH', path: '/api/v1/repos/boats/radar/issues/29', body: { assignees: ['alice'] } }])
   expect(toasts.at(-1)).toBe('#29 is yours and in the prompt: Esc to edit it there')
   expect((await texts(ui))[0]).toBe("What's next")
 
   await ui.press({ key: 'pick-29' })
-  await ui.press({ key: 'work' })
+  await ui.press({ key: 'prompt' })
   expect(sent).toHaveLength(1)
   expect(toasts.at(-1)).toBe('#29 is in the prompt: Esc to edit it there')
   expect((await texts(ui))[0]).toBe("What's next")
@@ -649,13 +708,13 @@ function promptBox(on: On, typed: string, filled: Filled, take = true, toasts: s
 }
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`Work on this drafts a prompt with the last comment on ${surface}`, TOKEN, async ($, on) => {
+  test(`Prompt drafts the issue into the prompt, with the last comment, on ${surface}`, TOKEN, async ($, on) => {
     const filled: Filled = []
     const toasts: string[] = []
     world(on, FULL)
     promptBox(on, '', filled, true, toasts)
     const ui = await opened($, surface)
-    await ui.press({ key: 'work' })
+    await ui.press({ key: 'prompt' })
 
     expect(filled).toEqual([
       {
@@ -677,12 +736,12 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('Work on this goes under what is typed already', TOKEN, async ($, on) => {
+test('Prompt goes under what is typed already', TOKEN, async ($, on) => {
   const filled: Filled = []
   world(on, { '/issues/29': { ...ISSUE, body: '  ' } })
   promptBox(on, 'also check the README', filled)
   const ui = await opened($)
-  await ui.press({ key: 'work' })
+  await ui.press({ key: 'prompt' })
 
   expect(filled).toEqual([
     { text: '\n\nWork on #29: Docs: config keys\nhttps://git.example.org/boats/radar/issues/29', mode: 'append' },
@@ -694,13 +753,13 @@ test('says so when the prompt cannot take the draft', TOKEN, async ($, on) => {
   world(on, FULL)
   promptBox(on, '', [], false, toasts)
   const ui = await opened($)
-  await ui.press({ key: 'work' })
+  await ui.press({ key: 'prompt' })
 
   expect(toasts).toEqual(['Could not put #29 in the prompt'])
   await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 })
 
-test('Open in browser opens the issue page with open, else xdg-open', TOKEN, async ($, on) => {
+test('Open in Browser opens the issue page with open, else xdg-open', TOKEN, async ($, on) => {
   const ran: string[] = []
   world(on, FULL, [], ran, 'xdg-open')
   const ui = await opened($)
