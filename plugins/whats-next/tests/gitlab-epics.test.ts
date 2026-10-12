@@ -314,10 +314,16 @@ test('epics: the issues carrying the Epic label, compared without case, by iid',
   const got = await gitlab(fakeSend(route({ epics: answer }), asked), r, 'glpat-x', null, 'Epic').epics()
 
   expect(got).toEqual([
-    { number: 20, title: 'Rate limits', state: 'open', milestone: 'v1.2', due: null, assignees: [] },
-    { number: 3, title: 'Project setup', state: 'closed', milestone: 'v1.2', due: null, assignees: [] },
-    { number: 71, title: 'Ideas', state: 'open', milestone: null, due: null, assignees: [] },
+    expect.objectContaining({ number: 20, title: 'Rate limits', state: 'open', milestone: 'v1.2', due: null, assignees: [] }),
+    expect.objectContaining({ number: 3, title: 'Project setup', state: 'closed', milestone: 'v1.2', due: null, assignees: [] }),
+    expect.objectContaining({ number: 71, title: 'Ideas', state: 'open', milestone: null, due: null, assignees: [] }),
   ])
+  // Its labels in their colours and when it was opened, for an epic's facts line (#64).
+  expect(got[1]?.labels).toEqual([
+    { name: 'EPIC', color: 'cccccc' },
+    { name: 'docs', color: '428bca' },
+  ])
+  expect(got[1]?.created).toBe('2026-09-18T09:00:00.000Z')
   const u = new URL(asked[0]?.url ?? '')
   expect(u.pathname).toBe(`${path}/issues`)
   expect(u.searchParams.get('state')).toBe('all')

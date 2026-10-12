@@ -56,7 +56,17 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     }
   }
 
-  const deps = (n: number) => fetchJson<RawDep[]>(`${api}/issues/${n}/dependencies`)
+  // An issue's dependencies, asked once per tracker: an epic's children and
+  // its own blockers come from the same answer.
+  const depsAsked = new Map<number, Promise<RawDep[] | null>>()
+  const deps = (n: number) => {
+    let asked = depsAsked.get(n)
+    if (!asked) {
+      asked = fetchJson<RawDep[]>(`${api}/issues/${n}/dependencies`)
+      depsAsked.set(n, asked)
+    }
+    return asked
+  }
   const isEpic = (i: { labels?: { name: string }[] | null }) => (i.labels ?? []).some(l => l.name === label)
 
   // A change to issue `n`: null when Forgejo took it, else why not.
@@ -204,6 +214,8 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
           milestone: i.milestone?.title ?? null,
           due: i.due_date ?? null,
           assignees: (i.assignees ?? []).map(a => a.login),
+          labels: (i.labels ?? []).map(l => ({ name: l.name, color: l.color ?? '' })),
+          created: i.created_at ?? '',
         }))
     },
 
@@ -354,7 +366,7 @@ type RawDep = {
   created_at?: string
   due_date?: string | null
 }
-type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string }[] | null }
+type RawEpic = RawDep & { milestone: { title: string } | null; labels: { name: string; color?: string }[] | null }
 type RawMilestone = {
   id: number
   title: string

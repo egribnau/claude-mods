@@ -530,7 +530,9 @@ test('epics, blockers and children ask GitLab; links refused leave blockers and 
   const asked: Asked[] = []
   const epic = { ...issue(20, '2026-09-01T00:00:00.000Z', { labels: ['Epic'] }), due_date: '2026-10-20' }
   const t = gitlab(fakeSend(listRoute(ISSUES, [[epic]]), asked), R, 'glpat-x', null)
-  expect(await t.epics()).toEqual([{ number: 20, title: 'Issue 20', state: 'open', milestone: null, due: '2026-10-20', assignees: [] }])
+  expect(await t.epics()).toEqual([
+    { number: 20, title: 'Issue 20', state: 'open', milestone: null, due: '2026-10-20', assignees: [], labels: [{ name: 'Epic', color: 'd9534f' }], created: '2026-09-01T00:00:00.000Z' },
+  ])
   expect(new URL(asked[0]?.url ?? '').searchParams.get('labels')).toBe('epic')
   expect(await t.blockers(12)).toBe(null)
   expect(await t.children(20, 'alice')).toBe(null)
@@ -594,6 +596,20 @@ const link = (iid: number, kind: string, state = 'opened', project = 'boats/rada
   link_type: kind,
   link_created_at: '2026-09-02T00:00:00.000Z',
   link_updated_at: '2026-09-02T00:00:00.000Z',
+})
+
+// #64: an epic's own blockers come with its children, from one request.
+test('an epic\'s children and its own blockers are read from one request for its links', async () => {
+  const asked: Asked[] = []
+  const t = gitlab(
+    fakeSend(u => (u.pathname === `${ISSUES}/20/links` ? { status: 200, body: [link(31, 'relates_to'), link(12, 'is_blocked_by'), link(13, 'is_blocked_by', 'closed')] } : { status: 200, body: [] }), asked),
+    R,
+    'glpat-x',
+    null,
+  )
+  expect((await t.children(20, null))?.map(c => c.number)).toEqual([31])
+  expect(await t.blockers(20)).toEqual([12])
+  expect(asked.filter(a => a.url === `${PROJECT}/issues/20/links`)).toHaveLength(1)
 })
 
 test('issue: with dependencies on, a fourth request for its links: what blocks it and what it blocks, this project only, and whether an open blocker is blocked', async () => {

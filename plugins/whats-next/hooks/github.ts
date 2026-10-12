@@ -204,6 +204,8 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
           milestone: i.milestone?.title ?? null,
           due: null,
           assignees: (i.assignees ?? []).map(a => a.login),
+          labels: toRow(i).labels,
+          created: i.created_at,
         }))
     },
 

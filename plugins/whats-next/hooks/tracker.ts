@@ -16,7 +16,17 @@ export type Closed = { number: number; title: string; closed: string; milestone:
 
 // An issue with the Epic label, open or closed, with its milestone's title,
 // its own due date and whom it is assigned to.
-export type EpicRow = { number: number; title: string; state: 'open' | 'closed'; milestone: string | null; due: string | null; assignees?: string[] }
+// `labels` and `created` for an epic's facts line, as the lists give them.
+export type EpicRow = {
+  number: number
+  title: string
+  state: 'open' | 'closed'
+  milestone: string | null
+  due: string | null
+  assignees?: string[]
+  labels?: { name: string; color: string }[]
+  created?: string
+}
 
 // What setup's check found past the repo: the tracker's version as shown,
 // once it answered, and how far setup got.

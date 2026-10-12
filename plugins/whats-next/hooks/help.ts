@@ -15,7 +15,7 @@ export type Sign =
   | { kind: 'mark'; standing: Standing | null; fold: Folding | null; closed?: boolean }
   | { kind: 'due'; days: number }
   | { kind: 'bar'; closed: number; total: number }
-  | { kind: 'forYou'; yours: number; available: number; withOthers: number; blocked: number }
+  | { kind: 'forYou'; yours: number; available: number; withOthers: number; blocked: number; children?: boolean }
   | { kind: 'blockedBy'; count: number }
   | { kind: 'unblocks'; count: number }
   | { kind: 'label'; name: string; color: string }
@@ -25,9 +25,6 @@ export type HelpLine = { sign: Sign; words: string }
 export type HelpSection = { name: string; lines: HelpLine[] }
 
 const text = (t: string, look: Look = 'plain'): Sign => ({ kind: 'text', parts: [{ text: t, look }] })
-
-// The gutter the signs stand in, in columns.
-export const GUTTER = 20
 
 export const HELP: readonly HelpSection[] = [
   {
@@ -65,6 +62,7 @@ export const HELP: readonly HelpSection[] = [
     lines: [
       { sign: { kind: 'bar', closed: 3, total: 8 }, words: '3 closed of 8' },
       { sign: { kind: 'forYou', yours: 2, available: 1, withOthers: 0, blocked: 1 }, words: '2 yours, 1 available, 1 blocked' },
+      { sign: { kind: 'forYou', yours: 0, available: 0, withOthers: 0, blocked: 2, children: true }, words: 'the same, for its children' },
       { sign: text('✓ 3 closed', 'grey'), words: '3 closed, not listed' },
       { sign: text('and 14 more', 'dim'), words: '14 more in the Queue' },
       { sign: text('… 4 more lines', 'dim'), words: 'press to read the rest' },

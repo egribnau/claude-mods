@@ -772,9 +772,12 @@ test('epics: open and closed issues with the Epic label, any case, pull requests
   ])
   const found = await github(fakeSend(route, asked), R, 't', null, 'Epic').epics()
   expect(found).toEqual([
-    { number: 20, title: 'Radar sweep', state: 'open', milestone: 'v1.2', due: null, assignees: [] },
-    { number: 19, title: 'Old sweep', state: 'closed', milestone: null, due: null, assignees: [] },
+    expect.objectContaining({ number: 20, title: 'Radar sweep', state: 'open', milestone: 'v1.2', due: null, assignees: [] }),
+    expect.objectContaining({ number: 19, title: 'Old sweep', state: 'closed', milestone: null, due: null, assignees: [] }),
   ])
+  // Its labels and when it was opened, for an epic's facts line (#64).
+  expect(found[0]?.labels).toEqual([{ name: 'epic', color: 'd73a4a' }])
+  expect(found[0]?.created).toBe('2026-08-01T09:00:00Z')
   expect(asked.map(a => a.url)).toEqual([`${API}/issues?state=all&labels=Epic&per_page=100`])
 })
 

@@ -189,6 +189,8 @@ test('every mark markOf draws is on the page, in the colour the panes draw it', 
   expect(drawn('● ', 'color', 'success')).toBe(true)
   expect(drawn('⊘ ', 'dimColor', true)).toBe(true)
   expect(drawn('✓', 'color', 'inactive')).toBe(true)
+  // Under an epic the for-you line names its children (#64).
+  expect(all.some(t => t.text.startsWith('children ⊘ 2'))).toBe(true)
 })
 
 test('every term of How an issue stands for you (TERMINOLOGY.md) is on the page, with what it means', TOKEN, async ($, on) => {
@@ -227,8 +229,12 @@ test('in a narrow pane the words wrap under themselves, never cut', TOKEN, async
   const ui = await mounted($, PANE, 40)
   await ui.press({ key: 'help' })
   const all = await texts(ui)
-  // 40 columns: 20 for the signs, 20 for the words.
+  // 40 columns: 17 for the signs (the widest, `● 2 · ○ 1 · ⊘ 1`, and two
+  // spaces), 23 for the words.
   expect(all).toContain('blocked: waits on an')
   expect(all).toContain('open issue')
   expect(all.some(t => t.includes('…') && t.startsWith('blocked'))).toBe(false)
+  // The gutter is as wide as the widest sign and two spaces.
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { key: string; props: Record<string, unknown> }[]
+  expect([...new Set(boxes.filter(b => b.key === 'sign').map(b => b.props.width))]).toEqual([17])
 })

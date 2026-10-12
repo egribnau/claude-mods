@@ -323,7 +323,13 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     '▰▰▰',
     '▱▱▱▱▱',
     '   3/8',
-    '      ● 2 · ○ 2 · ⊘ 1',
+    // Its facts line, as any issue row's, then what there is for you.
+    '      epic · ✎ 5w',
+    'epic',
+    ' · ',
+    '✎ 5w',
+    '      children ● 2 · ○ 2 · ⊘ 1',
+    'children ',
     '● 2',
     ' · ',
     '○ 2',
@@ -336,7 +342,12 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     '▰▰',
     '▱▱▱▱▱▱',
     '   1/5',
-    '      ● 1 · ○ 1 · ◌ 1 · ⊘ 1',
+    '      epic · ✎ 5w',
+    'epic',
+    ' · ',
+    '✎ 5w',
+    '      children ● 1 · ○ 1 · ◌ 1 · ⊘ 1',
+    'children ',
     '● 1',
     ' · ',
     '○ 1',
@@ -350,7 +361,12 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
     `${'Docs pass'.padEnd(29)} `,
     '▰▰▰▰▰▰▰▰',
     '   5/5',
-    '      all closed',
+    '      epic · ✎ 5w',
+    'epic',
+    ' · ',
+    '✎ 5w',
+    '      children all closed',
+    'children ',
     'all closed',
     `   #3 ${'Project setup'.padEnd(29)} ${'✓'.padStart(14)}`,
     '─'.repeat(50),
@@ -399,7 +415,7 @@ test('the fold mark folds an epic open: its children with their marks, the close
 })
 
 // DRAWING-issue.md, The for-you line: one recipe under a folded epic and a milestone.
-test("the line under a folded epic: the epic's own due date in its colour, then what there is for you", TOKEN, async ($, on) => {
+test("under a folded epic: its facts line with its own due date in its colour, then what there is for you", TOKEN, async ($, on) => {
   const clock = world(on, {
     ...REPO,
     epics: [
@@ -413,11 +429,14 @@ test("the line under a folded epic: the epic's own due date in its colour, then 
   const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
   const all = await nodes(ui)
   const said = all.map(t => t.text)
-  expect(said).toContain('      ⧗ 14 Oct · ● 1 · ○ 1 · ◌ 1 · ⊘ 1')
+  expect(said).toContain('      ⧗ 14 Oct · epic · ✎ 5w')
+  expect(said).toContain('      children ● 1 · ○ 1 · ◌ 1 · ⊘ 1')
   expect(all.find(t => t.text === '⧗ 14 Oct')?.props.color).toBe('warning')
-  // No due date: the line starts with what there is for you.
-  expect(said).toContain('      ● 2 · ○ 2 · ⊘ 1')
-  expect(said).toContain('      ⧗ 1 Oct · all closed')
+  // No due date: the facts line starts with the labels.
+  expect(said).toContain('      epic · ✎ 5w')
+  expect(said).toContain('      children ● 2 · ○ 2 · ⊘ 1')
+  expect(said).toContain('      ⧗ 1 Oct · epic · ✎ 5w')
+  expect(said).toContain('      children all closed')
   expect(all.find(t => t.text === '⧗ 1 Oct')?.props.color).toBe('error')
 })
 
@@ -617,6 +636,25 @@ test('picking another milestone shows its epics', TOKEN, async ($, on) => {
   expect(all.some(t => t.includes('#12'))).toBe(false)
 })
 
+// #64: an epic's facts line, as any issue row's: here what blocks it, an
+// epic it waits on, asked with the same request as its children.
+test("an epic's facts line counts the epics it waits on, not its children, from the request that lists them", TOKEN, async ($, on) => {
+  const asked: string[] = []
+  const clock = world(on, { ...REPO, deps: { ...REPO.deps, 20: [...(REPO.deps?.[20] ?? []), epic(12, 'Auth cleanup', { milestone: 'v1.2' })] } }, asked)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  const all = await texts(ui)
+  const at = all.findIndex(t => t.startsWith('#20 '))
+  expect(all.slice(at).find(t => t.startsWith('      '))).toBe('      ⊘ 1 · epic · ✎ 5w')
+  expect(asked.filter(u => u.endsWith('/issues/20/dependencies'))).toHaveLength(1)
+  // Unfolded, the facts line stays and the for-you line goes.
+  await ui.press({ key: 'fold-20' })
+  const open = await texts(ui)
+  expect(open.slice(open.findIndex(t => t.startsWith('#20 '))).find(t => t.startsWith('      '))).toBe('      ⊘ 1 · epic · ✎ 5w')
+  expect(open).not.toContain('      children ● 1 · ○ 1 · ◌ 1 · ⊘ 1')
+})
+
 test('All shows a group per milestone, No milestone last, and counts them all', TOKEN, async ($, on) => {
   world(on, REPO)
   await $.command.run(RUN)
@@ -627,8 +665,9 @@ test('All shows a group per milestone, No milestone last, and counts them all', 
   const names = all.filter((t, k) => all[k - 1] === '── ')
   expect(names).toEqual(['v1.2', 'v1.3', 'No milestone'])
   expect(all.slice(-4)).toEqual(['5 epics · 3 yours', '5 epics', ' · ', '3 yours'])
+  // The group names are bold; an epic's facts line names its milestone too, dim.
   const found = await nodes(ui)
-  expect(found.filter(t => names.includes(t.text)).every(t => t.props.bold === true)).toBe(true)
+  expect(found.filter((t, k) => found[k - 1]?.text === '── ').every(t => t.props.bold === true)).toBe(true)
   // One empty line before each group after the first: v1.2 ends in a
   // closed epic, which leaves none, so v1.3's rule adds it; v1.3 ends in an
   // open one, whose row leaves it already.

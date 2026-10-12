@@ -3,7 +3,7 @@ import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } fro
 
 import type { Comment, Detail, DetailFolds, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneIssue, Overview, Ref, Repo, Scope, Setup, TokenSource } from '../types'
 import { bar, dueFirst, forYou, inMilestone, markOf, openChildren, pickerOptions, standing, summary, tally, tree, type Folding, type Mark, type Standing, type TreeLine } from './epics'
-import { GUTTER, HELP, type Look, type Sign } from './help'
+import { HELP, type Look, type Sign } from './help'
 import { configureCommand, detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { github } from './github'
@@ -379,7 +379,7 @@ async function showEpics($: EngineInterface, r: Repo) {
   const me = s.kind === 'ready' ? s.login : null
   const pick = (await read($, picker))?.pick ?? 'all'
   try {
-    const shown = await epicTree(tracker($, r), known, pick, me)
+    const shown = await epicTree(tracker($, r), known, pick, me, !(await off($, 'deps')))
     await update($, epics, (): Epics => ({ kind: 'ok', ...shown, openEpics }))
     await showTree($, r)
   } catch (err) {
@@ -1270,22 +1270,25 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // one with others, or of one blocked that someone holds.
   const whoOf = (c: { assignees: string[] }, st: Standing) =>
     st === 'withOthers' || (st === 'blocked' && c.assignees.length > 0) ? (c.assignees[0] ?? '') : ''
+  // The facts line's recipe (DRAWING-issue.md, The facts line), for an
+  // issue row and an epic's alike: what blocks it, how many it unblocks, its
+  // due date, its milestone (unless the list is that milestone's), its
+  // labels and its age.
+  const factsOf = (i: RowIssue, o: { blockedBy?: number[]; noMilestone?: boolean }): Part[] => {
+    const shownMilestone = !o.noMilestone && i.milestone !== null && pk?.pick !== `m:${i.milestone}`
+    return [
+      ...(o.blockedBy && o.blockedBy.length > 0 ? [blockedPart(o.blockedBy.length)] : []),
+      ...(waiting(i.number) > 0 ? [unblocksPart(waiting(i.number))] : []),
+      ...duePart('due', i.due, today, { form: 'short' }),
+      ...(shownMilestone ? [{ text: i.milestone ?? '' }] : []),
+      ...(i.labels.length > 0 ? [{ text: '', node: labelTexts(i.labels) }] : []),
+      ...(i.created ? [{ text: `✎ ${age(i.created, today)}` }] : []),
+    ]
+  }
   const issueRow = (i: RowIssue, o: RowLook) => {
     const lead = ' '.repeat(o.lead ?? 0)
     const dim = o.standing === 'blocked'
-    const opened: Part[] = i.created ? [{ text: `✎ ${age(i.created, today)}` }] : []
-    const shownMilestone = !o.noMilestone && i.milestone !== null && pk?.pick !== `m:${i.milestone}`
-    // The facts line's recipe (DRAWING-issue.md, The facts line).
-    const facts: Part[] = o.note
-      ? [{ text: o.note }]
-      : [
-          ...(o.blockedBy && o.blockedBy.length > 0 ? [blockedPart(o.blockedBy.length)] : []),
-          ...(waiting(i.number) > 0 ? [unblocksPart(waiting(i.number))] : []),
-          ...duePart('due', i.due, today, { form: 'short' }),
-          ...(shownMilestone ? [{ text: i.milestone ?? '' }] : []),
-          ...(i.labels.length > 0 ? [{ text: '', node: labelTexts(i.labels) }] : []),
-          ...opened,
-        ]
+    const facts: Part[] = o.note ? [{ text: o.note }] : factsOf(i, o)
     const room = columns - (o.lead ?? 0) - 2 - o.numWidth - (o.count !== undefined ? 6 : 0)
     const title =
       o.who || o.count !== undefined
@@ -1389,10 +1392,32 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       })
     })
 
+  // The for-you line under a folded epic: `children` first, dim, so its
+  // `⊘ n` is not read as the epic's own (DRAWING-issue.md, The for-you line);
+  // `no children` and `children unknown` say it already.
+  const forChildren = (key: string, lead: number, parts: readonly Part[]) =>
+    parts.length === 1 && (parts[0]?.text === 'no children' || parts[0]?.text === 'children unknown') ? (
+      partsLine(key, lead, parts)
+    ) : (
+      <Text key={key} wrap="truncate-end">
+        {' '.repeat(lead)}
+        <Text dimColor>{'children '}</Text>
+        {joined(parts)}
+      </Text>
+    )
   // An open epic at the top of a tree, in Epics and under a milestone: its
-  // fold mark, number, bold title, bar and count; folded, the line under it:
-  // its due date, then what there is for you in it.
-  const epicRow = (x: Epic, o: { key: string; foldKey: string; openKey: string; lead: number; numWidth: number; open: boolean; pane: string }) => {
+  // fold mark, number, bold title, bar and count; under it its facts line,
+  // as any issue row's; folded, then the for-you line: what there is for
+  // you in it (DRAWING-issue.md, The for-you line).
+  const epicRow = (
+    x: Epic,
+    o: { key: string; foldKey: string; openKey: string; lead: number; numWidth: number; open: boolean; pane: string; noMilestone?: boolean },
+  ) => {
+    const facts = factsOf(
+      { number: x.number, title: x.title, labels: x.labels ?? [], milestone: x.milestone ?? null, created: x.created ?? '', due: x.due },
+      { blockedBy: x.blockedBy, noMilestone: o.noMilestone },
+    )
+    const under = o.lead + 2 + o.numWidth
     const t = tally(x.children ?? [])
     const width = Math.max(0, columns - o.lead - 2 - o.numWidth - COUNT)
     return (
@@ -1412,7 +1437,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
             ...countText(t.closed, t.total, true),
           ],
         })}
-        {!o.open && partsLine(`under-${o.key}`, o.lead + 2 + o.numWidth, [...duePart('due', x.due, today, { form: 'short' }), ...summary(x)])}
+        {facts.length > 0 && partsLine(`facts-${o.key}`, under, facts)}
+        {!o.open && forChildren(`under-${o.key}`, under, summary(x))}
       </Box>
     )
   }
@@ -1653,7 +1679,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         case 'bar':
           return countText(x.closed, x.total, true)
         case 'forYou':
-          return joined(forYou({ closed: 0, total: 0, ...x }))
+          return [
+            ...(x.children ? [<Text key="children" dimColor>{'children '}</Text>] : []),
+            ...joined(forYou({ closed: 0, total: 0, ...x })),
+          ]
         case 'blockedBy':
           return joined([blockedPart(x.count)])
         case 'unblocks':
@@ -1668,6 +1697,17 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ))
       }
     }
+    // The text a sign draws, to size the gutter: as wide as the widest sign
+    // and two spaces (DRAWING.md, The help page).
+    const plain = (n: RenderChildren): string =>
+      n === null || n === undefined || typeof n === 'boolean'
+        ? ''
+        : typeof n === 'string' || typeof n === 'number'
+          ? String(n)
+          : Array.isArray(n)
+            ? (n as readonly RenderChildren[]).map(plain).join('')
+            : plain((n as { children?: RenderChildren }).children ?? (n as { props?: { children?: RenderChildren } }).props?.children ?? null)
+    const GUTTER = Math.max(...HELP.flatMap(s => s.lines.map(l => plain(signOf(l.sign)).length))) + 2
     const room = Math.max(10, columns - GUTTER)
     const body: RenderChildren[] = HELP.flatMap((section, k) => [
       ...(k > 0 ? [<Box key={`help-gap-${k}`} height={1} flexShrink={0} />] : []),
@@ -2113,8 +2153,20 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       for (const c of tops) {
         const unfolded = epicFolds.has(c.number)
         const key = at(c.number)
-        const asEpic: Epic = { number: c.number, title: c.title, state: 'open', due: c.due, children: c.children ?? null }
-        out.push(epicRow(asEpic, { key: `ms-epic-${key}`, foldKey: `fold-${key}`, openKey: `ms-issue-${key}`, lead: 2, numWidth, open: unfolded, pane: MILESTONES_PANE }))
+        const asEpic: Epic = {
+          number: c.number,
+          title: c.title,
+          state: 'open',
+          due: c.due,
+          children: c.children ?? null,
+          labels: c.labels,
+          milestone: c.milestone,
+          created: c.created,
+          blockedBy: c.blockedBy,
+        }
+        out.push(
+          epicRow(asEpic, { key: `ms-epic-${key}`, foldKey: `fold-${key}`, openKey: `ms-issue-${key}`, lead: 2, numWidth, open: unfolded, pane: MILESTONES_PANE, noMilestone: true }),
+        )
         if (!unfolded) continue
         const under = lines.get(c.number) ?? []
         out.push(

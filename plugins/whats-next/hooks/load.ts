@@ -366,13 +366,21 @@ export function milestoneKnown(
 }
 
 // The epics within the milestone filter, by milestone, each open one with its children,
-// asked of the tracker once and remembered. `me` makes a child yours.
-export async function epicGroups(t: Tracker, known: Memory, pick: string, me: string | null): Promise<EpicGroup[]> {
+// asked of the tracker once and remembered. `me` makes a child yours. An
+// open epic not yours is asked what it waits on, as Milestones asks, its own
+// children left out (DRAWING-issue.md, The facts line); `deps` off, nothing.
+export async function epicGroups(t: Tracker, known: Memory, pick: string, me: string | null, deps = true): Promise<EpicGroup[]> {
+  const ask = blockersOf(t, known, deps)
   const loadOne = async (i: EpicRow): Promise<Epic> => {
     const { number, title, state, due } = i
-    if (state === 'closed') return { number, title, state, due, children: null }
+    const facts = { labels: i.labels ?? [], milestone: i.milestone, created: i.created ?? '' }
+    if (state === 'closed') return { number, title, state, due, children: null, ...facts }
     if (!known.children.has(number)) known.children.set(number, await t.children(number, me))
-    return { number, title, state, due, children: known.children.get(number) ?? null }
+    const children = known.children.get(number) ?? null
+    const own = new Set((children ?? []).map(c => c.number))
+    const mine = me !== null && (i.assignees ?? []).includes(me)
+    const blockedBy = mine ? [] : ((await ask(number)) ?? []).filter(n => !own.has(n))
+    return { number, title, state, due, children, ...facts, blockedBy }
   }
   return Promise.all(
     groupsFor(pick, known.milestones, known.epics).map(async g => {
@@ -392,8 +400,9 @@ export async function epicTree(
   known: Memory,
   pick: string,
   me: string | null,
+  deps = true,
 ): Promise<{ groups: EpicGroup[]; held: Epic[] }> {
-  const all = await epicGroups(t, known, pick, me)
+  const all = await epicGroups(t, known, pick, me, deps)
   const open = all.flatMap(g => g.epics).filter(e => e.state === 'open')
   const top = roots(open)
   const groups = all

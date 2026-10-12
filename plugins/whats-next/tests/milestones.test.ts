@@ -479,7 +479,8 @@ test('epics in a milestone come first, folded, with their bar and what there is 
   // #30, #33 and #36 are #29's: not in the list of the milestone's issues.
   expect(t.filter(x => /^ {2}[●○◌⊘] #\d/.test(x)).map(x => x.slice(2, 7))).toEqual(['⊘ #40'])
   const at = t.indexOf('▱▱▱▱▱▱')
-  expect(t.slice(at + 1, at + 8)).toEqual(['   1/4', '        ● 1 · ○ 1 · ◌ 1', '● 1', ' · ', '○ 1', ' · ', '◌ 1'])
+  // Its facts line, as any issue row's, the Epic label too; then what there is for you (#64).
+  expect(t.slice(at + 1, at + 13)).toEqual(['   1/4', '        epic · ✎ 1d', 'epic', ' · ', '✎ 1d', '        children ● 1 · ○ 1 · ◌ 1', 'children ', '● 1', ' · ', '○ 1', ' · ', '◌ 1'])
 })
 
 test('an epic in a milestone unfolds on its tree, its mark first so Tab stops on it', TOKEN, async ($, on) => {
@@ -544,6 +545,38 @@ test('on Forgejo an epic another epic in the milestone depends on is no child: b
   expect((await texts(pane)).some(x => x.startsWith('    ') && x.includes('#41'))).toBe(false)
 })
 
+// #64: an epic is an issue, so its row has the facts line any issue row
+// has, folded or unfolded, the same in the pane and in the milestone detail.
+test('an epic\'s facts line: what blocks it (another epic it waits on, not its own children), its labels and age, folded or unfolded, in the detail too', TOKEN, async ($, on) => {
+  const SUB = issue(41, 'GitHub Enterprise', { milestone: 'GitHub', labels: ['epic'] })
+  const clock = world(on, {
+    ...EPIC_WORK,
+    issues: [SUB, ...(EPIC_WORK.issues ?? [])],
+    epics: [GITHUB_EPIC, SUB],
+    deps: { ...EPIC_WORK.deps, 29: [...(EPIC_WORK.deps?.[29] ?? []), SUB], 41: [issue(42, 'GHES version header', { milestone: 'GitHub' })] },
+  })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'ms-fold-GitHub' })
+  const facts29 = async () => {
+    const t = await texts(pane)
+    const at = t.findIndex(x => x.startsWith('#29 '))
+    return t.slice(at).find(x => x.startsWith('        '))
+  }
+  // #29 waits on #41, an open epic: ⊘ 1; its own three children never count.
+  expect(await facts29()).toBe('        ⊘ 1 · epic · ✎ 1d')
+  // #41 waits on nothing but its own child.
+  expect(await texts(pane)).toContain('        epic · ✎ 1d')
+  await pane.press({ key: 'fold-29' })
+  // Unfolded, the facts line stays; the for-you line goes, its children show.
+  expect(await facts29()).toBe('        ⊘ 1 · epic · ✎ 1d')
+  expect((await texts(pane)).some(x => x.startsWith('        children ● 1'))).toBe(false)
+  // The milestone detail draws the epic the same way.
+  await pane.press({ key: 'milestone-GitHub' })
+  expect(await texts(pane)).toContain('        ⊘ 1 · epic · ✎ 1d')
+})
+
 test("the line under an epic in a milestone is one line, cut at its end", TOKEN, async ($, on) => {
   const clock = world(on, EPIC_WORK)
   await clock.set(NOW)
@@ -551,7 +584,7 @@ test("the line under an epic in a milestone is one line, cut at its end", TOKEN,
   const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
   await pane.press({ key: 'ms-fold-GitHub' })
   const n = await nodes(pane)
-  expect(n.find(x => x.text === '        ● 1 · ○ 1 · ◌ 1')?.props.wrap).toBe('truncate-end')
+  expect(n.find(x => x.text === '        children ● 1 · ○ 1 · ◌ 1')?.props.wrap).toBe('truncate-end')
 })
 
 test("an epic is not blocked by its own children, and opens its detail", TOKEN, async ($, on) => {

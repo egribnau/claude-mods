@@ -188,8 +188,21 @@ export type EpicChild = {
 // carries its children (null when the tracker would not say).
 export type MilestoneIssue = EpicChild & { children?: EpicChild[] | null }
 
-// `due`: the epic's own due date, from the lists.
-export type Epic = { number: number; title: string; state: 'open' | 'closed'; due: string | null; children: EpicChild[] | null }
+// `due`: the epic's own due date, from the lists. For its facts line, as
+// any issue row's (DRAWING-issue.md, The facts line): its labels, its
+// milestone, when it was opened, and the open issues it waits on, its own
+// children left out.
+export type Epic = {
+  number: number
+  title: string
+  state: 'open' | 'closed'
+  due: string | null
+  children: EpicChild[] | null
+  labels?: { name: string; color: string }[]
+  milestone?: string | null
+  created?: string
+  blockedBy?: number[]
+}
 
 // The epics of one milestone, or of none (`title` null), with the
 // milestone's due date and how many of its issues are closed.

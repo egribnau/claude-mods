@@ -112,8 +112,16 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
 
   // The issues linked to issue `n` that are in this project, of one kind;
   // null when GitLab would not say. Their people's ids are kept.
+  // An issue's links, asked once per tracker: an epic's children (related)
+  // and its own blockers (is_blocked_by) come from the same answer.
+  const linksAsked = new Map<number, Promise<RawLink[] | null>>()
   async function links(n: number, kind: RawLink['link_type']): Promise<RawLink[] | null> {
-    const raw = await fetchJson<RawLink[]>(`${project}/issues/${n}/links`)
+    let asked = linksAsked.get(n)
+    if (!asked) {
+      asked = fetchJson<RawLink[]>(`${project}/issues/${n}/links`)
+      linksAsked.set(n, asked)
+    }
+    const raw = await asked
     if (!Array.isArray(raw)) return null
     raw.forEach(remember)
     return raw.filter(l => l.link_type === kind && inProject(l.web_url))
@@ -246,6 +254,8 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
           milestone: i.milestone?.title ?? null,
           due: i.due_date ?? null,
           assignees: (i.assignees ?? []).map(a => a.username),
+          labels: labels(i),
+          created: i.created_at,
         }))
     },
 
