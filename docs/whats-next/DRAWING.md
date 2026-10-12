@@ -21,7 +21,7 @@ are the same with Icons on and off (The menu).
 | Colour | Means |
 |---|---|
 | blue | an issue number: "this is an issue" |
-| green | yours: the mark of an issue of yours (`●`, or `⊕`/`⊖` when it folds), `● n` on a for-you line, `n yours` on a bottom line; and finished: the filled cells of a bar |
+| green | yours: the mark of an issue of yours (`●`, or `⊕`/`⊖` when it folds), `● n` on a for-you line; and finished: the filled cells of a bar |
 | amber | a warning: due within 7 days, `all closed` on an epic or milestone still open |
 | red | something wrong: a due date passed, a refusal or an error from the forge (a Blocked by number is blue since #72) |
 | grey | closed, and nothing else |
@@ -72,7 +72,7 @@ joins the table:
 | Milestone detail, the Issues rule | `− Issues · 8 open` |
 | Milestones pane, the Closed rule | `+ Closed · 3` |
 | What's next, section rules | `In progress · 2`; Next and the Queue have none: what the Queue's limit leaves out is the line `and 14 more` under its rows (#57, built 0.67.0) |
-| Bottom lines | What's next `14 open · 2 yours`; Epics `4 epics · 2 yours`; Milestones `3 milestones · 20 open` |
+| Bottom lines | none: the bottom of a pane counts nothing, its rows and rules already do; it is a rule (Rules; #65, built 0.74.0, decided 1, 1b and 3; 0.74.2) |
 
 When every issue or child is closed, it says `all closed`, in every place
 (#45, built 0.65.0). Amber while the epic or milestone itself is still
@@ -96,7 +96,9 @@ right edge. One look everywhere (#45, built 0.65.0):
   added, never a second one (`sectionEnd`, and in What's next `pushRule`;
   #57, built 0.67.0). The places: What's next's sections and Last closed,
   the groups in Epics, Closed in Milestones, the milestone detail's Issues
-  and Description, the issue detail's Description and Last comment
+  and Description, the issue detail's Description and Last comment, and
+  the bottom line of every pane and detail, its empty line a row of its
+  own that stays when what is above it is cut (#65, built 0.74.1)
 - a count follows the name after ` · `: `In progress · 2`,
   `Closed · 3`, `Issues · 8 open`; never `n of m`, which reads as
   closed of all (#57, built 0.67.0)
@@ -110,9 +112,9 @@ right edge. One look everywhere (#45, built 0.65.0):
 | Milestones, closed milestones | `+ Closed · 3` |
 | Milestone detail | `− Issues · 8 open`, `+ Description` or `── Description` |
 | Issue detail | `+ Description` or `── Description`, as the milestone detail (#62, built 0.68.0, decided 4a); `− Comments · 3`, which folds (decided 1a and 4b) |
+| Every pane and detail, its bottom line | `── What's Next · v0.74.2`: the bottom line is this rule, its version from the manifest (no copyright or license since 0.74.2), one target that opens the repository named in the manifest; an empty line above it as above every rule, no dim line and no counts (#65, built 0.74.0, decided 1, 1b and 3) |
 
-Drawn by: `rule`, for every rule; the line above a bottom line, which
-names nothing, is `fixedLine`.
+Drawn by: `rule`, for every rule.
 
 ## Due dates
 
@@ -222,7 +224,9 @@ text is wrapped into lines first, never left to wrap.
 Tab and the arrows stop on every control of a detail, top to bottom: in
 the issue detail `[ ← ]`, `[ Prompt ]`, `[ ☰ ]`, each Epic, Blocked by and
 Blocks line, the Description rule, the Comments rule, each comment, and
-each `… n more lines` under Description or a comment.
+each `… n more lines` under Description or a comment, then the bottom
+line, which opens the repository and does not scroll the detail (#65,
+built 0.74.0).
 Enter presses the one in focus: a rule or a comment folds or unfolds, a
 line naming an issue opens it. No key of its own for folding (#62, built 0.68.0, decided 5a).
 
@@ -236,13 +240,13 @@ or the same one again, starts as it opens (#62, built 0.68.0, decided 5b).
 A line made of parts (a facts line, a for-you line, a rule with a name,
 due date and count, a bottom line) is one text, cut once at its end with
 the pane's width. Its parts are never squeezed one by one: a narrow pane
-cuts the last parts first. What must stay whole at the right (the
-version on a bottom line) is a box of its own that does not shrink.
+cuts the last parts first. Nothing is kept whole at the right: the
+bottom line's version is cut as any part (#65, built 0.74.0, decided 5).
 
 Drawn by: `partsLine` (its parts joined by `joined`) for a facts line, a
-for-you line, the line under a milestone and the left of a bottom line;
-`rule` for a rule. Debug's line under the bottom line is one text on each
-side.
+for-you line, the line under a milestone and Debug's line under the bottom
+line, `↯ Refresh: 6 requests · 41 this session`, all dim (#65, built 0.74.0, decided 4);
+`rule` for a rule.
 
 ## The menu
 
