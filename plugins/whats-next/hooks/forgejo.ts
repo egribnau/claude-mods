@@ -1,7 +1,7 @@
 import type { Actions, CommitRef, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName } from './forge'
-import { message, type Checked, type Closed, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
+import { fetchJson, message, type Checked, type Closed, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // Forgejo, or Gitea, behind the tracker the pane asks: every Forgejo URL
 // lives here. `token` is from the Forgejo tokens setting, null when it has
@@ -54,24 +54,13 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     return found
   }
 
-  // One request's JSON, or null when it failed.
-  async function fetchJson<T>(url: string): Promise<T | null> {
-    const res = await get(url).catch(() => null)
-    if (!res?.ok) return null
-    try {
-      return JSON.parse(res.text) as T
-    } catch {
-      return null
-    }
-  }
-
   // An issue's dependencies, asked once per tracker: an epic's children and
   // its own blockers come from the same answer.
   const depsAsked = new Map<number, Promise<RawDep[] | null>>()
   const deps = (n: number) => {
     let asked = depsAsked.get(n)
     if (!asked) {
-      asked = fetchJson<RawDep[]>(`${api}/issues/${n}/dependencies`)
+      asked = fetchJson<RawDep[]>(get, `${api}/issues/${n}/dependencies`)
       depsAsked.set(n, asked)
     }
     return asked
@@ -244,7 +233,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     // The epics that depend on it: an open one holds it as a child.
     async parentOf(n: number): Promise<number | null> {
       if (depsByRepo.get(api) === false) return null
-      const raw = await fetchJson<RawDep[]>(`${api}/issues/${n}/blocks?limit=50&page=1`)
+      const raw = await fetchJson<RawDep[]>(get, `${api}/issues/${n}/blocks?limit=50&page=1`)
       return raw?.find(e => e.state !== 'closed' && isEpic(e))?.number ?? null
     },
 
@@ -257,6 +246,7 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     async lastClosed(within, me): Promise<Closed | null> {
       const milestone = typeof within === 'object' ? `&milestones=${encodeURIComponent(within.title)}` : ''
       const raw = await fetchJson<RawListed[]>(
+        get,
         `${api}/issues?state=closed&type=issues&assigned_by=${encodeURIComponent(me)}${milestone}&limit=50&page=1`,
       )
       return latest((raw ?? []).filter(i => within !== 'none' || i.milestone === null))

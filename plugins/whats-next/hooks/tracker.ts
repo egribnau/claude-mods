@@ -11,6 +11,21 @@ export const slug = (r: Repo) => `${r.owner}/${r.name}`
 // each action cost.
 export type Send = (url: string, init: Parameters<EngineInterface['http']['fetch']>[1]) => ReturnType<EngineInterface['http']['fetch']>
 
+// A GET to `url`, with the tracker's headers.
+export type Get = (url: string) => ReturnType<Send>
+
+// One request's JSON through `get`, or null when it failed: a request that
+// threw, an answer that is not ok, or a body that is not JSON.
+export async function fetchJson<T>(get: Get, url: string): Promise<T | null> {
+  const res = await get(url).catch(() => null)
+  if (!res?.ok) return null
+  try {
+    return JSON.parse(res.text) as T
+  } catch {
+    return null
+  }
+}
+
 // An open issue in the repo, with who it is assigned to: none makes it free.
 export type OpenIssue = IssueRow & { assignees: string[] }
 

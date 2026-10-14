@@ -1,7 +1,7 @@
 import type { Actions, CommitRef, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName } from './forge'
-import { message, type Checked, type Closed, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
+import { fetchJson, message, type Checked, type Closed, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // GitHub behind the tracker the pane asks: every GitHub URL lives here.
 // `token` is from the GitHub token setting, null when it has none for the
@@ -38,17 +38,6 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       if (at !== null && !at.startsWith(`${base}/`)) throw new Error(`${what}: the next page is not on ${new URL(base).host}`)
     }
     return found
-  }
-
-  // One request's JSON, or null when it failed.
-  async function fetchJson<T>(url: string): Promise<T | null> {
-    const res = await get(url).catch(() => null)
-    if (!res?.ok) return null
-    try {
-      return JSON.parse(res.text) as T
-    } catch {
-      return null
-    }
   }
 
   // A change to issue `n`: null when GitHub took it, else why not.
@@ -215,7 +204,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
 
     // Its parent issue, open and in this repo, label or not.
     async parentOf(n: number): Promise<number | null> {
-      const raw = await fetchJson<RawIssue>(`${api}/issues/${n}/parent`)
+      const raw = await fetchJson<RawIssue>(get, `${api}/issues/${n}/parent`)
       return raw && raw.state !== 'closed' && raw.html_url.toLowerCase().startsWith(here) ? raw.number : null
     },
 
@@ -227,6 +216,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     async lastClosed(within, me): Promise<Closed | null> {
       const milestone = typeof within === 'object' ? `&milestone=${within.id}` : within === 'none' ? '&milestone=none' : ''
       const raw = await fetchJson<RawIssue[]>(
+        get,
         `${api}/issues?state=closed&assignee=${encodeURIComponent(me)}&sort=updated&direction=desc&per_page=20${milestone}`,
       )
       const last = (raw ?? [])
@@ -326,7 +316,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       const commits: CommitRef[] | null = shas
         ? await Promise.all(
             shas.slice(0, 3).map(async c => {
-              const found = await fetchJson<{ commit?: { message?: string } }>(`${api}/commits/${c.sha}`)
+              const found = await fetchJson<{ commit?: { message?: string } }>(get, `${api}/commits/${c.sha}`)
               return { sha: c.sha.slice(0, 7), message: (found?.commit?.message ?? '').split('\n')[0]?.trim() ?? '', when: c.when }
             }),
           )

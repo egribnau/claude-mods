@@ -98,25 +98,20 @@ let configure = configureCommand([])
 // name may hold a dot (`configureCommand` reads the same keys).
 const settingKey = (field: string) => new RegExp(`^whats-next(@.*)?\\.${field}$`)
 
-// Saves the Icons choice: in /config where the session offers it, and in the
-// session's state so it shows at once.
-async function chooseIcons($: EngineInterface, value: 'icons' | 'text') {
-  await update($, iconsChosen, () => value)
-  const rows = await $.config.list()
-  const row = rows.find(r => settingKey('icons').test(r.key))
-  if (!row) return
-  const done = await $.config.set({ key: row.key, value })
-  if (done.deny !== undefined) $.ui.toast(`Icons not saved: ${done.deny}`)
-}
+// A choice of Icons or Compact, as setup's question asks it.
+type Choice = { field: 'icons'; value: 'icons' | 'text' } | { field: 'compact'; value: 'on' | 'off' }
 
-// Saves the Compact choice the same way.
-async function chooseCompact($: EngineInterface, value: 'on' | 'off') {
-  await update($, compactChosen, () => value)
+// Saves a choice: in the session's state, so it shows at once, and in /config
+// where the session offers the setting. Each atom is written out, as the
+// scan that validates a hook reads them.
+async function chooseSetting($: EngineInterface, choice: Choice) {
+  if (choice.field === 'icons') await update($, iconsChosen, () => choice.value)
+  else await update($, compactChosen, () => choice.value)
   const rows = await $.config.list()
-  const row = rows.find(r => settingKey('compact').test(r.key))
+  const row = rows.find(r => settingKey(choice.field).test(r.key))
   if (!row) return
-  const done = await $.config.set({ key: row.key, value })
-  if (done.deny !== undefined) $.ui.toast(`Compact not saved: ${done.deny}`)
+  const done = await $.config.set({ key: row.key, value: choice.value })
+  if (done.deny !== undefined) $.ui.toast(`${choice.field === 'icons' ? 'Icons' : 'Compact'} not saved: ${done.deny}`)
 }
 
 // Each step in turn, stopping at the first that fails (hooks/setup.ts has
@@ -681,8 +676,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     workOn: i => workOn($, i, { pane: id, issue: i }),
     openUrl: url => openUrl($, url),
     counted: (label, action) => counted($, label, action),
-    chooseIcons: value => chooseIcons($, value),
-    chooseCompact: value => chooseCompact($, value),
+    chooseIcons: value => chooseSetting($, { field: 'icons', value }),
+    chooseCompact: value => chooseSetting($, { field: 'compact', value }),
   }
   const p: Pane = {
     e,

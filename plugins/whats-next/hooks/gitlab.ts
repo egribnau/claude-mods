@@ -1,7 +1,7 @@
 import type { Actions, EpicChild, Features, IssueDetail, IssueRow, Ref, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import { forgeName, gitlabSetting } from './forge'
-import { message, type Checked, type Closed, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
+import { fetchJson, message, type Checked, type Closed, type EpicRow, type OpenIssue, type Send, type Tracker } from './tracker'
 
 // GitLab behind the tracker the pane asks: every GitLab URL lives here.
 // `token` is from the GitLab.com token setting for gitlab.com, else from the
@@ -29,21 +29,10 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
   const epicLabel = label.toLowerCase()
   const isEpic = (names: string[]) => names.some(l => l.toLowerCase() === epicLabel)
 
-  // One request's JSON, or null when it failed.
-  async function fetchJson<T>(url: string): Promise<T | null> {
-    const res = await get(url).catch(() => null)
-    if (!res?.ok) return null
-    try {
-      return JSON.parse(res.text) as T
-    } catch {
-      return null
-    }
-  }
-
   // A milestone with how many of its issues are closed, of all: 0 of 0 when
   // GitLab would not say.
   async function counted(m: RawMilestone): Promise<MilestoneRow> {
-    const s = await fetchJson<RawStatistics>(`${project}/issues_statistics?milestone=${encodeURIComponent(m.title)}`)
+    const s = await fetchJson<RawStatistics>(get, `${project}/issues_statistics?milestone=${encodeURIComponent(m.title)}`)
     const counts = s?.statistics?.counts
     return {
       title: m.title,
@@ -121,7 +110,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
   async function links(n: number, kind: RawLink['link_type']): Promise<RawLink[] | null> {
     let asked = linksAsked.get(n)
     if (!asked) {
-      asked = fetchJson<RawLink[]>(`${project}/issues/${n}/links`)
+      asked = fetchJson<RawLink[]>(get, `${project}/issues/${n}/links`)
       linksAsked.set(n, asked)
     }
     const raw = await asked
@@ -179,7 +168,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
 
       // GitLab EE says so in its metadata: only there can issues block
       // others (on a paid tier). Community Edition, or no answer, has none.
-      const [res, meta] = await Promise.all([get(project), fetchJson<{ enterprise?: boolean }>(`${base}/metadata`)])
+      const [res, meta] = await Promise.all([get(project), fetchJson<{ enterprise?: boolean }>(get, `${base}/metadata`)])
       if (res.status === 401) return done({ kind: 'token-refused' })
       if (res.status === 403) return done({ kind: 'no-scope' })
       if (res.status === 404) return done({ kind: 'not-found' })
@@ -287,6 +276,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
     async lastClosed(within, _me): Promise<Closed | null> {
       const milestone = typeof within === 'object' ? `&milestone=${encodeURIComponent(within.title)}` : within === 'none' ? '&milestone=None' : ''
       const raw = await fetchJson<RawIssue[]>(
+        get,
         `${project}/issues?state=closed&scope=assigned_to_me&order_by=updated_at&sort=desc&per_page=20${milestone}`,
       )
       const last = (raw ?? [])
@@ -334,8 +324,8 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       const [res, notes, merges, linked] = await Promise.all([
         get(at),
         fetchAll<RawNote>(`${at}/notes?sort=asc&order_by=created_at`, 'notes').catch(() => null),
-        fetchJson<RawRef[]>(`${at}/related_merge_requests`),
-        features.deps ? fetchJson<RawLink[]>(`${at}/links`) : null,
+        fetchJson<RawRef[]>(get, `${at}/related_merge_requests`),
+        features.deps ? fetchJson<RawLink[]>(get, `${at}/links`) : null,
       ])
       const ours = Array.isArray(linked) ? linked.filter(l => inProject(l.web_url)) : null
       ours?.forEach(remember)

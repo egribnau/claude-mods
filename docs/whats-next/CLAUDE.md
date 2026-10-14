@@ -45,6 +45,9 @@ repo's CLAUDE.md.
   open one again leaves the front as it was. Only `focus: true` brings an
   open pane in front, and it gives that pane the keyboard; while a pane holds
   the keyboard, a pane opened new stays behind it (#87).
+- `claude plugin validate` scans each `update` and `read` for the atom it
+  names: a literal, or a const of the same file. An atom passed in as a
+  parameter fails validation, and with it every test (#94).
 
 ## Hard rules
 

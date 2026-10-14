@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { childOf } from '../hooks/epics'
 import { ALL, NONE, ofMilestone } from '../hooks/filter'
 import { changesSince, loadRepo, noteChange } from '../hooks/load'
-import type { Closed, EpicRow, OpenIssue, Tracker } from '../hooks/tracker'
+import { fetchJson, type Closed, type EpicRow, type OpenIssue, type Tracker } from '../hooks/tracker'
 import type { EpicChild, IssueDetail, IssueRow } from '../types'
 
 // What is known of a repo, through its interface, against a fake tracker:
@@ -534,4 +534,12 @@ test('under a row: children whose request fails are unknown, asked once, as in t
   expect(kids[29]).toBe(null)
   expect(await known.children(29)).toBe(null)
   expect(calls.filter(c => c.startsWith('children 29'))).toHaveLength(1)
+})
+
+test('one request\'s JSON is the parsed body, or null when it threw, was refused or was not JSON', async () => {
+  const answer = (ok: boolean, text: string) => () => Promise.resolve({ status: ok ? 200 : 404, ok, headers: {}, text })
+  expect(await fetchJson<{ n: number }>(answer(true, '{"n":1}'), 'fake:x')).toEqual({ n: 1 })
+  expect(await fetchJson(answer(false, '{"n":1}'), 'fake:x')).toBe(null)
+  expect(await fetchJson(() => Promise.reject(new Error('down')), 'fake:x')).toBe(null)
+  expect(await fetchJson(answer(true, 'not json'), 'fake:x')).toBe(null)
 })
