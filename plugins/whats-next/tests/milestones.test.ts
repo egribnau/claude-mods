@@ -190,6 +190,9 @@ test("the Milestones pane opens as a tab when the repo has an open milestone", T
   world(on, REPO, [], opened)
   await $.command.run(RUN)
   expect(opened.filter(p => p.id === 'next-milestones')).toEqual([{ id: 'next-milestones', title: 'Milestones' }])
+  // Opened new, Milestones comes in front, so What's next is opened again after it, with the focus.
+  expect(opened.findIndex(p => p.id === 'next-milestones')).toBeLessThan(opened.length - 1)
+  expect(opened.at(-1)).toEqual(expect.objectContaining({ id: 'next', focus: true }))
 })
 
 test('without an open milestone there is no Milestones pane', TOKEN, async ($, on) => {

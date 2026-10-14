@@ -180,7 +180,7 @@ test("the Epics pane opens next to What's next when the repo has an open epic", 
   const opened: { id: string; title?: string }[] = []
   world(on, REPO, [], opened)
   await $.command.run(RUN)
-  expect(opened.at(-1)).toEqual({ id: 'next-epics', title: 'Epics' })
+  expect(opened).toContainEqual({ id: 'next-epics', title: 'Epics' })
   expect(opened.filter(p => p.id === 'next').at(-1)?.title).toBe("What's next")
 })
 
@@ -227,16 +227,34 @@ test('/next epics with no open epic opens nothing and says so', TOKEN, async ($,
   expect(out).toEqual(expect.objectContaining({ text: 'No open epics in boats/radar.' }))
 })
 
-for (const args of ['next', 'n']) {
-  test(`/next ${args} does what /next does: What's next in front, the Epics tab beside it`, TOKEN, async ($, on) => {
+// A pane opened new comes in front, so What's next is opened again with the
+// focus after Epics, the only way to bring it back in front.
+for (const args of ['', 'next', 'n']) {
+  test(`/next${args ? ` ${args}` : ""} opens Epics, then brings What's next in front`, TOKEN, async ($, on) => {
     const opened: Opened[] = []
     world(on, REPO, [], opened)
     const out = await $.command.run(run(args))
-    expect(opened.filter(p => p.id === 'next').at(-1)).toEqual({ id: 'next', title: "What's next" })
-    expect(opened.at(-1)).toEqual({ id: 'next-epics', title: 'Epics' })
+    expect(opened.map(p => p.id).slice(-2)).toEqual(['next-epics', 'next'])
+    expect(opened.at(-1)).toEqual({ id: 'next', title: "What's next", focus: true })
+    expect(opened.filter(p => p.focus)).toHaveLength(1)
     expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: no open issues." }))
   })
 }
+
+test("/next help brings What's next in front, on the help page", TOKEN, async ($, on) => {
+  const opened: Opened[] = []
+  world(on, REPO, [], opened)
+  await $.command.run(run('help'))
+  expect(opened.at(-1)).toEqual({ id: 'next', title: "What's next", focus: true })
+})
+
+test('/next epics keeps Epics in front: What\'s next is not given the focus after it', TOKEN, async ($, on) => {
+  const opened: Opened[] = []
+  world(on, REPO, [], opened)
+  await $.command.run(run('epics'))
+  expect(opened.filter(p => p.focus)).toEqual([{ id: 'next-epics', title: 'Epics', focus: true }])
+  expect(opened.findLastIndex(p => p.id === 'next')).toBeLessThan(opened.findIndex(p => p.focus))
+})
 
 test('/next with an unknown word opens nothing and says what it knows', TOKEN, async ($, on) => {
   const opened: Opened[] = []
@@ -305,7 +323,7 @@ test('epics are found by the Epic label setting', { options: { ...TOKEN.options,
   const opened: { id: string; title?: string }[] = []
   world(on, { ...REPO, label: 'theme', epics: REPO.epics?.map(e => ({ ...(e as object), labels: [{ name: 'theme' }] })) }, [], opened)
   await $.command.run(RUN)
-  expect(opened.at(-1)?.id).toBe('next-epics')
+  expect(opened.map(p => p.id)).toContain('next-epics')
 })
 
 test('starts on the open milestone due first, its epics folded', TOKEN, async ($, on) => {
@@ -1032,7 +1050,7 @@ test('Refresh opens the Epics pane once the first open epic exists, without the 
   w.epics = [epic(40, 'First epic', { milestone: 'v1.2' })]
   const next = await $.ui.mount({ ...EPICS_PANE, requestId: 'next', surface: 'terminal' })
   await next.press({ key: 'refresh' })
-  expect(opened.at(-1)).toEqual({ id: 'next-epics', title: 'Epics' })
+  expect(opened).toContainEqual({ id: 'next-epics', title: 'Epics' })
 })
 
 test('Refresh closes the Epics pane once the last open epic is closed', TOKEN, async ($, on) => {

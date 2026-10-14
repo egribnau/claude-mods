@@ -2765,6 +2765,9 @@ async function runNext($: EngineInterface, name: string, word: string) {
   } else if (ms !== null && ms.length === 0 && open.includes(MILESTONES_PANE)) {
     await $.ui.close({ id: MILESTONES_PANE })
   }
+  // A pane opened new comes in front of the rest, and only `focus` brings an
+  // open one back: What's next last, with the keyboard, as Epics for /next epics.
+  if (want !== 'epics') await $.ui.open({ id: PANE, title: r ? "What's next" : "What's Next", focus: true })
   if (want === 'help') {
     await showHelp($, PANE)
     return { text: "What's Next's help is open in What's next: what each sign and colour means." }

@@ -41,6 +41,10 @@ repo's CLAUDE.md.
 - Once the pane has the keyboard, the arrow keys and Tab move between its
   controls, Enter presses the one in focus, and hotkeys press theirs.
 - With a single pane the engine draws no tab title.
+- A pane opened new comes in front of the others, asked or not; opening an
+  open one again leaves the front as it was. Only `focus: true` brings an
+  open pane in front, and it gives that pane the keyboard; while a pane holds
+  the keyboard, a pane opened new stays behind it (#87).
 
 ## Hard rules
 

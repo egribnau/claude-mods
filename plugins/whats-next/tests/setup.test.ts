@@ -175,7 +175,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(cmd?.props.color).toBe('warning')
     await expect(ui.find({ key: 'refresh' })).resolves.toBeDefined()
     expect(asked).toEqual([])
-    expect(opened.map(o => o.title)).toEqual(["What's Next"])
+    expect(opened.map(o => o.title)).toEqual(["What's Next", "What's Next"])
     expect(out).toEqual(expect.objectContaining({ text: "What's Next needs setting up: see its pane." }))
   })
 }
