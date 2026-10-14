@@ -4,13 +4,11 @@ import type { EngineInterface, Hook, Register, RenderInput } from 'claude-code'
 import type { Comment, Detail, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneFilter, Overview, Ref, Repo, Setup, TokenSource } from '../types'
 import { draw, type Look } from './draw'
 import { inMilestone } from './epics'
-import { configureCommand, detect, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
-import { forgejo } from './forgejo'
-import { github } from './github'
-import { gitlab } from './gitlab'
+import { configureCommand, type Forge, type TokenSetting } from './forge'
 import { ALL, filterWord, sameFilter } from './filter'
 import { changesSince, loadRepo, noteChange, type Known } from './load'
-import { message, slug, withoutToken, type Send, type Tracker } from './tracker'
+import { checkForge, findRepo, readToken, trackerFor, type Tokens } from './setup'
+import { message, slug, type Send, type Tracker } from './tracker'
 import * as step from './where'
 import { issueOf } from './where'
 import { EPICS_PANE, go, MILESTONES_PANE, milestoneShown, PANE, placeOf } from './panes'
@@ -64,28 +62,8 @@ const send =
 // The forge each host runs, as setup's check found it.
 const forges = new Map<string, Forge>()
 
-// The tracker behind repo `r`: GitLab or GitHub where setup found it, else
-// Forgejo. A token goes only to the forge setup found at the host: with none
-// found, the Forgejo tracker gets no token. What it says never carries the token.
-const tracker = ($: EngineInterface, r: Repo): Tracker => {
-  const forge = forges.get(r.host)
-  return forge?.kind === 'gitlab'
-    ? trackerOf('gitlab', $, r, gitlabToken(r.host).value, forge.version)
-    : forge?.kind === 'github'
-      ? trackerOf('github', $, r, readToken('GitHub token', r.host).value, forge.version)
-      : trackerOf('forgejo', $, r, forge?.kind === 'forgejo' ? readToken('Forgejo tokens', r.host).value : null)
-}
-
-// The tracker of one forge for repo `r`, with `token` cut out of what it says.
-const trackerOf = (kind: 'forgejo' | 'gitlab' | 'github', $: EngineInterface, r: Repo, token: string | null, version?: string | null): Tracker =>
-  withoutToken(
-    kind === 'gitlab'
-      ? gitlab(send($), r, token, version ?? null, configLabel)
-      : kind === 'github'
-        ? github(send($), r, token, version ?? null, configLabel)
-        : forgejo(send($), r, token, configLabel, version ?? undefined),
-    token,
-  )
+// The tracker behind repo `r`, as setup's check found its forge.
+const tracker = ($: EngineInterface, r: Repo): Tracker => trackerFor(send($), r, forges.get(r.host), configTokens, configLabel)
 
 // Runs an action and records how many requests it sent, under `label`.
 async function counted<T>($: EngineInterface, label: string, action: () => Promise<T>): Promise<T> {
@@ -97,7 +75,7 @@ async function counted<T>($: EngineInterface, label: string, action: () => Promi
 }
 
 // The token settings' text, read in `register`; a reload reads them again.
-const configTokens: Record<TokenSetting, string> = {
+const configTokens: Tokens = {
   'Forgejo tokens': '',
   'GitLab.com token': '',
   'Private GitLab token': '',
@@ -136,77 +114,36 @@ async function chooseCompact($: EngineInterface, value: 'on' | 'off') {
   if (done.deny !== undefined) $.ui.toast(`Compact not saved: ${done.deny}`)
 }
 
-// The host, owner and repo a git remote URL names, in any of the forms git
-// takes: ssh://git@host:2222/o/r.git, git@host:o/r.git, https://host/o/r.
-function parseRemote(url: string): Repo | null {
-  const m =
-    /^(?:ssh|https?|git):\/\/(?:[^@/]+@)?([^:/]+)(?::\d+)?\/(.+?)\/([^/]+?)(?:\.git)?\/?$/.exec(url) ??
-    /^(?:[^@/]+@)?([^:/]+):(?!\/)(.+?)\/([^/]+?)(?:\.git)?\/?$/.exec(url)
-  if (!m?.[1] || !m[2] || !m[3]) return null
-  return { host: m[1], owner: m[2], name: m[3] }
-}
-
-// The token for `host` (null: no repo yet) from one token setting, kept in
-// secure storage. The settings are the only source, so the token is the
-// same in the terminal and the app.
-function readToken(setting: TokenSetting, host: string | null): { value: string | null; from: TokenSource } {
-  const t = tokenFor(configTokens[setting], host)
-  return t ? { value: t.value, from: { setting, host: t.host ? host : null } } : { value: null, from: null }
-}
-
-// The GitLab token for `host`. gitlab.com's comes from GitLab.com token, else
-// from a `gitlab.com=` pair in Private GitLab token, as older setups have it,
-// never from that setting's bare token. Any other host's comes from Private
-// GitLab token.
-function gitlabToken(host: string): { value: string | null; from: TokenSource } {
-  if (gitlabSetting(host) === 'Private GitLab token') return readToken('Private GitLab token', host)
-  const com = readToken('GitLab.com token', host)
-  if (com.value !== null) return com
-  const old = tokenFor(configTokens['Private GitLab token'], host)
-  return old?.host ? { value: old.value, from: { setting: 'Private GitLab token', host } } : { value: null, from: null }
-}
-
-// Each step in turn, stopping at the first that fails: the repo behind
-// origin, the forge at its host, then the tracker's own steps: a token, and
-// the token reading the repo.
+// Each step in turn, stopping at the first that fails (hooks/setup.ts has
+// the steps): this reads `git`, keeps what each step found and passes the
+// settings in.
 async function check($: EngineInterface): Promise<Repo | null> {
   await update($, setup, (): Setup => ({ kind: 'checking' }))
-  await update($, token, () => readToken('Forgejo tokens', null).from)
+  await update($, token, () => readToken(configTokens, 'Forgejo tokens', null).from)
 
   const git = async (...args: string[]) => {
     const run = await $.process.run(['git', ...args]).catch(() => null)
     return run?.exitCode === 0 ? run.stdout.trim() : null
   }
   const url = await git('remote', 'get-url', 'origin')
-  const r = url ? parseRemote(url) : null
+  const found = await findRepo(url, async () => {
+    const inRepo = url !== null || (await git('rev-parse', '--is-inside-work-tree')) === 'true'
+    const pwd = await $.process.run(['pwd']).catch(() => null)
+    return { inRepo, dir: (pwd?.exitCode === 0 ? pwd.stdout.trim() : 'this folder').replace(/^\/(?:Users|home)\/[^/]+/, '~') }
+  })
+  const r = found.repo
   await update($, repo, () => r)
   await update($, version, () => null)
   if (!r) {
-    const inRepo = url !== null || (await git('rev-parse', '--is-inside-work-tree')) === 'true'
-    const pwd = await $.process.run(['pwd']).catch(() => null)
-    const dir = (pwd?.exitCode === 0 ? pwd.stdout.trim() : 'this folder').replace(/^\/(?:Users|home)\/[^/]+/, '~')
-    const next: Setup = !inRepo
-      ? { kind: 'no-repo', reason: 'not-git', dir }
-      : url === null
-        ? { kind: 'no-repo', reason: 'no-origin', dir }
-        : { kind: 'no-repo', reason: 'bad-origin', dir, origin: url.replace(/^([a-z+]+:\/\/)[^@/]*@/i, '$1') }
-    await update($, setup, () => next)
+    await update($, setup, () => found.setup)
     return null
   }
 
-  const forge = await detect(send($), r.host)
-  forges.set(r.host, forge)
-  if (forge.kind === 'unknown') {
-    await update($, token, () => null)
-    await update($, setup, (): Setup => ({ kind: 'not-forgejo', reason: forge.reason, detail: forge.detail }))
-    return r
-  }
-  const tok =
-    forge.kind === 'gitlab' ? gitlabToken(r.host) : forge.kind === 'github' ? readToken('GitHub token', r.host) : readToken('Forgejo tokens', r.host)
-  await update($, token, () => tok.from)
-  const c = await trackerOf(forge.kind, $, r, tok.value, forge.version).check()
-  await update($, version, () => c.version)
-  await update($, setup, () => c.setup)
+  const checked = await checkForge(send($), r, configTokens, configLabel)
+  forges.set(r.host, checked.forge)
+  await update($, token, () => checked.token)
+  await update($, version, () => checked.version)
+  await update($, setup, () => checked.setup)
   return r
 }
 

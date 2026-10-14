@@ -2,6 +2,7 @@ import { expect, mock, test, type Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { github } from '../hooks/github'
+import { checkForge, trackerFor } from '../hooks/setup'
 import { withoutToken, type Send, type Tracker } from '../hooks/tracker'
 
 // Token safety: a token never shows in what What's Next says, goes only to
@@ -345,6 +346,22 @@ test('withoutToken: answers and errors of every kind lose the token', async () =
   expect(await sealed.mine()).toEqual([{ number: 1, title: 'about <token>', labels: ['l-<token>'] }])
   expect(await sealed.close(1, true)).toBe('refused: PRIVATE-TOKEN: <token>')
   await expect(sealed.open()).rejects.toThrow('<token> and <token>')
+})
+
+test('setup module: the tracker it gives answers without the token', async () => {
+  const send: Send = async url => ({
+    status: 401,
+    ok: false,
+    headers: {},
+    text: JSON.stringify({ message: echo(url, { Authorization: `Bearer ${TOKEN}` }) }),
+  })
+  const tokens = { 'Forgejo tokens': '', 'GitLab.com token': '', 'Private GitLab token': '', 'GitHub token': TOKEN }
+  const repo = { host: 'github.com', owner: 'boats', name: 'radar' }
+  const found = await checkForge(send, repo, tokens, 'epic')
+  expect(JSON.stringify(found)).not.toContain(TOKEN)
+  const t = trackerFor(send, repo, found.forge, tokens, 'epic')
+  expect(JSON.stringify(await t.check())).not.toContain(TOKEN)
+  expect(JSON.stringify(await t.mine().catch((e: unknown) => String(e)))).not.toContain(TOKEN)
 })
 
 // A token goes only to its own host.

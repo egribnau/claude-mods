@@ -26,6 +26,7 @@ plugins/whats-next/                  a mod: a hooks module, no skills
   hooks/views/*.tsx                  each view of a pane: the lists, the details, help, setup
   hooks/draw.tsx                     how a row or a line is drawn, for every view
   hooks/tracker.ts                   what the panes ask a tracker
+  hooks/setup.ts                     setup's steps and the tracker they end in: which token a host gets
   hooks/forgejo.ts                   Forgejo as a tracker: every Forgejo URL
   hooks/gitlab.ts                    GitLab as a tracker: every GitLab URL
   hooks/github.ts                    GitHub as a tracker: every GitHub URL
