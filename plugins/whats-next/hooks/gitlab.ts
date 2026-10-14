@@ -293,7 +293,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
 
     // An epic's children are the issues it links as related, other epics
     // left out: those are its peers.
-    async children(n: number, me: string | null): Promise<EpicChild[] | null> {
+    async children(n: number): Promise<EpicChild[] | null> {
       const raw = await links(n, 'relates_to')
       if (!raw) return null
       const kids = raw.filter(l => !isEpic(names(l)))
@@ -303,18 +303,15 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
         kids.map(async (c): Promise<EpicChild> => {
           const assignees = (c.assignees ?? []).map(a => a.username)
           const open = c.state === 'opened'
-          const mine = me !== null && assignees.includes(me)
-          // Only an open child that is not yours is checked for what blocks
-          // it, and only where issues can block others.
+          // Only an open child is checked for what blocks it, and only where
+          // issues can block others.
           const blockedBy =
-            deps && open && !mine ? ((await links(c.iid, 'is_blocked_by')) ?? []).filter(b => b.state === 'opened').map(b => b.iid) : []
+            deps && open ? ((await links(c.iid, 'is_blocked_by')) ?? []).filter(b => b.state === 'opened').map(b => b.iid) : []
           return {
             number: c.iid,
             title: c.title,
             state: open ? 'open' : 'closed',
             assignees,
-            mine,
-            blocked: blockedBy.length > 0,
             labels: names(c).map(name => ({ name, color: colour.get(name) ?? '' })),
             milestone: c.milestone?.title ?? null,
             created: c.created_at ?? '',

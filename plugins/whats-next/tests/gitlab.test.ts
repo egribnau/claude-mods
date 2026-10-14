@@ -535,7 +535,7 @@ test('epics, blockers and children ask GitLab; links refused leave blockers and 
   ])
   expect(new URL(asked[0]?.url ?? '').searchParams.get('labels')).toBe('epic')
   expect(await t.blockers(12)).toBe(null)
-  expect(await t.children(20, 'alice')).toBe(null)
+  expect(await t.children(20)).toBe(null)
   expect(asked.slice(1).map(a => a.url)).toEqual([`${PROJECT}/issues/12/links`, `${PROJECT}/issues/20/links`])
 })
 
@@ -607,7 +607,7 @@ test('an epic\'s children and its own blockers are read from one request for its
     'glpat-x',
     null,
   )
-  expect((await t.children(20, null))?.map(c => c.number)).toEqual([31])
+  expect((await t.children(20))?.map(c => c.number)).toEqual([31])
   expect(await t.blockers(20)).toEqual([12])
   expect(asked.filter(a => a.url === `${PROJECT}/issues/20/links`)).toHaveLength(1)
 })

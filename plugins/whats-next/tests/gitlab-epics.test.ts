@@ -360,8 +360,6 @@ const CHILDREN: EpicChild[] = [
     title: 'Issue 10',
     state: 'closed',
     assignees: [],
-    mine: false,
-    blocked: false,
     labels: [],
     milestone: null,
     created: '2026-08-11T09:00:00.000Z',
@@ -373,8 +371,6 @@ const CHILDREN: EpicChild[] = [
     title: 'Issue 33',
     state: 'open',
     assignees: [],
-    mine: false,
-    blocked: false,
     labels: [],
     milestone: null,
     created: '2026-09-11T09:00:00.000Z',
@@ -386,8 +382,6 @@ const CHILDREN: EpicChild[] = [
     title: 'Issue 37',
     state: 'open',
     assignees: ['alice'],
-    mine: true,
-    blocked: false,
     labels: [{ name: 'bug', color: 'd9534f' }],
     milestone: 'v1.2',
     created: '2026-09-25T09:00:00.000Z',
@@ -399,8 +393,6 @@ const CHILDREN: EpicChild[] = [
     title: 'Issue 44',
     state: 'open',
     assignees: ['jdoe'],
-    mine: false,
-    blocked: false,
     labels: [],
     milestone: null,
     created: '2026-09-20T09:00:00.000Z',
@@ -412,8 +404,6 @@ const CHILDREN: EpicChild[] = [
     title: 'Issue 51',
     state: 'open',
     assignees: [],
-    mine: false,
-    blocked: false,
     // A label the project does not list has no colour.
     labels: [
       { name: 'docs', color: '428bca' },
@@ -434,7 +424,7 @@ test('children: related issues of this project, not other epics, with label colo
   await t.check()
   const before = asked.length
 
-  expect(byNumber(await t.children(20, 'alice'))).toEqual(CHILDREN)
+  expect(byNumber(await t.children(20))).toEqual(CHILDREN)
   const after = asked.slice(before)
   expect(linksAsked(after)).toEqual([`${path}/issues/20/links`])
   expect(after.filter(a => pathOf(a) === `${path}/labels`)).toHaveLength(1)
@@ -446,7 +436,7 @@ test('children: links whose URL names a work item, as newer GitLab answers, are 
   const asWorkItems = onePage(epicLinkItems(h).map(l => ({ ...l, web_url: l.web_url.replace('/-/issues/', '/-/work_items/') })))
   const t = gitlab(fakeSend(route({ metadata: ok(metadata(false)), links: { 20: asWorkItems } })), r, 'glpat-x', null, 'Epic')
   await t.check()
-  expect(byNumber(await t.children(20, 'alice'))).toEqual(CHILDREN)
+  expect(byNumber(await t.children(20))).toEqual(CHILDREN)
 })
 
 test('children: without a check, blocking links count as off', async () => {
@@ -454,7 +444,7 @@ test('children: without a check, blocking links count as off', async () => {
   const { r, path } = at(h)
   const asked: Asked[] = []
   const t = gitlab(fakeSend(route({ links: { 20: epicLinks(h) } }), asked), r, 'glpat-x', null, 'Epic')
-  expect(byNumber(await t.children(20, 'alice'))).toEqual(CHILDREN)
+  expect(byNumber(await t.children(20))).toEqual(CHILDREN)
   expect(linksAsked(asked)).toEqual([`${path}/issues/20/links`])
 })
 
@@ -464,8 +454,8 @@ test('children: the project labels are fetched once, across two calls and tracke
   const asked: Asked[] = []
   const send = fakeSend(route({ links: { 20: epicLinks(h), 12: onePage([link(h, 51, 'relates_to', { labels: ['bug'] })]) } }), asked)
 
-  await gitlab(send, r, 'glpat-x', null, 'Epic').children(20, 'alice')
-  const second = await gitlab(send, r, 'glpat-x', null, 'Epic').children(12, 'alice')
+  await gitlab(send, r, 'glpat-x', null, 'Epic').children(20)
+  const second = await gitlab(send, r, 'glpat-x', null, 'Epic').children(12)
   expect(second?.[0]?.labels).toEqual([{ name: 'bug', color: 'd9534f' }])
   expect(asked.filter(a => pathOf(a) === `${path}/labels`)).toHaveLength(1)
 })
@@ -483,7 +473,7 @@ test('children: the epic links failing is null', async () => {
   const { r } = at('children-fails.example')
   for (const reply of [FAILS, 'down'] as const) {
     const t = gitlab(fakeSend(route({ links: { 20: reply } })), r, 'glpat-x', null, 'Epic')
-    expect(await t.children(20, 'alice')).toBe(null)
+    expect(await t.children(20)).toBe(null)
   }
 })
 
@@ -509,13 +499,13 @@ test('children: deps on, an open child not yours is blocked by its open is_block
   await gitlab(send, r, 'glpat-x', null, 'Epic').check()
   // A tracker is built per call: what check found holds for the next one.
   const before = asked.length
-  const got = byNumber(await gitlab(send, r, 'glpat-x', null, 'Epic').children(20, 'alice'))
+  const got = byNumber(await gitlab(send, r, 'glpat-x', null, 'Epic').children(20))
 
-  expect(got.find(c => c.number === 33)).toMatchObject({ blockedBy: [37], blocked: true })
-  for (const n of [10, 37, 44, 51]) expect(got.find(c => c.number === n)).toMatchObject({ blockedBy: [], blocked: false })
-  // Only the open children that are not yours are asked about.
+  expect(got.find(c => c.number === 33)).toMatchObject({ blockedBy: [37] })
+  for (const n of [10, 37, 44, 51]) expect(got.find(c => c.number === n)).toMatchObject({ blockedBy: [] })
+  // Only the open children are asked about.
   expect(linksAsked(asked.slice(before)).sort()).toEqual(
-    [`${path}/issues/20/links`, `${path}/issues/33/links`, `${path}/issues/44/links`, `${path}/issues/51/links`].sort(),
+    [`${path}/issues/20/links`, `${path}/issues/33/links`, `${path}/issues/37/links`, `${path}/issues/44/links`, `${path}/issues/51/links`].sort(),
   )
 })
 

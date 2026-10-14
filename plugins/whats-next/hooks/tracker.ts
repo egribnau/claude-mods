@@ -58,9 +58,8 @@ export type Tracker = {
   epics(): Promise<EpicRow[]>
   // The open issues issue `n` waits on, by number.
   blockers(n: number): Promise<number[] | null>
-  // The children of epic `n`. Each open one not assigned to `me` is
-  // checked for what blocks it.
-  children(n: number, me: string | null): Promise<EpicChild[] | null>
+  // The children of epic `n`, each open one checked for what blocks it.
+  children(n: number): Promise<EpicChild[] | null>
   // The numbers of epic `n`'s children, open and closed, without checking
   // them for blockers: one request. null when the forge would not say.
   members(n: number): Promise<number[] | null>

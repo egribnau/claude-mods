@@ -2,7 +2,7 @@ import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
 import type { Comment, Detail, DetailFolds, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneFilter, MilestoneIssue, Overview, Ref, Repo, Scope, Setup, TokenSource } from '../types'
-import { bar, dueFirst, forYou, inMilestone, markOf, openChildren, standing, summary, tally, tree, type Folding, type Mark, type Standing, type TreeLine } from './epics'
+import { bar, dueFirst, forYou, inMilestone, isMine, markOf, openChildren, standing, summary, tally, tree, type Folding, type Mark, type Standing, type TreeLine } from './epics'
 import { HELP, type Look, type Sign } from './help'
 import { configureCommand, detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
@@ -397,11 +397,7 @@ async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) 
   // first time, none once Next has asked.
   const parentOf = () => k.parent(n)
   // Whether it waits on an open issue that is not its own child, for its mark.
-  const blockedOf = async (i: IssueDetail) => {
-    const open = (i.blockedBy ?? []).filter(x => x.state === 'open').map(x => x.number)
-    if (i.state !== 'open' || (k.me !== null && i.assignees.includes(k.me))) return false
-    return k.blocked(n, open)
-  }
+  const blockedOf = (i: IssueDetail) => k.blocked(i, (i.blockedBy ?? []).filter(x => x.state === 'open').map(x => x.number))
   // The issues it holds, for its Children lines: an epic's, or on GitHub
   // any issue's sub-issues.
   const childrenOf = async (): Promise<Ref[] | null> => {
@@ -1880,7 +1876,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const refStanding = (x: Ref, kind: RefKind): Standing | null =>
         kind === 'pull' || x.state !== 'open'
           ? null
-          : standing({ mine: login !== null && (x.assignees ?? []).includes(login), blocked: x.blocked === true, assignees: x.assignees ?? [] })
+          : standing({ mine: isMine(x.assignees ?? [], login), blocked: x.blocked === true, assignees: x.assignees ?? [] })
       const endOf = (x: Ref, kind: RefKind) => {
         const st = refStanding(x, kind)
         return kind === 'pull' ? (x.state === 'merged' ? 'merged' : '') : st ? whoOf({ assignees: x.assignees ?? [] }, st) : ''
@@ -1962,7 +1958,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const acts = s.kind === 'ready' ? s.actions : ({ kind: 'read-only', reason: 'scope' } as const)
       const canAct = acts.kind !== 'read-only'
       const me = known?.me ?? null
-      const mine = me !== null && i.assignees.includes(me)
+      const mine = isMine(i.assignees, me)
       const closed = i.state === 'closed'
       // Its mark before the number, as the lists draw it; closed a grey ✓.
       // Whom it is with at the right of the first line, dim.

@@ -1,9 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { bar, forYou, groupsFor, inMilestone, markOf, openChildren, roots, summary, tally, tree, type TreeLine } from '../hooks/epics'
+import { bar, blockersCount, childOf, forYou, isMine, groupsFor, inMilestone, markOf, openChildren, roots, stands, summary, tally, tree, type TreeLine } from '../hooks/epics'
 import { ALL, filterOptions, NONE, ofMilestone } from '../hooks/filter'
-import type { EpicChild } from '../types'
+import type { Child } from '../types'
 
 const EPICS_PANE = {
   plugin: 'whats-next',
@@ -837,7 +837,7 @@ test('with Debug off there is no counter', TOKEN, async ($, on) => {
   expect((await texts(ui)).some(t => t.startsWith('↯'))).toBe(false)
 })
 
-const child = (number: number, extra: Partial<EpicChild> = {}): EpicChild => ({
+const child = (number: number, extra: Partial<Child> = {}): Child => ({
   number,
   title: `Issue ${number}`,
   state: 'open',
@@ -850,6 +850,37 @@ const child = (number: number, extra: Partial<EpicChild> = {}): EpicChild => ({
   mine: false,
   blocked: false,
   ...extra,
+})
+
+// How an issue stands for you, from what the forge says (DRAWING-issue.md,
+// Marks): no forge here.
+test('stands: yours wins over blocked, you know what holds it up', () => {
+  expect(isMine(['jdoe', 'alice'], 'alice')).toBe(true)
+  expect(isMine(['jdoe'], 'alice')).toBe(false)
+  expect(isMine(['alice'], null)).toBe(false)
+  expect(stands({ state: 'open', blockedBy: [7] }, true)).toEqual({ blocked: false, blockedBy: [] })
+  expect(stands({ state: 'open', blockedBy: [7] }, false)).toEqual({ blocked: true, blockedBy: [7] })
+  expect(stands({ state: 'open', blockedBy: [] }, false)).toEqual({ blocked: false, blockedBy: [] })
+})
+
+test('stands: its own children never block it, the other blockers do', () => {
+  expect(stands({ state: 'open', blockedBy: [7, 8, 9] }, false, [7, 8])).toEqual({ blocked: true, blockedBy: [9] })
+  expect(stands({ state: 'open', blockedBy: [7, 8] }, false, [7, 8, 10])).toEqual({ blocked: false, blockedBy: [] })
+})
+
+test('stands: a closed issue blocks nothing and waits on nothing', () => {
+  expect(stands({ state: 'closed', blockedBy: [7] }, false)).toEqual({ blocked: false, blockedBy: [] })
+  expect(blockersCount('closed', false)).toBe(false)
+  expect(blockersCount('open', true)).toBe(false)
+  expect(blockersCount('open', false)).toBe(true)
+})
+
+test('childOf: a child as the forge says it, standing for you', () => {
+  const { mine: _m, blocked: _b, ...raw } = child(5, { assignees: ['alice'], blockedBy: [7] })
+  expect(childOf(raw, 'alice')).toMatchObject({ number: 5, mine: true, blocked: false, blockedBy: [] })
+  expect(childOf({ ...raw, assignees: ['jdoe'] }, 'alice')).toMatchObject({ mine: false, blocked: true, blockedBy: [7] })
+  expect(childOf({ ...raw, assignees: [] }, 'alice', [7])).toMatchObject({ mine: false, blocked: false, blockedBy: [] })
+  expect(childOf({ ...raw, assignees: [], state: 'closed' }, null)).toMatchObject({ blocked: false, blockedBy: [] })
 })
 
 test('openChildren: yours, available, others, blocked; closed ones left out', () => {
@@ -928,7 +959,7 @@ const say = (l: TreeLine) =>
     : `${' '.repeat(l.depth)}${l.kind}${l.kind === 'closed' ? ` ${l.closed}` : ''}`
 
 test('tree: an unfolded epic lists its open children; a child epic folds, with its count', () => {
-  const kids = new Map<number, EpicChild[] | null>([
+  const kids = new Map<number, Child[] | null>([
     [1, [child(2), child(3), child(4, { state: 'closed' })]],
     [3, [child(5), child(6, { state: 'closed' })]],
     [5, [child(7)]],
@@ -949,7 +980,7 @@ test('tree: an unfolded epic lists its open children; a child epic folds, with i
 })
 
 test('tree: what is not loaded yet is missing, and shows as loading', () => {
-  const kids = new Map<number, EpicChild[] | null>([[1, [child(3)]]])
+  const kids = new Map<number, Child[] | null>([[1, [child(3)]]])
   const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
   const top = [{ number: 1, title: 'E', state: 'open' as const, due: null, children: kids.get(1) ?? null }]
   // A child epic not loaded: its count is not known yet, so it is asked for.
@@ -966,7 +997,7 @@ test('tree: what is not loaded yet is missing, and shows as loading', () => {
 })
 
 test('tree: a sub-issue count from the forge folds any issue, without asking', () => {
-  const kids = new Map<number, EpicChild[] | null>([[1, [child(3, { subIssues: { closed: 1, total: 3 } }), child(4, { subIssues: { closed: 0, total: 0 } })]]])
+  const kids = new Map<number, Child[] | null>([[1, [child(3, { subIssues: { closed: 1, total: 3 } }), child(4, { subIssues: { closed: 0, total: 0 } })]]])
   const look = (n: number) => (kids.has(n) ? (kids.get(n) ?? null) : undefined)
   const top = [{ number: 1, title: 'E', state: 'open' as const, due: null, children: kids.get(1) ?? null }]
   const t = tree(top, look, new Set([1]), new Set([1]))
@@ -977,7 +1008,7 @@ test('tree: a sub-issue count from the forge folds any issue, without asking', (
 
 test('tree: an issue shown above is shown again, but not unfolded', () => {
   // 1 holds 2 and 3, both hold 4; 4 holds 1 back: a loop.
-  const kids = new Map<number, EpicChild[] | null>([
+  const kids = new Map<number, Child[] | null>([
     [1, [child(2), child(3)]],
     [2, [child(4)]],
     [3, [child(4)]],

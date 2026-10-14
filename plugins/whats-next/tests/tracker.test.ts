@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
+import { childOf } from '../hooks/epics'
 import { ALL, NONE, ofMilestone } from '../hooks/filter'
 import { changesSince, loadRepo, noteChange } from '../hooks/load'
 import type { Closed, EpicRow, OpenIssue, Tracker } from '../hooks/tracker'
@@ -18,8 +19,6 @@ function child(number: number, extra: Partial<EpicChild> = {}): EpicChild {
     title: `Issue ${number}`,
     state: 'open',
     assignees: [],
-    mine: false,
-    blocked: false,
     labels: [],
     milestone: null,
     created: '2026-10-01T00:00:00Z',
@@ -83,8 +82,8 @@ function fake(f: Fake, calls: string[] = []): Tracker {
       calls.push(`blockers ${n}`)
       return f.blockers?.[n] ?? []
     },
-    children: async (n, me) => {
-      calls.push(`children ${n} ${me}`)
+    children: async n => {
+      calls.push(`children ${n}`)
       return f.failingChildren?.includes(n) ? fail(`children of #${n}`) : (f.children?.[n] ?? null)
     },
     members: async n => {
@@ -185,7 +184,7 @@ test('with epics off, the tracker is not asked for them', async () => {
   expect(calls).not.toContain('epics')
 })
 
-test('Epics: grouped by milestone, open first, children asked once with who you are', async () => {
+test('Epics: grouped by milestone, open first, children asked once, standing for who you are', async () => {
   const calls: string[] = []
   const t = fake(
     {
@@ -194,7 +193,7 @@ test('Epics: grouped by milestone, open first, children asked once with who you 
         { number: 3, title: 'Open epic', state: 'open', milestone: 'v1', due: null },
         { number: 4, title: 'Loose epic', state: 'open', milestone: null, due: null },
       ],
-      children: { 3: [child(10, { mine: true, assignees: ['alice'] }), child(11, { state: 'closed' })] },
+      children: { 3: [child(10, { assignees: ['alice'] }), child(11, { state: 'closed' })] },
     },
     calls,
   )
@@ -206,11 +205,12 @@ test('Epics: grouped by milestone, open first, children asked once with who you 
     [9, 'closed'],
   ])
   expect(groups[0]?.epics[0]?.children?.map(c => c.number)).toEqual([10, 11])
+  expect(groups[0]?.epics[0]?.children?.map(c => c.mine)).toEqual([true, false])
   expect(groups[0]?.epics[1]?.children).toBe(null)
   expect(groups[1]?.epics[0]?.children).toBe(null)
   expect(groups[0]).toMatchObject({ due: '2026-11-01T00:00:00Z', closed: 1, total: 4 })
   // Closed epics are not asked about; each open one once.
-  expect(calls.filter(c => c.startsWith('children')).sort()).toEqual(['children 3 alice', 'children 4 alice'])
+  expect(calls.filter(c => c.startsWith('children')).sort()).toEqual(['children 3', 'children 4'])
   await known.epics(ofMilestone('v1'))
   expect(calls.filter(c => c.startsWith('children'))).toHaveLength(2)
 })
@@ -354,7 +354,7 @@ test("a milestone's epic carries its children, asked once, and is not blocked by
   expect(issues?.find(c => c.number === 33)?.children).toBeUndefined()
   // Shared with the Epics pane: its children are not asked again.
   await known.epics(ALL)
-  expect(calls.filter(c => c.startsWith('children'))).toEqual(['children 29 alice'])
+  expect(calls.filter(c => c.startsWith('children'))).toEqual(['children 29'])
 })
 
 test('an epic blocked by an issue outside it is blocked by that one only', async () => {
@@ -529,7 +529,7 @@ test('under a row: children whose request fails are unknown, asked once, as in t
   const calls: string[] = []
   const known = await load(fake(SPLIT, calls))
   // Epic #31 holds epic #29, both unfolded: #29's children are asked.
-  const top = { number: 31, title: 'Issue 31', state: 'open' as const, due: null, children: [child(29), child(40)] }
+  const top = { number: 31, title: 'Issue 31', state: 'open' as const, due: null, children: [child(29), child(40)].map(c => childOf(c, 'alice')) }
   const kids = await known.grow([[top]], new Set([29, 31]))
   expect(kids[29]).toBe(null)
   expect(await known.children(29)).toBe(null)

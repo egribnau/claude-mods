@@ -1,11 +1,41 @@
-import type { Epic, EpicChild, MilestoneFilter } from '../types'
+import type { Child, Epic, EpicChild, MilestoneFilter } from '../types'
 import { holds } from './filter'
+
+// Whether an issue is assigned to you.
+export const isMine = (assignees: readonly string[], me: string | null): boolean => me !== null && assignees.includes(me)
+
+// Whether what blocks an issue counts for you: not when it is yours (you
+// know what holds it up), nor when it is closed (it waits on nothing). Where
+// it does not, the forge need not be asked for its blockers.
+export const blockersCount = (state: string, mine: boolean): boolean => state === 'open' && !mine
+
+// What blocks an issue for you, from the open issues the forge says it waits
+// on: those that count (`blockersCount`) with its own children left out,
+// which it never waits on (DRAWING-issue.md, Detail lines that name an issue).
+// The one place the rule is written; `standing` draws what comes of it.
+export function stands(
+  i: { state: string; blockedBy: readonly number[] },
+  mine: boolean,
+  own: Iterable<number> = [],
+): { blocked: boolean; blockedBy: number[] } {
+  if (!blockersCount(i.state, mine)) return { blocked: false, blockedBy: [] }
+  const children = new Set(own)
+  const blockedBy = i.blockedBy.filter(n => !children.has(n))
+  return { blocked: blockedBy.length > 0, blockedBy }
+}
+
+// A child as the forge says it, and how it stands for you (`own`: its own
+// children, when they are known).
+export function childOf(c: EpicChild, me: string | null, own: Iterable<number> = []): Child {
+  const mine = isMine(c.assignees, me)
+  return { ...c, mine, ...stands(c, mine, own) }
+}
 
 // How an open child stands for you: yours, available, with others, or
 // blocked. Yours wins over blocked: you know what holds it up.
 export type Standing = 'yours' | 'available' | 'withOthers' | 'blocked'
 
-export function standing(c: Pick<EpicChild, 'mine' | 'blocked' | 'assignees'>): Standing {
+export function standing(c: Pick<Child, 'mine' | 'blocked' | 'assignees'>): Standing {
   if (c.mine) return 'yours'
   if (c.blocked) return 'blocked'
   return c.assignees.length > 0 ? 'withOthers' : 'available'
@@ -28,7 +58,7 @@ const ORDER: Record<Standing, number> = { yours: 0, available: 1, withOthers: 2,
 
 // The open children in the order the pane lists them: yours, available,
 // with others, blocked; each by number.
-export function openChildren(children: readonly EpicChild[]): EpicChild[] {
+export function openChildren(children: readonly Child[]): Child[] {
   return children
     .filter(c => c.state === 'open')
     .sort((a, b) => ORDER[standing(a)] - ORDER[standing(b)] || a.number - b.number)
@@ -36,7 +66,7 @@ export function openChildren(children: readonly EpicChild[]): EpicChild[] {
 
 export type Tally = { closed: number; total: number } & Record<Standing, number>
 
-export function tally(children: readonly EpicChild[]): Tally {
+export function tally(children: readonly Child[]): Tally {
   const t: Tally = { closed: 0, total: children.length, yours: 0, available: 0, withOthers: 0, blocked: 0 }
   for (const c of children) {
     if (c.state === 'closed') t.closed++
@@ -75,7 +105,7 @@ export function forYou(t: Tally): { text: string; color?: string }[] {
 // open epic in view holds as a child. An epic in a loop of epics, held only
 // from within the loop, would show nowhere: the lowest such number shows at
 // the top, and what it reaches under it.
-export function roots(open: readonly { number: number; children: readonly EpicChild[] | null }[]): Set<number> {
+export function roots(open: readonly { number: number; children: readonly Child[] | null }[]): Set<number> {
   const inView = new Map(open.map(e => [e.number, e]))
   const under = (n: number) =>
     (inView.get(n)?.children ?? []).filter(c => c.state === 'open' && inView.has(c.number)).map(c => c.number)
@@ -98,7 +128,7 @@ export function roots(open: readonly { number: number; children: readonly EpicCh
 
 // A milestone's issues as its tree starts: its open epics that no other open
 // epic in it holds, the issues no open epic in it holds, and its closed epics.
-export function inMilestone<T extends EpicChild & { children?: EpicChild[] | null }>(
+export function inMilestone<T extends Child & { children?: Child[] | null }>(
   issues: readonly T[],
 ): { epics: T[]; plain: T[]; closedEpics: T[] } {
   const open = issues.filter(i => i.children !== undefined && i.state === 'open')
@@ -120,7 +150,7 @@ export type Folding = 'folded' | 'unfolded' | 'shown above'
 // how many children are closed; or that its children are unknown, none, or
 // still loading.
 export type TreeLine =
-  | { kind: 'child'; child: EpicChild; depth: number; fold: Folding | null; count: { closed: number; total: number } | null }
+  | { kind: 'child'; child: Child; depth: number; fold: Folding | null; count: { closed: number; total: number } | null }
   | { kind: 'closed'; depth: number; closed: number }
   | { kind: 'unknown' | 'none' | 'loading'; depth: number }
 
@@ -133,13 +163,13 @@ export type TreeLine =
 // folded whose count is not known, one level ahead.
 export function tree(
   top: readonly Epic[],
-  kids: (n: number) => readonly EpicChild[] | null | undefined,
+  kids: (n: number) => readonly Child[] | null | undefined,
   unfolded: ReadonlySet<number>,
   epics: ReadonlySet<number>,
 ): { lines: Map<number, TreeLine[]>; missing: number[] } {
   const seen = new Set<number>()
   const missing = new Set<number>()
-  const under = (children: readonly EpicChild[] | null | undefined, depth: number, n: number): TreeLine[] => {
+  const under = (children: readonly Child[] | null | undefined, depth: number, n: number): TreeLine[] => {
     if (children === undefined) {
       missing.add(n)
       return [{ kind: 'loading', depth }]
@@ -149,10 +179,8 @@ export function tree(
     const lines: TreeLine[] = []
     // A child's own children never count as what blocks it.
     const unblocked = children.map(c => {
-      const own = new Set((kids(c.number) ?? []).map(k => k.number))
-      if (own.size === 0 || !c.blockedBy.some(n => own.has(n))) return c
-      const blockedBy = c.blockedBy.filter(n => !own.has(n))
-      return { ...c, blockedBy, blocked: blockedBy.length > 0 }
+      const s = stands(c, c.mine, (kids(c.number) ?? []).map(k => k.number))
+      return s.blockedBy.length === c.blockedBy.length ? c : { ...c, ...s }
     })
     for (const c of openChildren(unblocked)) {
       const own = kids(c.number)

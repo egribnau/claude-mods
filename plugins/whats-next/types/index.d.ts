@@ -161,16 +161,13 @@ export type Detail =
   | { kind: 'ok'; issue: IssueDetail; error?: string; parent?: (Ref & { epic: boolean }) | null; blocked?: boolean; children?: Ref[] | null }
   | { kind: 'error'; number: number; message: string }
 
-// An open issue an epic depends on, as the Epics pane lists it. `mine`: it
-// is assigned to you; `assignees`: the logins it is assigned to; `blocked`:
-// it has open dependencies of its own.
+// An issue an epic holds, as the forge says it: `assignees`: the logins it
+// is assigned to; `blockedBy`: the open issues it waits on.
 export type EpicChild = {
   number: number
   title: string
   state: 'open' | 'closed'
   assignees: string[]
-  mine: boolean
-  blocked: boolean
   // For its second line, as in What's next: labels, milestone, when it was
   // opened, and the open issues it waits on.
   labels: { name: string; color: string }[]
@@ -184,11 +181,16 @@ export type EpicChild = {
   subIssues?: { closed: number; total: number }
 }
 
+// A child and how it stands for you (hooks/epics.ts, `stands`): `mine`: it
+// is assigned to you; `blocked`: it waits on an open issue that counts, and
+// `blockedBy` is those only.
+export type Child = EpicChild & { mine: boolean; blocked: boolean }
+
 // An issue with the Epic label. Its children are the issues it depends on;
 // null when Forgejo would not say, or for a closed epic, which shows none.
 // An open issue of a milestone, as the Milestones pane lists it; an epic
 // carries its children (null when the tracker would not say).
-export type MilestoneIssue = EpicChild & { children?: EpicChild[] | null }
+export type MilestoneIssue = Child & { children?: Child[] | null }
 
 // `due`: the epic's own due date, from the lists. For its facts line, as
 // any issue row's (DRAWING-issue.md, The facts line): its labels, its
@@ -199,7 +201,7 @@ export type Epic = {
   title: string
   state: 'open' | 'closed'
   due: string | null
-  children: EpicChild[] | null
+  children: Child[] | null
   labels?: { name: string; color: string }[]
   milestone?: string | null
   created?: string
@@ -287,7 +289,7 @@ declare module 'claude-code' {
       unfolded: number[]
       // The children loaded of any issue in a tree, by number: null when the
       // forge would not say.
-      treeKids: Record<number, EpicChild[] | null>
+      treeKids: Record<number, Child[] | null>
       // In the milestone detail: whether Issues is folded shut, and whether
       // Description is folded open; set again each time a milestone opens.
       issuesFolded: boolean

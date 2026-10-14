@@ -785,7 +785,7 @@ test('epics: open and closed issues with the Epic label, any case, pull requests
   expect(asked.map(a => a.url)).toEqual([`${API}/issues?state=all&labels=Epic&per_page=100`])
 })
 
-test('children: sub-issues of this repo, yours, closed, and blocked asked only where GitHub says so', async () => {
+test('children: sub-issues of this repo, closed, and blocked asked only where GitHub says so', async () => {
   const asked: Asked[] = []
   const route = (u: URL): Reply => {
     const p = u.pathname
@@ -805,21 +805,23 @@ test('children: sub-issues of this repo, yours, closed, and blocked asked only w
     if (p === '/repos/boats/radar/issues/15/dependencies/blocked_by') return { status: 200, body: [dep(9, 'open'), dep(8, 'closed')] }
     return NOT_FOUND
   }
-  const kids = await github(fakeSend(route, asked), R, 't', null).children(20, 'alice')
-  expect(kids?.map(k => [k.number, k.state, k.mine, k.blocked, k.blockedBy, k.assignees])).toEqual([
-    [12, 'open', true, false, [], ['alice']],
-    [14, 'open', false, false, [], []],
-    [15, 'open', false, true, [9], []],
-    [16, 'open', false, false, [], ['jdoe']],
-    [22, 'closed', false, false, [], []],
+  const kids = await github(fakeSend(route, asked), R, 't', null).children(20)
+  expect(kids?.map(k => [k.number, k.state, k.blockedBy, k.assignees])).toEqual([
+    [12, 'open', [], ['alice']],
+    [14, 'open', [], []],
+    [15, 'open', [9], []],
+    [16, 'open', [], ['jdoe']],
+    [22, 'closed', [], []],
   ])
   expect(kids?.[1]).toEqual(expect.objectContaining({ labels: [{ name: 'bug', color: 'd73a4a' }], milestone: 'v1.2', created: '2026-09-10T09:00:00Z' }))
-  // Yours is never checked; only #15 said open issues block it.
+  // Only #12 and #15 said open issues block them, and the closed #22 is not
+  // asked; whether #12 being yours counts is for the caller to weigh.
   expect(asked.map(a => new URL(a.url).pathname)).toEqual([
     '/repos/boats/radar/issues/20/sub_issues',
+    '/repos/boats/radar/issues/12/dependencies/blocked_by',
     '/repos/boats/radar/issues/15/dependencies/blocked_by',
   ])
-  expect(await github(fakeSend(() => NOT_FOUND), R, 't', null).children(20, 'alice')).toBeNull()
+  expect(await github(fakeSend(() => NOT_FOUND), R, 't', null).children(20)).toBeNull()
 })
 
 const EPICS_PANE = { ...PANE, requestId: 'next-epics', props: { ...PANE.props, title: 'Epics' } } as const
@@ -829,7 +831,7 @@ test('children: each with its own sub-issue count, where GitHub gives one', asyn
     u.pathname === '/repos/boats/radar/issues/20/sub_issues'
       ? { status: 200, body: [{ ...sub(14), sub_issues_summary: { total: 3, completed: 1, percent_completed: 33 } }, sub(15)] }
       : NOT_FOUND
-  const kids = await github(fakeSend(route), R, 't', null).children(20, 'alice')
+  const kids = await github(fakeSend(route), R, 't', null).children(20)
   expect(kids?.map(k => k.subIssues)).toEqual([{ closed: 1, total: 3 }, undefined])
 })
 

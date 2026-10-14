@@ -237,10 +237,9 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     },
 
     // An issue's children are its sub-issues in this repo, an epic's or any
-    // other's, each with how many sub-issues it has itself. Each open one not
-    // assigned to `me` is checked for what blocks it, with a request only
-    // when it says open issues block it.
-    async children(n: number, me: string | null): Promise<EpicChild[] | null> {
+    // other's, each with how many sub-issues it has itself. Each open one is checked
+    // for what blocks it, with a request only when it says open issues block it.
+    async children(n: number): Promise<EpicChild[] | null> {
       const raw = await fetchAll<RawIssue>(`${api}/issues/${n}/sub_issues`, 'sub-issues').catch(() => null)
       if (!raw) return null
       return Promise.all(
@@ -249,9 +248,8 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
           .map(async (c): Promise<EpicChild> => {
             const assignees = (c.assignees ?? []).map(a => a.login)
             const open = c.state !== 'closed'
-            const mine = me !== null && assignees.includes(me)
             const blockedBy =
-              open && !mine && (c.issue_dependencies_summary?.blocked_by ?? 0) > 0
+              open && (c.issue_dependencies_summary?.blocked_by ?? 0) > 0
                 ? ((await dependencies(c.number, 'blocked_by')) ?? []).filter(d => d.state === 'open').map(d => d.number)
                 : []
             const row = toRow(c)
@@ -260,8 +258,6 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
               title: c.title,
               state: open ? 'open' : 'closed',
               assignees,
-              mine,
-              blocked: blockedBy.length > 0,
               labels: row.labels,
               milestone: row.milestone,
               created: row.created,

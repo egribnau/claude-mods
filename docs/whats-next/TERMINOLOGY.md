@@ -36,6 +36,11 @@ Each open issue is exactly one of these, in this order of precedence.
 | with others | Assigned to someone else and not blocked. |
 | available | Assigned to no one and not blocked: free to take. |
 
+Decided once, in `stands` (plugins/whats-next/hooks/epics.ts): the adapters
+return what the forge says (assignees, open blockers); `stands` turns that
+into yours or blocked, with the blockers that count: none when it is yours or
+closed, and an epic's own children left out.
+
 `Nothing available`: What's next has no available issue, because every
 free one is blocked.
 
