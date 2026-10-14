@@ -217,8 +217,9 @@ for (const args of ['epics', 'e', ' E ']) {
     const opened: Opened[] = []
     world(on, REPO, [], opened)
     const out = await $.command.run(run(args))
-    expect(opened.at(-1)).toEqual({ id: 'next-epics', title: 'Epics', focus: true })
-    expect(opened.some(p => p.id === 'next')).toBe(true)
+    // Milestones opens after Epics and stays behind it, which holds the keyboard.
+    expect(opened.filter(p => p.focus)).toEqual([{ id: 'next-epics', title: 'Epics', focus: true }])
+    expect(opened.findIndex(p => p.id === 'next')).toBeLessThan(opened.findIndex(p => p.focus))
     expect(out).toEqual(expect.objectContaining({ text: 'Epics for boats/radar: 5 open, showing v1.2.' }))
   })
 }
@@ -231,14 +232,29 @@ test('/next epics with no open epic opens nothing and says so', TOKEN, async ($,
   expect(out).toEqual(expect.objectContaining({ text: 'No open epics in boats/radar.' }))
 })
 
+test('/next epics with open milestones but no open epic opens nothing either: Milestones waits for /next', TOKEN, async ($, on) => {
+  const opened: Opened[] = []
+  world(on, { epics: [], milestones: REPO.milestones }, [], opened)
+  const out = await $.command.run(run('epics'))
+  expect(opened).toEqual([])
+  expect(out).toEqual(expect.objectContaining({ text: 'No open epics in boats/radar.' }))
+})
+
+test("/next epics opens the tabs in /next's order: What's next, Epics, Milestones", TOKEN, async ($, on) => {
+  const opened: Opened[] = []
+  world(on, REPO, [], opened)
+  await $.command.run(run('epics'))
+  expect(opened.map(p => p.id)).toEqual(['next', 'next-epics', 'next-milestones'])
+})
+
 // A pane opened new comes in front, so What's next is opened again with the
-// focus after Epics, the only way to bring it back in front.
+// focus after Epics and Milestones, the only way to bring it back in front.
 for (const args of ['', 'next', 'n']) {
-  test(`/next${args ? ` ${args}` : ""} opens Epics, then brings What's next in front`, TOKEN, async ($, on) => {
+  test(`/next${args ? ` ${args}` : ""} opens Epics and Milestones, then brings What's next in front`, TOKEN, async ($, on) => {
     const opened: Opened[] = []
     world(on, REPO, [], opened)
     const out = await $.command.run(run(args))
-    expect(opened.map(p => p.id).slice(-2)).toEqual(['next-epics', 'next'])
+    expect(opened.map(p => p.id)).toEqual(['next', 'next', 'next-epics', 'next-milestones', 'next'])
     expect(opened.at(-1)).toEqual({ id: 'next', title: "What's next", focus: true })
     expect(opened.filter(p => p.focus)).toHaveLength(1)
     expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: no open issues." }))

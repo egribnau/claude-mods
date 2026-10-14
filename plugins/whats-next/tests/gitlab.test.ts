@@ -783,7 +783,7 @@ test('issue: a closed one stays closed, and a missing one throws', async () => {
   expect(got.author).toBe('someone')
   expect(got.comments).toBe(0)
   expect(got.milestone).toBe(null)
-  await expect(t.issue(404, { time: false, deps: false, epics: false })).rejects.toThrow('#404: HTTP 404')
+  await expect(t.issue(404, { time: false, deps: false, epics: false })).rejects.toThrow('HTTP 404')
 })
 
 // Assign and close. The ids What's Next saw are kept per host for the whole run, so

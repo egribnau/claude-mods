@@ -489,7 +489,7 @@ test('says so when the issue cannot be read', TOKEN, async ($, on) => {
   world(on, {})
   const ui = await opened($)
 
-  expect(await texts(ui)).toContain('Could not load #29: #29: HTTP 404.')
+  expect(await texts(ui)).toContain('Could not load #29: HTTP 404.')
   await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
 })
 

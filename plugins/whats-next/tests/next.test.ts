@@ -887,6 +887,34 @@ test('Next follows on in the epic of the issue you closed last; the Queue says e
   expect(asked.filter(u => new URL(u).pathname.endsWith('/issues/30/dependencies'))).toHaveLength(1)
 })
 
+// The pane falls back to its list only for an issue it listed open before
+// the load and lists open no more (closed, or taken by someone else).
+test('Refresh keeps the Last closed issue open: a closed issue opened on purpose is no reason to fall back to the list', TOKEN, async ($, on) => {
+  const clock = world(on, WORKED)
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'last-closed-open' })
+  expect(await texts(ui)).toContain('Could not load #41: HTTP 404.')
+  await ui.press({ key: 'refresh' })
+  expect(await texts(ui)).toContain('Could not load #41: HTTP 404.')
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
+})
+
+test('Refresh falls back to the list once the issue shown is no longer yours or available', TOKEN, async ($, on) => {
+  const w: World = { ...WORKED }
+  world(on, w)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'pick-43' })
+  await expect(ui.find({ key: 'back' })).resolves.toBeDefined()
+  // Someone else took #43 meanwhile.
+  w.open = [[...(WORKED.open?.[0] ?? []).filter(i => (i as { number: number }).number !== 43), issue(43, '2026-09-25T09:00:00Z', { assignees: ['jdoe'] })]]
+  await ui.press({ key: 'refresh' })
+  await expect(ui.find({ key: 'back' })).resolves.toBeUndefined()
+  expect(await texts(ui)).toContain(rule('Next · in epic #30'))
+})
+
 test('nothing closed by you: no Last closed, and the rules name no scope', TOKEN, async ($, on) => {
   world(on, { ...WORKED, closed: [] })
   await $.command.run(RUN)

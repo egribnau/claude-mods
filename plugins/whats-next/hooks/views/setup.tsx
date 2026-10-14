@@ -189,13 +189,11 @@ async function stepsOf($: EngineInterface, p: Pane) {
       const why =
         s.actions.kind === 'unknown'
           ? 'unknown, scopes not listed'
-          : s.actions.reason === 'later'
-            ? `read only on ${t?.name ?? 'this forge'} for now`
-            : s.actions.reason === 'scope'
-              ? `read only, token lacks ${t?.writeScope ?? 'write:issue'}`
-              : s.actions.reason === 'role'
-                ? `read only, ${s.login} is below Reporter here`
-                : `read only, ${s.login} may not push here`
+          : s.actions.reason === 'scope'
+            ? `read only, token lacks ${t?.writeScope ?? 'write:issue'}`
+            : s.actions.reason === 'role'
+              ? `read only, ${s.login} is below Reporter here`
+              : `read only, ${s.login} may not push here`
       return d.line(`step-${step}`, `· ${LABEL[step].padEnd(8)}${why}`, { color: 'inactive' })
     }
     return d.line(`step-${step}`, `${mark} ${LABEL[step].padEnd(8)}${text}`, { color })

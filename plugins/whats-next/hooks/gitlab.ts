@@ -18,11 +18,14 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
   const headers = { 'PRIVATE-TOKEN': token ?? '', Accept: 'application/json' }
   const get = (url: string) => send(url, { method: 'GET', headers })
   const ids = idsAt(r.host)
+  // The login the token belongs to: null until check ran.
+  let owner: string | null = null
   // Whether a linked issue's web_url is in this project: links may reach
   // into other projects, which What's Next leaves out. Newer GitLab names
-  // an issue a work item in the URL.
-  const here = [`https://${r.host}/${slug}/-/issues/`, `https://${r.host}/${slug}/-/work_items/`]
-  const inProject = (url: string) => here.some(p => url.startsWith(p))
+  // an issue a work item in the URL. GitLab writes the project in its own
+  // case, which the origin may not match: both are compared lowercased.
+  const here = [`https://${r.host}/${slug}/-/issues/`, `https://${r.host}/${slug}/-/work_items/`].map(p => p.toLowerCase())
+  const inProject = (url: string) => here.some(p => url.toLowerCase().startsWith(p))
   const epicLabel = label.toLowerCase()
   const isEpic = (names: string[]) => names.some(l => l.toLowerCase() === epicLabel)
 
@@ -171,6 +174,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       if (!user.ok) return done({ kind: 'error', message: `/user: HTTP ${user.status}` })
       const me = JSON.parse(user.text) as { id?: number; username: string }
       const login = me.username
+      owner = login
       if (me.id !== undefined) ids.set(login, me.id)
 
       // GitLab EE says so in its metadata: only there can issues block
@@ -336,7 +340,7 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
       const ours = Array.isArray(linked) ? linked.filter(l => inProject(l.web_url)) : null
       ours?.forEach(remember)
       const of = (kind: RawLink['link_type']) => ours?.filter(l => l.link_type === kind).map(linkRef) ?? null
-      if (!res.ok) throw new Error(`#${n}: HTTP ${res.status}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const i = JSON.parse(res.text) as RawIssue
       remember(i)
       // Whether an open issue it names is itself blocked by an open issue
@@ -383,7 +387,9 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
     },
 
     // One assignee goes in assignee_id, which GitLab Free takes; several
-    // only in assignee_ids, which only its paid tiers allow. 0 is none.
+    // only in assignee_ids, which only its paid tiers allow. 0 is none. Free
+    // keeps only the first of assignee_ids, so the token's owner goes first:
+    // Assign Me on an issue held by someone else must not drop you.
     async assign(n: number, assignees: string[]): Promise<string | null> {
       const found: number[] = []
       for (const login of assignees) {
@@ -391,6 +397,8 @@ export function gitlab(send: Send, r: Repo, token: string | null, known: string 
         if (typeof id === 'string') return id
         found.push(id)
       }
+      const mine = owner === null ? undefined : ids.get(owner)
+      if (mine !== undefined && found.includes(mine)) found.sort((a, b) => Number(b === mine) - Number(a === mine))
       return put(n, found.length > 1 ? { assignee_ids: found } : { assignee_id: found[0] ?? 0 })
     },
     close: (n, closed) => put(n, { state_event: closed ? 'close' : 'reopen' }),

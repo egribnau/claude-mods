@@ -201,13 +201,11 @@ export async function issueView($: EngineInterface, p: Pane, f: Frame, r: Repo, 
     ]
     note = canAct
       ? undefined
-      : allowed.kind === 'read-only' && allowed.reason === 'later'
-        ? `What's Next cannot assign or close ${t?.name ?? 'its'} issues yet.`
-        : allowed.kind === 'read-only' && allowed.reason === 'role'
-          ? `Assign and close need Reporter or higher on ${slug(r)}.`
-          : allowed.kind === 'read-only' && allowed.reason === 'push'
-            ? `Assign and close need push rights on ${slug(r)}.`
-            : `Assign and close need a token with ${t?.writeScope ?? 'write:issue'}: the setup guide's steps make one.`
+      : allowed.kind === 'read-only' && allowed.reason === 'role'
+        ? `Assign and close need Reporter or higher on ${slug(r)}.`
+        : allowed.kind === 'read-only' && allowed.reason === 'push'
+          ? `Assign and close need push rights on ${slug(r)}.`
+          : `Assign and close need a token with ${t?.writeScope ?? 'write:issue'}: the setup guide's steps make one.`
     prompt = <Button key="prompt" label={d.say(ICON.work, 'Prompt')} hotkey="p" onPress={() => acts.workOn(i)} />
 
     // Closed: grey as a whole, number and title; blocked: the title dim.

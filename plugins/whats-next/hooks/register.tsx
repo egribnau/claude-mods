@@ -7,7 +7,7 @@ import { inMilestone } from './epics'
 import { configureCommand, type Forge, type TokenSetting } from './forge'
 import { ALL, filterWord, sameFilter } from './filter'
 import { changesSince, loadRepo, noteChange, type Known } from './load'
-import { checkForge, findRepo, readToken, trackerFor, type Tokens } from './setup'
+import { anyToken, checkForge, findRepo, trackerFor, type Tokens } from './setup'
 import { message, slug, type Send, type Tracker } from './tracker'
 import * as step from './where'
 import { issueOf } from './where'
@@ -93,12 +93,17 @@ let configDebug = false
 // installed from once session.start has read it off /config.
 let configure = configureCommand([])
 
+// The /config row key of What's Next's setting `field`: `whats-next.<field>`
+// from a folder, else `whats-next@<marketplace>.<field>`, and a marketplace
+// name may hold a dot (`configureCommand` reads the same keys).
+const settingKey = (field: string) => new RegExp(`^whats-next(@.*)?\\.${field}$`)
+
 // Saves the Icons choice: in /config where the session offers it, and in the
 // session's state so it shows at once.
 async function chooseIcons($: EngineInterface, value: 'icons' | 'text') {
   await update($, iconsChosen, () => value)
   const rows = await $.config.list()
-  const row = rows.find(r => /^whats-next(@[^.]*)?\.icons$/.test(r.key))
+  const row = rows.find(r => settingKey('icons').test(r.key))
   if (!row) return
   const done = await $.config.set({ key: row.key, value })
   if (done.deny !== undefined) $.ui.toast(`Icons not saved: ${done.deny}`)
@@ -108,7 +113,7 @@ async function chooseIcons($: EngineInterface, value: 'icons' | 'text') {
 async function chooseCompact($: EngineInterface, value: 'on' | 'off') {
   await update($, compactChosen, () => value)
   const rows = await $.config.list()
-  const row = rows.find(r => /^whats-next(@[^.]*)?\.compact$/.test(r.key))
+  const row = rows.find(r => settingKey('compact').test(r.key))
   if (!row) return
   const done = await $.config.set({ key: row.key, value })
   if (done.deny !== undefined) $.ui.toast(`Compact not saved: ${done.deny}`)
@@ -119,7 +124,7 @@ async function chooseCompact($: EngineInterface, value: 'on' | 'off') {
 // settings in.
 async function check($: EngineInterface): Promise<Repo | null> {
   await update($, setup, (): Setup => ({ kind: 'checking' }))
-  await update($, token, () => readToken(configTokens, 'Forgejo tokens', null).from)
+  await update($, token, () => anyToken(configTokens))
 
   const git = async (...args: string[]) => {
     const run = await $.process.run(['git', ...args]).catch(() => null)
@@ -139,7 +144,7 @@ async function check($: EngineInterface): Promise<Repo | null> {
     return null
   }
 
-  const checked = await checkForge(send($), r, configTokens, configLabel)
+  const checked = await checkForge(send($), r, configTokens, configLabel, forges.get(r.host))
   forges.set(r.host, checked.forge)
   await update($, token, () => checked.token)
   await update($, version, () => checked.version)
@@ -153,8 +158,11 @@ let known: Known | null = null
 
 // Asks the tracker for what the panes show: the open milestones, your open
 // issues, the repo's open issues, and the epics. Then the milestones, the
-// milestone filter, What's next and the epics follow.
+// milestone filter, What's next and the epics follow. What was known before
+// goes to What's next, which tells an issue that left the lists from one
+// that was never in them.
 async function load($: EngineInterface, r: Repo) {
+  const before = known
   if ((await read($, overview)).kind !== 'ok') await update($, overview, (): Overview => ({ kind: 'loading' }))
   if ((await read($, epics)).kind !== 'ok') await update($, epics, (): Epics => ({ kind: 'loading' }))
   const s = await read($, setup)
@@ -171,7 +179,7 @@ async function load($: EngineInterface, r: Repo) {
   await update($, milestones, () => loaded.milestones)
   await update($, closedMilestones, () => loaded.closedMilestones)
   await showFilter($)
-  if (issuesError === null) await showNext($)
+  if (issuesError === null) await showNext($, before)
   if (epicsError === null) await showEpics($)
   // The milestones folded open, and the one in its detail, are asked again;
   // the rest cost nothing.
@@ -253,16 +261,20 @@ async function showFilter($: EngineInterface) {
 // What the milestone filter is set to, All until it is loaded.
 const filterSet = async ($: EngineInterface): Promise<MilestoneFilter> => (await read($, filterShown))?.set ?? ALL
 
-// What's next within the milestone filter.
-async function showNext($: EngineInterface) {
+// What's next within the milestone filter. `before`: what was known before
+// a load; without it (the milestone filter switching) nothing left the lists.
+async function showNext($: EngineInterface, before: Known | null = null) {
   const k = known
   if (!k) return
   const next = await k.whatsNext(await filterSet($), await $.clock.now())
   await update($, overview, (): Overview => ({ kind: 'ok', ...next }))
-  // An issue that is closed, or now with others, closes: What's next shows.
+  // An issue the pane listed open before the load, and lists open no more
+  // (closed, or taken by someone else), closes: What's next shows. One it
+  // opened on purpose from elsewhere, the Last closed issue or one reached
+  // through Blocked by or Blocks, stays.
   await go($, PANE, w => {
     const n = issueOf(w)
-    return n !== null && !k.listedOpen(n) ? step.closed(w) : w
+    return n !== null && before !== null && before.listedOpen(n) && !k.listedOpen(n) ? step.closed(w) : w
   })
 }
 
@@ -388,8 +400,10 @@ async function backToList($: EngineInterface, pane: string) {
 }
 
 // Checks setup and, once it passes, loads What's next and the epics and,
-// where an issue is open, that issue again.
-async function refresh($: EngineInterface): Promise<Repo | null> {
+// where an issue is open, that issue again. The Epics and Milestones panes
+// follow what the load found (`followPane`), unless `follow` is off: /next
+// opens them itself, in its own order, once What's next is placed.
+async function refresh($: EngineInterface, follow = true): Promise<Repo | null> {
   issuesRead.clear()
   const r = await check($)
   if (r && (await read($, setup)).kind === 'ready') {
@@ -397,10 +411,10 @@ async function refresh($: EngineInterface): Promise<Repo | null> {
     const hadMilestones = ((await read($, milestones)) ?? []).length > 0
     await load($, r)
     const after = await read($, epics)
-    if (after.kind === 'ok') {
+    if (follow && after.kind === 'ok') {
       await followPane($, EPICS_PANE, 'Epics', before.kind === 'ok' && before.openEpics > 0, after.openEpics > 0)
     }
-    await followPane($, MILESTONES_PANE, 'Milestones', hadMilestones, ((await read($, milestones)) ?? []).length > 0)
+    if (follow) await followPane($, MILESTONES_PANE, 'Milestones', hadMilestones, ((await read($, milestones)) ?? []).length > 0)
     for (const pane of [PANE, EPICS_PANE, MILESTONES_PANE]) {
       const n = issueOf(await placeOf($, pane))
       if (n !== null) await loadDetail($, r, pane, n)
@@ -594,7 +608,7 @@ const paneClosed: Hook<'ui.close'> = async ($, e, next) => {
 // the session follows it, so the setting wins over an earlier choice.
 const settingChanged: Hook<'config.set'> = async ($, e, next) => {
   const done = await next(e)
-  const field = /^whats-next(?:@[^.]*)?\.(icons|compact)$/.exec(e.key)?.[1]
+  const field = settingKey('(icons|compact)').exec(e.key)?.[2]
   const value = String(e.value)
   if (field === 'icons' && (value === 'icons' || value === 'text' || value === 'ask')) {
     configIcons = value
@@ -714,9 +728,11 @@ async function runNext($: EngineInterface, name: string, word: string) {
   }
   // The milestone filter starts where you work again: a choice holds until /next.
   await update($, filterChosen, () => null)
-  // Epics alone opens nothing until it knows there are epics to show.
+  // Epics alone opens nothing until it knows there are epics to show. The
+  // load opens no pane of its own: the Epics and Milestones tabs come below,
+  // after What's next, so the tabs are in the same order whatever the word.
   if (want !== 'epics') await openNext("What's Next")
-  const r = await refresh($)
+  const r = await refresh($, false)
   const s = await read($, setup)
   const ep = await read($, epics)
   const hasEpics = ep.kind === 'ok' && ep.openEpics > 0

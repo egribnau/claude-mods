@@ -350,6 +350,7 @@ test('mine: asked by login, pull requests left out, labels keep their colour', a
       url: 'https://github.com/boats/radar/issues/12',
       body: 'Body of 12',
       updated: expect.any(String),
+      unblocks: 0,
     },
   ])
   await t.mine()
@@ -416,7 +417,7 @@ test('issue: a timeline that fails leaves comments, pull requests and commits un
     }),
   )
   expect(asked.map(a => a.url)).toEqual([`${API}/issues/12`, `${API}/issues/12/timeline?per_page=100`])
-  expect(t.issue(99, { time: false, deps: false, epics: false })).rejects.toThrow('#99: HTTP 404, Not Found')
+  await expect(t.issue(99, { time: false, deps: false, epics: false })).rejects.toThrow('HTTP 404, Not Found')
 })
 
 // The pane, on github.com
@@ -1017,4 +1018,13 @@ test('open: how many open issues wait on each comes with the list', async () => 
   const t = github(fakeSend(listRoute('/repos/boats/radar/issues', [[blocking, issue(38, '2026-09-02T00:00:00Z')]])), R, 'gh-x', null)
   const got = await t.open()
   expect(got.map(i => i.unblocks)).toEqual([2, 0])
+})
+
+test('mine: how many open issues wait on each comes with it when GitHub says so', async () => {
+  const withSummary = { ...issue(37, '2026-09-01T00:00:00Z'), issue_dependencies_summary: { blocked_by: 0, blocking: 2 } }
+  const without = { ...issue(38, '2026-09-02T00:00:00Z'), issue_dependencies_summary: undefined }
+  const t = github(fakeSend(listRoute('/repos/boats/radar/issues', [[withSummary, without]])), R, 'gh-x', null)
+  const got = await t.mine()
+  expect(got[0]?.unblocks).toBe(2)
+  expect(got[1]).not.toHaveProperty('unblocks')
 })

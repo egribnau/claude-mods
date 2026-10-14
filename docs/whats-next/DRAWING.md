@@ -130,7 +130,8 @@ words by `dueWords` (for a line that measures itself); `day`, `dueText`
 and `dueLook` are called from nowhere else. A place keeps only what is
 around it (` · ` before it, padding to its column).
 
-Its colour says how close it is:
+Its colour says how close it is, in calendar days counted in UTC (a due
+day is today all through that day, whatever the hour):
 
 - red once passed
 - amber within 7 days

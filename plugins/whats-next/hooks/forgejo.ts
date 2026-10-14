@@ -33,6 +33,10 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
   })
 
   // Every page of a list, 50 at a time; a page that fails names `what`.
+  // Forgejo caps the page size at the instance's own limit, so a short page
+  // is not always the last: when X-Total-Count is a number, paging goes on
+  // until that many are found, and an empty page ends it whatever the total
+  // says. Without the header, a page shorter than 50 is the last.
   async function fetchAll<T>(url: string, what: string): Promise<T[]> {
     const found: T[] = []
     for (let page = 1; ; page++) {
@@ -40,7 +44,12 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
       if (!res.ok) throw new Error(`${what}: HTTP ${res.status}`)
       const batch = JSON.parse(res.text) as T[]
       found.push(...batch)
-      if (batch.length < 50) break
+      const header = res.headers['x-total-count']?.trim()
+      const total = header ? Number(header) : NaN
+      if (batch.length === 0) break
+      if (Number.isFinite(total)) {
+        if (found.length >= total) break
+      } else if (batch.length < 50) break
     }
     return found
   }
@@ -189,10 +198,11 @@ export function forgejo(send: Send, r: Repo, token: string | null, label: string
     },
 
     // Forgejo's search covers every repo the token sees, so it is narrowed
-    // to this one.
+    // to this one. Forgejo answers with the canonical lowercase name, so the
+    // comparison ignores case.
     async mine(): Promise<IssueRow[]> {
       const found = await fetchAll<RawFound>(`${base}/repos/issues/search?assigned=true&state=open&type=issues`, 'your issues')
-      return found.filter(i => i.repository.full_name === slug).map(toRow)
+      return found.filter(i => i.repository.full_name.toLowerCase() === slug.toLowerCase()).map(toRow)
     },
 
     async open(): Promise<OpenIssue[]> {
@@ -461,8 +471,8 @@ async function loadIssue(get: Get, slug: string, n: number, features: Features):
     pages(get, `${at}/timeline`),
     features.time ? get(`${at}/times`) : none(),
   ])
-  if (!main) throw new Error(`#${n}: no answer`)
-  if (!main.ok) throw new Error(`#${n}: HTTP ${main.status}`)
+  if (!main) throw new Error('no answer')
+  if (!main.ok) throw new Error(`HTTP ${main.status}`)
   const i = main.json as RawIssue
 
   const said = list<RawComment>(comments)

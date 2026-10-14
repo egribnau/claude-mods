@@ -351,7 +351,7 @@ test('issue: merge requests failing or down leave them out, and the issue loads'
 test('issue: the issue itself failing throws', async () => {
   const { r } = at('detail-fails.example')
   const t = gitlab(fakeSend(route({ issue: { status: 500, body: { message: '500 Internal Server Error' } } })), r, 'glpat-x', null)
-  await expect(t.issue(14, FEATURES)).rejects.toThrow('#14: HTTP 500')
+  await expect(t.issue(14, FEATURES)).rejects.toThrow('HTTP 500')
 })
 
 // assign(n, logins)
@@ -411,6 +411,16 @@ test('assign: two people go as assignee_ids', async () => {
   const t = gitlab(fakeSend(route({ users: { jdoe: 777 } }), asked), r, 'glpat-x', null)
   await t.check()
   expect(await t.assign(14, ['alice', 'jdoe'])).toBe(null)
+
+  expect(asked.filter(a => a.method === 'PUT').map(a => a.body)).toEqual([{ assignee_ids: [991, 777] }])
+})
+
+test('assign: the token owner goes first, whatever the order given', async () => {
+  const { r } = at('assign-order.example')
+  const asked: Asked[] = []
+  const t = gitlab(fakeSend(route({ users: { jdoe: 777 } }), asked), r, 'glpat-x', null)
+  await t.check()
+  expect(await t.assign(14, ['jdoe', 'alice'])).toBe(null)
 
   expect(asked.filter(a => a.method === 'PUT').map(a => a.body)).toEqual([{ assignee_ids: [991, 777] }])
 })

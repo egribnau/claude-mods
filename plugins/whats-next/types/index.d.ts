@@ -35,9 +35,8 @@ export type Features = { time: boolean; deps: boolean; epics: boolean }
 // Whether What's Next may assign and close issues: the token needs write:issue (on
 // GitLab api) and you push rights on the repo (on GitLab Reporter or
 // higher, `role`). `unknown`: the forge would not list the token's scopes,
-// so the buttons show and the forge has the last word. `later`: What's Next cannot
-// assign or close on this forge yet.
-export type Actions = { kind: 'ok' } | { kind: 'read-only'; reason: 'scope' | 'push' | 'role' | 'later' } | { kind: 'unknown' }
+// so the buttons show and the forge has the last word.
+export type Actions = { kind: 'ok' } | { kind: 'read-only'; reason: 'scope' | 'push' | 'role' } | { kind: 'unknown' }
 
 // One open issue in this repo, as the overview lists it.
 export type IssueRow = {

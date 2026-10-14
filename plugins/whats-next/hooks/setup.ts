@@ -35,6 +35,16 @@ export function readToken(tokens: Tokens, setting: TokenSetting, host: string | 
   return t ? { value: t.value, from: { setting, host: t.host ? host : null } } : { value: null, from: null }
 }
 
+// Where a token is from while the host is not known yet (no repo): the first
+// of the four settings that has one, in the order of the settings.
+export function anyToken(tokens: Tokens): TokenSource {
+  for (const setting of ['Forgejo tokens', 'GitLab.com token', 'Private GitLab token', 'GitHub token'] as const) {
+    const found = readToken(tokens, setting, null)
+    if (found.value !== null) return found.from
+  }
+  return null
+}
+
 // The GitLab token for `host`. gitlab.com's comes from GitLab.com token, else
 // from a `gitlab.com=` pair in Private GitLab token, as older setups have it,
 // never from that setting's bare token. Any other host's comes from Private
@@ -102,9 +112,11 @@ export async function findRepo(
 export type Found = { forge: Forge; token: TokenSource; version: string | null; setup: Setup; tracker: Tracker | null }
 
 // Steps Forge, Token, Access and Actions for `r`: the forge at its host, then
-// the tracker's own steps: a token, and the token reading the repo.
-export async function checkForge(send: Send, r: Repo, tokens: Tokens, label: string): Promise<Found> {
-  const forge = await detect(send, r.host)
+// the tracker's own steps: a token, and the token reading the repo. A forge
+// already found at the host (`known`) is used as it is, so a check again does
+// not ask the host what it is; one that was not recognised is asked again.
+export async function checkForge(send: Send, r: Repo, tokens: Tokens, label: string, known?: Forge): Promise<Found> {
+  const forge = known && known.kind !== 'unknown' ? known : await detect(send, r.host)
   if (forge.kind === 'unknown') {
     return { forge, token: null, version: null, setup: { kind: 'not-forgejo', reason: forge.reason, detail: forge.detail }, tracker: null }
   }

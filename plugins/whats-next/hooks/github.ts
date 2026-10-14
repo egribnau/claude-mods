@@ -174,7 +174,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
     async mine(): Promise<IssueRow[]> {
       const me = await login()
       const found = await fetchAll<RawIssue>(`${api}/issues?state=open&assignee=${encodeURIComponent(me)}`, 'your issues')
-      return found.filter(isIssue).map(toRow)
+      return found.filter(isIssue).map(withUnblocks)
     },
 
     // How many open issues block each one is kept, so blockers asks only
@@ -186,8 +186,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
       blockedByRepo.set(api, counts)
       // How many open issues wait on each comes with it too.
       return found.filter(isIssue).map(i => ({
-        ...toRow(i),
-        ...(i.issue_dependencies_summary?.blocking !== undefined && { unblocks: i.issue_dependencies_summary.blocking }),
+        ...withUnblocks(i),
         assignees: (i.assignees ?? []).map(a => a.login),
       }))
     },
@@ -291,7 +290,7 @@ export function github(send: Send, r: Repo, token: string | null, known: string 
         features.deps ? dependencies(n, 'blocked_by') : null,
         features.deps ? dependencies(n, 'blocking') : null,
       ])
-      if (!res.ok) throw new Error(`#${n}: ${refusal(res)}`)
+      if (!res.ok) throw new Error(refusal(res))
       const i = JSON.parse(res.text) as RawIssue
       const said = timeline?.filter(e => e.event === 'commented') ?? null
       const pulls: Ref[] | null = timeline
@@ -481,6 +480,12 @@ const toRow = (i: RawIssue): IssueRow => ({
   url: i.html_url,
   body: i.body ?? '',
   updated: i.updated_at ?? i.created_at,
+})
+
+// An issue as a row, with how many open issues wait on it when GitHub says.
+const withUnblocks = (i: RawIssue): IssueRow => ({
+  ...toRow(i),
+  ...(i.issue_dependencies_summary?.blocking !== undefined && { unblocks: i.issue_dependencies_summary.blocking }),
 })
 
 // One event on an issue's timeline: a comment, another issue or pull

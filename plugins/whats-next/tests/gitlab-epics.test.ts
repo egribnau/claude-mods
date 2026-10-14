@@ -831,3 +831,17 @@ test("GitLab: an epic's detail lists its related issues under Children, the clos
   expect(all.some(t => t.includes('#5 ') || t.includes('#25'))).toBe(false)
   expect(all.some(t => ERROR.test(t))).toBe(false)
 })
+
+test('members: an origin in another case than the project path still finds the links', async () => {
+  const h = 'members-case.example'
+  // The origin says Boats/Radar; GitLab's web_url has the canonical boats/radar.
+  const r: Repo = { host: h, owner: 'Boats', name: 'Radar' }
+  const inner = route({ links: { 20: epicLinks(h) } })
+  const mixed = (u: URL): Reply => {
+    const url = new URL(u.href)
+    url.pathname = url.pathname.replace('Boats%2FRadar', 'boats%2Fradar')
+    return inner(url)
+  }
+  const t = gitlab(fakeSend(mixed), r, 'glpat-x', null, 'Epic')
+  expect((await t.members(20))?.sort((a, b) => a - b)).toEqual([10, 33, 37, 44, 51])
+})

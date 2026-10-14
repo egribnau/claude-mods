@@ -41,9 +41,10 @@ const ISSUE = {
   repository: { full_name: 'boats/radar' },
 }
 
-function row(value: string, field = 'icons', options = ['ask', 'icons', 'text']): ConfigRow {
+// A /config row of What's Next's, installed from `marketplace`.
+function row(value: string, field = 'icons', options = ['ask', 'icons', 'text'], marketplace = 'egribnau-mods'): ConfigRow {
   return {
-    key: `whats-next@egribnau-mods.${field}`,
+    key: `whats-next@${marketplace}.${field}`,
     label: field,
     kind: 'choice',
     value,
@@ -53,7 +54,7 @@ function row(value: string, field = 'icons', options = ['ask', 'icons', 'text'])
   } as unknown as ConfigRow
 }
 
-function world(on: On, set: { key: string; value: unknown }[] = [], offered = true) {
+function world(on: On, set: { key: string; value: unknown }[] = [], offered = true, marketplace = 'egribnau-mods') {
   mock.clock(on)
   on('process.run', (_$, e) => {
     const cmd = e.argv.join(' ')
@@ -80,7 +81,7 @@ function world(on: On, set: { key: string; value: unknown }[] = [], offered = tr
               : { full_name: 'boats/radar', open_issues_count: 1 }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
   })
-  on('config.list', () => ({ value: offered ? [row('ask'), row('ask', 'compact', ['ask', 'on', 'off'])] : [] }))
+  on('config.list', () => ({ value: offered ? [row('ask', 'icons', undefined, marketplace), row('ask', 'compact', ['ask', 'on', 'off'], marketplace)] : [] }))
   on('config.set', (_$, e) => {
     set.push({ key: e.key, value: e.value })
     return { value: e.value }
@@ -143,6 +144,16 @@ test('Keep Text saves the setting and the buttons keep their words', { options: 
   expect(await label(ui, 'refresh')).toBe('Refresh')
   await ui.press({ key: 'pick-29' })
   expect(await label(ui, 'prompt')).toBe('Prompt')
+})
+
+test('a marketplace name with a dot in it still names the row the choice is saved in', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {
+  const set: { key: string; value: unknown }[] = []
+  world(on, set, true, 'alice.mods')
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'keep-text' })
+
+  expect(set).toEqual([{ key: 'whats-next@alice.mods.icons', value: 'text' }])
 })
 
 test('where /config offers no Icons row, the choice holds for the session', { options: { token: 'secret', compact: 'off' } }, async ($, on) => {

@@ -7,9 +7,16 @@ export function day(iso: string, now: number): string {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}${year}`
 }
 
+// Calendar days from today to a due date, both counted in UTC as `day()`
+// does: a due day is today all through that day, whatever the hour or the
+// time the date carries (a date alone is midnight UTC).
+function daysTo(iso: string, now: number): number {
+  return Math.floor(Date.parse(iso) / 86400000) - Math.floor(now / 86400000)
+}
+
 // A due date and how far off it is, and whether it has passed.
 export function dueText(iso: string, now: number): { text: string; passed: boolean } {
-  const days = Math.round((Date.parse(iso) - now) / 86400000)
+  const days = daysTo(iso, now)
   const when =
     days === 0 ? 'today' : days === 1 ? 'tomorrow' : days > 0 ? `in ${days} days` : days === -1 ? 'yesterday' : `${-days} days ago`
   return { text: `${day(iso, now)}, ${when}`, passed: days < 0 }
@@ -17,7 +24,7 @@ export function dueText(iso: string, now: number): { text: string; passed: boole
 
 // How a due date stands: passed, within 7 days, or later.
 export function dueSoon(iso: string, now: number): 'passed' | 'soon' | 'later' {
-  const days = Math.round((Date.parse(iso) - now) / 86400000)
+  const days = daysTo(iso, now)
   return days < 0 ? 'passed' : days <= 7 ? 'soon' : 'later'
 }
 

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Forge } from '../hooks/forge'
-import { checkForge, findRepo, parseRemote, readToken, trackerFor, type Tokens } from '../hooks/setup'
+import { anyToken, checkForge, findRepo, parseRemote, readToken, trackerFor, type Tokens } from '../hooks/setup'
 import type { Send } from '../hooks/tracker'
 
 // Setup's steps and which token a host gets, on the module, with no pane.
@@ -131,4 +131,27 @@ test('checkForge: a known host is GitHub, with the GitHub token', async () => {
   expect(found.forge).toEqual({ kind: 'github', version: null })
   expect(found.token).toEqual({ setting: 'GitHub token', host: null })
   expect(found.tracker?.name).toBe('GitHub')
+})
+
+test('anyToken: the first token setting that has one, with no host; null when none has', () => {
+  expect(anyToken({ ...NONE, 'GitHub token': 'ghp_x' })).toEqual({ setting: 'GitHub token', host: null })
+  expect(anyToken({ ...NONE, 'GitHub token': 'ghp_x', 'Forgejo tokens': 'secret' })).toEqual({ setting: 'Forgejo tokens', host: null })
+  expect(anyToken(NONE)).toBeNull()
+})
+
+test('checkForge: a known forge is not asked for again', async () => {
+  const { send, seen } = forge({ '/api/v1/version': reply(200, { version: '12.0.1+gitea-1.22.0' }) })
+  const known: Forge = { kind: 'forgejo', version: '12.0.1+gitea-1.22.0' }
+  const found = await checkForge(send, R, NONE, 'epic', known)
+  expect(found.forge).toEqual(known)
+  expect(found.setup).toEqual({ kind: 'no-token' })
+  expect(seen.filter(s => s.url.includes('/api/v1/version'))).toEqual([])
+})
+
+test('checkForge: a forge known as unknown is detected again', async () => {
+  const { send, seen } = forge({ '/api/v1/version': reply(200, { version: '12.0.1+gitea-1.22.0' }) })
+  const known: Forge = { kind: 'unknown', reason: 'other', detail: 'HTTP 404' } as Forge
+  const found = await checkForge(send, R, NONE, 'epic', known)
+  expect(found.forge.kind).toBe('forgejo')
+  expect(seen.filter(s => s.url.includes('/api/v1/version')).length).toBe(1)
 })

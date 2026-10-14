@@ -191,6 +191,30 @@ test('not a git repo, and no token: the token step says so too', async ($, on) =
   expect(all.some(t => t.includes('~/scratch is not a git repo'))).toBe(true)
 })
 
+test('not a git repo, with only a GitHub token: the token step is found', { options: { githubTokens: 'ghp_x', icons: 'text', compact: 'off' } }, async ($, on) => {
+  world(on, { inGit: false, pwd: '/home/jdoe/scratch' })
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = await texts(ui)
+
+  expect(all).toContain('✓ Token   from GitHub token')
+  expect(all.some(t => t.includes('~/scratch is not a git repo'))).toBe(true)
+})
+
+test('Refresh does not ask again what forge the host is', TOKEN, async ($, on) => {
+  const asked: World['asked'] = []
+  world(on, { asked })
+
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await texts(ui)
+  await ui.press({ key: 'refresh' })
+  await texts(ui)
+
+  expect(asked.filter(a => a.url.endsWith('/api/v1/version'))).toHaveLength(1)
+})
+
 test('a repo without origin', TOKEN, async ($, on) => {
   world(on, { remote: null })
 
