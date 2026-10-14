@@ -1,4 +1,5 @@
-import type { Epic, EpicChild } from '../types'
+import type { Epic, EpicChild, MilestoneFilter } from '../types'
+import { holds } from './filter'
 
 // How an open child stands for you: yours, available, with others, or
 // blocked. Yours wins over blocked: you know what holds it up.
@@ -208,36 +209,21 @@ export const dueFirst = (milestones: readonly MilestoneRow[]) =>
     (a, b) => (a.due === null ? 1 : 0) - (b.due === null ? 1 : 0) || (a.due ?? '').localeCompare(b.due ?? '') || a.title.localeCompare(b.title),
   )
 
-// What the milestone filter offers: each open milestone that has an open issue or an
-// epic, due first, then None when some has none, then All. The panes
-// start on the first milestone, or on All when there is none.
-export function pickerOptions(
-  milestones: readonly MilestoneRow[],
-  epics: readonly { milestone: string | null }[],
-): { value: string; label: string; due?: string | null }[] {
-  const options: { value: string; label: string; due?: string | null }[] = dueFirst(milestones)
-    .filter(m => epics.some(e => e.milestone === m.title))
-    .map(m => ({ value: `m:${m.title}`, label: m.title, due: m.due }))
-  if (epics.some(e => e.milestone === null)) options.push({ value: 'none', label: 'None' })
-  options.push({ value: 'all', label: 'All' })
-  return options
-}
-
 // The groups the milestone filter shows: one milestone's epics, those without a milestone,
 // or for All each open milestone's in the milestone filter's order and No milestone last.
 // Epics in a closed milestone show under none of them.
 export function groupsFor<T extends { milestone: string | null }>(
-  pick: string,
+  filter: MilestoneFilter,
   milestones: readonly MilestoneRow[],
   epics: readonly T[],
 ): { milestone: MilestoneRow | null; epics: T[] }[] {
   const groups: { milestone: MilestoneRow | null; epics: T[] }[] = []
   for (const m of dueFirst(milestones)) {
-    if (pick !== 'all' && pick !== `m:${m.title}`) continue
+    if (!holds(filter, m.title)) continue
     const mine = epics.filter(e => e.milestone === m.title)
     if (mine.length > 0) groups.push({ milestone: m, epics: mine })
   }
-  if (pick === 'all' || pick === 'none') {
+  if (holds(filter, null)) {
     const none = epics.filter(e => e.milestone === null)
     if (none.length > 0) groups.push({ milestone: null, epics: none })
   }

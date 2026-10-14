@@ -1,15 +1,16 @@
 import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
-import type { Comment, Detail, DetailFolds, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneIssue, Overview, Ref, Repo, Scope, Setup, TokenSource } from '../types'
-import { bar, dueFirst, forYou, inMilestone, markOf, openChildren, pickerOptions, standing, summary, tally, tree, type Folding, type Mark, type Standing, type TreeLine } from './epics'
+import type { Comment, Detail, DetailFolds, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneFilter, MilestoneIssue, Overview, Ref, Repo, Scope, Setup, TokenSource } from '../types'
+import { bar, dueFirst, forYou, inMilestone, markOf, openChildren, standing, summary, tally, tree, type Folding, type Mark, type Standing, type TreeLine } from './epics'
 import { HELP, type Look, type Sign } from './help'
 import { configureCommand, detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
 import { forgejo } from './forgejo'
 import { github } from './github'
 import { gitlab } from './gitlab'
 import { day, dueSoon, dueText, duration, readable, wrap } from './issue'
-import { blockedOutside, changesSince, childrenOf as childrenIn, epicTree, growTree, loadRepo, milestoneIssues, milestoneKnown, noteChange, parentRef, startingPick, whatsNext, type Memory } from './load'
+import { ALL, filterKey, filterWord, ofMilestone, sameFilter, within as withinFilter } from './filter'
+import { changesSince, loadRepo, noteChange, type Known } from './load'
 import { measure } from './measure'
 import { waitingText } from './next'
 import { message, withoutToken, type Send, type Tracker } from './tracker'
@@ -52,8 +53,8 @@ const msIssues = atom({ plugin: 'whats-next', key: 'milestoneIssues' } as const,
 const closedMilestones = atom({ plugin: 'whats-next', key: 'closedMilestones' } as const, [])
 const closedShown = atom({ plugin: 'whats-next', key: 'closedShown' } as const, false)
 const panesOpen = atom({ plugin: 'whats-next', key: 'panesOpen' } as const, [])
-const milestonePick = atom({ plugin: 'whats-next', key: 'milestonePick' } as const, null)
-const picker = atom({ plugin: 'whats-next', key: 'picker' } as const, null)
+const filterChosen = atom({ plugin: 'whats-next', key: 'filterChosen' } as const, null)
+const filterShown = atom({ plugin: 'whats-next', key: 'filterShown' } as const, null)
 const pickerOpen = atom({ plugin: 'whats-next', key: 'pickerOpen' } as const, false)
 const requests = atom({ plugin: 'whats-next', key: 'requests' } as const, null)
 
@@ -230,60 +231,52 @@ async function check($: EngineInterface): Promise<Repo | null> {
   return r
 }
 
-// The repo as loaded, kept until the next Refresh or /next.
-let memory: Memory | null = null
-
-// Whether the tracker turned a feature off; a setup check from older code
-// may not say, which counts as on.
-async function off($: EngineInterface, feature: 'deps' | 'epics'): Promise<boolean> {
-  const s = await read($, setup)
-  return s.kind === 'ready' && s.features[feature] === false
-}
+// What is known of the repo, built by each load and kept until the next
+// Refresh or /next; while a load asks again, the last one's.
+let known: Known | null = null
 
 // Asks the tracker for what the panes show: the open milestones, your open
 // issues, the repo's open issues, and the epics. Then the milestones, the
 // milestone filter, What's next and the epics follow.
 async function load($: EngineInterface, r: Repo) {
-  memory = null
   if ((await read($, overview)).kind !== 'ok') await update($, overview, (): Overview => ({ kind: 'loading' }))
   if ((await read($, epics)).kind !== 'ok') await update($, epics, (): Epics => ({ kind: 'loading' }))
   const s = await read($, setup)
-  const key = `${r.host}/${slug(r)}`
-  const loaded = await loadRepo(tracker($, r), !(await off($, 'epics')), changesSince(key, await $.clock.now()), s.kind === 'ready' ? s.login : null)
-  const issuesError = loaded.issuesError
-  const epicsError = loaded.epicsError
+  const ready = s.kind === 'ready'
+  const loaded = await loadRepo(tracker($, r), {
+    me: ready ? s.login : null,
+    features: ready ? s.features : { time: true, deps: true, epics: true },
+    changes: changesSince(`${r.host}/${slug(r)}`, await $.clock.now()),
+  })
+  const { issuesError, epicsError } = loaded
   if (issuesError !== null) await update($, overview, (): Overview => ({ kind: 'error', message: issuesError }))
   if (epicsError !== null) await update($, epics, (): Epics => ({ kind: 'error', message: epicsError }))
-  memory = loaded.memory
-  await update($, milestones, () => loaded.memory.milestones)
-  await update($, closedMilestones, () => loaded.memory.closedMilestones)
-  await showPicker($, r)
-  if (issuesError === null) await showNext($, r)
-  if (epicsError === null) await showEpics($, r)
+  known = loaded
+  await update($, milestones, () => loaded.milestones)
+  await update($, closedMilestones, () => loaded.closedMilestones)
+  await showFilter($)
+  if (issuesError === null) await showNext($)
+  if (epicsError === null) await showEpics($)
   // The milestones folded open, and the one in its detail, are asked again;
   // the rest cost nothing.
   await update($, msIssues, () => ({}))
   const asked = await read($, milestonesUnfolded)
   const inDetail = await read($, milestoneOpen)
-  for (const title of inDetail === null || asked.includes(inDetail) ? asked : [...asked, inDetail]) await showMilestone($, r, title)
+  for (const title of inDetail === null || asked.includes(inDetail) ? asked : [...asked, inDetail]) await showMilestone($, title)
 }
 
 // The open issues of milestone `title`, for the Milestones pane.
-async function showMilestone($: EngineInterface, r: Repo, title: string) {
-  if (!memory) return
-  const s = await read($, setup)
-  const me = s.kind === 'ready' ? s.login : null
-  const issues = await milestoneIssues(tracker($, r), memory, title, me, !(await off($, 'deps'))).catch(() => null)
-  await update($, msIssues, known => ({ ...known, [title]: issues }))
-  await showTree($, r)
+async function showMilestone($: EngineInterface, title: string) {
+  if (!known) return
+  const issues = await known.milestone(title)
+  await update($, msIssues, shown => ({ ...shown, [title]: issues }))
+  await showTree($)
 }
 
 // The children every tree shown needs, as far as it is folded open: the
 // Epics pane's, each milestone's folded open, and the one in its detail.
-async function showTree($: EngineInterface, r: Repo) {
-  if (!memory) return
-  const s = await read($, setup)
-  const me = s.kind === 'ready' ? s.login : null
+async function showTree($: EngineInterface) {
+  if (!known) return
   const ep = await read($, epics)
   const trees: Epic[][] = ep.kind === 'ok' ? [ep.groups.flatMap(g => g.epics)] : []
   const issuesOf = await read($, msIssues)
@@ -292,7 +285,7 @@ async function showTree($: EngineInterface, r: Repo) {
     const issues = issuesOf[title]
     if (issues) trees.push(inMilestone(issues).epics.map(e => ({ number: e.number, title: e.title, state: e.state, due: e.due, children: e.children ?? null })))
   }
-  const kids = await growTree(tracker($, r), memory, trees, new Set(await read($, unfolded)), me)
+  const kids = await known.grow(trees, new Set(await read($, unfolded)))
   await update($, treeKids, () => kids)
 }
 
@@ -300,9 +293,8 @@ async function showTree($: EngineInterface, r: Repo) {
 async function foldMilestone($: EngineInterface, title: string) {
   const was = await read($, milestonesUnfolded)
   await update($, milestonesUnfolded, () => (was.includes(title) ? was.filter(t => t !== title) : [...was, title]))
-  const r = await read($, repo)
-  if (!r || was.includes(title) || title in (await read($, msIssues))) return
-  await counted($, title, () => showMilestone($, r, title))
+  if (!known || was.includes(title) || title in (await read($, msIssues))) return
+  await counted($, title, () => showMilestone($, title))
 }
 
 // Opens milestone `title` in its detail, or the list again for null. Its
@@ -314,18 +306,16 @@ async function openMilestone($: EngineInterface, title: string | null) {
   await update($, issuesFolded, () => false)
   await update($, descriptionUnfolded, () => false)
   await startOver($, MILESTONES_PANE)
-  const r = await read($, repo)
-  if (!r || title === null || title in (await read($, msIssues))) return
-  await counted($, title, () => showMilestone($, r, title))
+  if (!known || title === null || title in (await read($, msIssues))) return
+  await counted($, title, () => showMilestone($, title))
 }
 
 // Closes milestone `m`, or opens it again, then shows the list, read again,
 // where it moved to Closed or back. A refusal keeps the detail open, shown
 // under its actions.
 async function closeMilestone($: EngineInterface, m: Milestone, closed: boolean) {
-  const r = await read($, repo)
-  if (!r) return
-  const why = await tracker($, r).closeMilestone(m, closed)
+  if (!known) return
+  const why = await known.tracker.closeMilestone(m, closed)
   if (why !== null) {
     await update($, milestoneError, () => `Could not ${closed ? 'close' : 'reopen'} ${m.title}: ${why.replace(/\.$/, '')}.`)
     return
@@ -336,55 +326,40 @@ async function closeMilestone($: EngineInterface, m: Milestone, closed: boolean)
 
 // The milestone filter's options from what is open, and what it is set to:
 // the person's choice while it is still offered, else where you work
-// (docs/whats-next/ORDERING.md), else the first milestone, else All.
-async function showPicker($: EngineInterface, r: Repo) {
-  if (!memory) return
-  const items = [...memory.mine, ...memory.free, ...memory.epics.filter(e => e.state === 'open')]
-  const options = pickerOptions(memory.milestones, items)
-  const wanted = await read($, milestonePick)
-  const s = await read($, setup)
-  const me = s.kind === 'ready' ? s.login : null
-  const pick = options.some(o => o.value === wanted)
-    ? (wanted as string)
-    : ((await startingPick(tracker($, r), memory, me, options)) ?? options.find(o => o.value.startsWith('m:'))?.value ?? 'all')
-  await update($, picker, () => ({ options, pick }))
+// (docs/whats-next/ORDERING.md).
+async function showFilter($: EngineInterface) {
+  if (!known) return
+  const options = known.options()
+  const wanted = await read($, filterChosen)
+  const set = options.find(o => sameFilter(wanted, o.filter))?.filter ?? (await known.startingFilter(options))
+  await update($, filterShown, () => ({ options, set }))
 }
 
+// What the milestone filter is set to, All until it is loaded.
+const filterSet = async ($: EngineInterface): Promise<MilestoneFilter> => (await read($, filterShown))?.set ?? ALL
+
 // What's next within the milestone filter.
-async function showNext($: EngineInterface, r: Repo) {
-  if (!memory) return
-  const known = memory
-  const pick = (await read($, picker))?.pick ?? 'all'
-  const s = await read($, setup)
-  const me = s.kind === 'ready' ? s.login : null
-  const next = await whatsNext(tracker($, r), known, pick, !(await off($, 'deps')), me, await $.clock.now())
+async function showNext($: EngineInterface) {
+  const k = known
+  if (!k) return
+  const next = await k.whatsNext(await filterSet($), await $.clock.now())
   await update($, overview, (): Overview => ({ kind: 'ok', ...next }))
   // An issue that is closed, or now with others, closes: What's next shows.
-  const shown = new Set([...known.mine, ...known.free].map(i => i.number))
-  await update($, memberOf(picked, { requestId: PANE }), n => (n !== null && shown.has(n) ? n : null))
+  await update($, memberOf(picked, { requestId: PANE }), n => (n !== null && k.listedOpen(n) ? n : null))
 }
 
 // The epics within the milestone filter, by milestone. What was shown stays
 // up while this loads, so the milestone filter does not vanish under the person's hand.
-async function showEpics($: EngineInterface, r: Repo) {
-  if (!memory) return
-  const known = memory
-  const openEpics = known.epics.filter(i => i.state === 'open').length
+async function showEpics($: EngineInterface) {
+  if (!known) return
+  const openEpics = known.openEpics.size
   if (openEpics === 0) {
     await update($, epics, (): Epics => ({ kind: 'ok', groups: [], openEpics, held: [] }))
     return
   }
-  // Who you are, from the setup check: the children assigned to you are yours.
-  const s = await read($, setup)
-  const me = s.kind === 'ready' ? s.login : null
-  const pick = (await read($, picker))?.pick ?? 'all'
-  try {
-    const shown = await epicTree(tracker($, r), known, pick, me, !(await off($, 'deps')))
-    await update($, epics, (): Epics => ({ kind: 'ok', ...shown, openEpics }))
-    await showTree($, r)
-  } catch (err) {
-    await update($, epics, (): Epics => ({ kind: 'error', message: message(err) }))
-  }
+  const shown = await known.epics(await filterSet($))
+  await update($, epics, (): Epics => ({ kind: 'ok', ...shown, openEpics }))
+  await showTree($)
 }
 
 // Folds issue `n` open or shut in Epics; open, the children it now shows
@@ -392,22 +367,19 @@ async function showEpics($: EngineInterface, r: Repo) {
 async function foldIssue($: EngineInterface, n: number) {
   const was = await read($, unfolded)
   await update($, unfolded, () => (was.includes(n) ? was.filter(x => x !== n) : [...was, n]))
-  const r = await read($, repo)
-  if (!r || was.includes(n)) return
-  await counted($, `#${n}`, () => showTree($, r))
+  if (!known || was.includes(n)) return
+  await counted($, `#${n}`, () => showTree($))
 }
 
 // Sets the milestone filter for both panes and closes its list.
-async function pickMilestone($: EngineInterface, value: string) {
+async function setFilter($: EngineInterface, filter: MilestoneFilter, label: string) {
   await update($, pickerOpen, () => false)
-  await update($, milestonePick, () => value)
-  const r = await read($, repo)
-  const label = (await read($, picker))?.options.find(o => o.value === value)?.label ?? value
-  if (!r) return
+  await update($, filterChosen, () => filter)
+  if (!known) return
   await counted($, label, async () => {
-    await showPicker($, r)
-    if ((await read($, overview)).kind === 'ok') await showNext($, r)
-    await showEpics($, r)
+    await showFilter($)
+    if ((await read($, overview)).kind === 'ok') await showNext($)
+    await showEpics($)
   })
 }
 
@@ -417,34 +389,33 @@ const issuesRead = new Map<string, IssueDetail>()
 
 // Reads issue `n` for the detail view of pane `pane`, or shows it from memory.
 async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) {
+  const k = known
+  if (!k) return
   const key = `${r.host}/${slug(r)}#${n}`
-  const known = issuesRead.get(key)
-  const s = await read($, setup)
-  const me = s.kind === 'ready' ? s.login : null
-  const features = s.kind === 'ready' ? s.features : { time: true, deps: true, epics: true }
+  const cached = issuesRead.get(key)
   // The issue it is a child of, from what the lists know: one request the
   // first time, none once Next has asked.
-  const parentOf = async () => (memory ? await parentRef(tracker($, r), memory, n, me, features.deps).catch(() => null) : null)
+  const parentOf = () => k.parent(n)
   // Whether it waits on an open issue that is not its own child, for its mark.
   const blockedOf = async (i: IssueDetail) => {
     const open = (i.blockedBy ?? []).filter(x => x.state === 'open').map(x => x.number)
-    if (i.state !== 'open' || (me !== null && i.assignees.includes(me))) return false
-    return memory ? await blockedOutside(tracker($, r), memory, n, open).catch(() => open.length > 0) : open.length > 0
+    if (i.state !== 'open' || (k.me !== null && i.assignees.includes(k.me))) return false
+    return k.blocked(n, open)
   }
   // The issues it holds, for its Children lines: an epic's, or on GitHub
   // any issue's sub-issues.
   const childrenOf = async (): Promise<Ref[] | null> => {
-    const all = memory ? await childrenIn(tracker($, r), memory, n, me).catch(() => null) : null
+    const all = await k.children(n)
     return all ? all.map(c => ({ number: c.number, title: c.title, state: c.state, assignees: c.assignees, blocked: c.blocked })) : null
   }
-  if (known) {
-    const [parent, blocked, children] = await Promise.all([parentOf(), blockedOf(known), childrenOf()])
-    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue: known, parent, blocked, children }))
+  if (cached) {
+    const [parent, blocked, children] = await Promise.all([parentOf(), blockedOf(cached), childrenOf()])
+    await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue: cached, parent, blocked, children }))
     return
   }
   await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'loading', number: n }))
   try {
-    const [issue, parent, children] = await Promise.all([tracker($, r).issue(n, features), parentOf(), childrenOf()])
+    const [issue, parent, children] = await Promise.all([k.issue(n), parentOf(), childrenOf()])
     const blocked = await blockedOf(issue)
     issuesRead.set(key, issue)
     // Another issue opened while this one loaded wins.
@@ -635,8 +606,9 @@ async function writeIssue(
   what: string,
 ): Promise<boolean> {
   const r = await read($, repo)
-  if (!r) return false
-  const why = await change(tracker($, r))
+  const k = known
+  if (!r || !k) return false
+  const why = await change(k.tracker)
   if (why !== null) {
     const error = `Could not ${what} #${n}: ${why.replace(/\.$/, '')}.`
     await update($, memberOf(detail, { requestId: pane }), (d): Detail => (d.kind === 'ok' ? { ...d, error } : d))
@@ -650,12 +622,7 @@ async function writeIssue(
   }
   // The issue as the change left it, read again unless a pane just did, so
   // the lists show the change even where the forge's lists lag it.
-  const s = await read($, setup)
-  const fresh =
-    issuesRead.get(key) ??
-    (await tracker($, r)
-      .issue(n, s.kind === 'ready' ? s.features : { time: true, deps: true, epics: true })
-      .catch(() => null))
+  const fresh = issuesRead.get(key) ?? (await k.issue(n).catch(() => null))
   if (fresh) noteChange(`${r.host}/${slug(r)}`, fresh, await $.clock.now())
   await load($, r)
   return true
@@ -663,10 +630,10 @@ async function writeIssue(
 
 // You on issue `i`, or off it; other assignees stay.
 async function assignMe($: EngineInterface, pane: string, i: IssueDetail, on: boolean): Promise<boolean> {
-  const s = await read($, setup)
-  if (s.kind !== 'ready') return false
-  const others = i.assignees.filter(a => a !== s.login)
-  const assignees = on ? [...others, s.login] : others
+  const me = known?.me
+  if (!me) return false
+  const others = i.assignees.filter(a => a !== me)
+  const assignees = on ? [...others, me] : others
   return writeIssue($, pane, i.number, t => t.assign(i.number, assignees), on ? 'assign' : 'unassign')
 }
 
@@ -697,7 +664,8 @@ async function workOn($: EngineInterface, i: DraftSource, take?: { pane: string;
   let refused = false
   if (take) {
     const s = await read($, setup)
-    if (s.kind === 'ready' && s.actions.kind !== 'read-only' && !take.issue.assignees.includes(s.login)) {
+    const me = known?.me
+    if (s.kind === 'ready' && s.actions.kind !== 'read-only' && me && !take.issue.assignees.includes(me)) {
       taken = await counted($, `assign #${i.number}`, () => assignMe($, take.pane, take.issue, true))
       refused = !taken
     }
@@ -1304,7 +1272,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // due date, its milestone (unless the list is that milestone's), its
   // labels and its age.
   const factsOf = (i: RowIssue, o: { blockedBy?: number[]; noMilestone?: boolean }): Part[] => {
-    const shownMilestone = !o.noMilestone && i.milestone !== null && pk?.pick !== `m:${i.milestone}`
+    const shownMilestone = !o.noMilestone && i.milestone !== null && !(shownFilter && sameFilter(shownFilter.set, ofMilestone(i.milestone)))
     return [
       ...(o.blockedBy && o.blockedBy.length > 0 ? [blockedPart(o.blockedBy.length)] : []),
       ...(waiting(i.number) > 0 ? [unblocksPart(waiting(i.number))] : []),
@@ -1375,7 +1343,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // not asked yet), and the repo's open epics.
   const loadedKids = await read($, treeKids)
   const kidsOf = (n: number) => (n in loadedKids ? loadedKids[n] : undefined)
-  const openEpicNumbers = new Set((memory?.epics ?? []).filter(e => e.state === 'open').map(e => e.number))
+  const openEpicNumbers = known?.openEpics ?? new Set<number>()
   // How a tree is drawn in a pane: its first level `lead` columns in, each
   // level two more; its rows open in `pane` and are addressed `button`-n.
   // `drawn` counts each issue drawn in the pane so far, so one shown again
@@ -1497,12 +1465,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     </Box>
   )
   // The milestone filter both panes share, and what it is set to.
-  const pk = await read($, picker)
-  const pickedOption = pk?.options.find(o => o.value === pk.pick)
+  const shownFilter = await read($, filterShown)
+  const pickedOption = shownFilter?.options.find(o => sameFilter(o.filter, shownFilter.set))
   // What the milestone filter is set to, for a sentence: "in v1.2",
   // "without a milestone", or nothing for All. The section rules leave it
   // out: the milestone filter shows it.
-  const within = !pk || pk.pick === 'all' ? '' : pk.pick === 'none' ? ' without a milestone' : ` in ${pickedOption?.label ?? ''}`
+  const within = shownFilter ? withinFilter(shownFilter.set) : ''
   // What a pane can do, in its menu (DRAWING.md, The menu): each its words,
   // its hotkey and what pressing it does. Pressing one shuts the menu.
   type Action = { key: string; label: string; hotkey: string; onPress: () => unknown }
@@ -1616,16 +1584,16 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // What a list draws over its rows: the milestone filter's list, open, each
   // milestone with its due date and the one set in bold; or the menu.
   const listOverlay = async (withPicker = true) => {
-    const listOpen = withPicker && pk !== null && pickedOption !== undefined && (await read($, pickerOpen))
+    const listOpen = withPicker && shownFilter !== null && pickedOption !== undefined && (await read($, pickerOpen))
     const today = await $.clock.now()
-    if (listOpen && pk) {
+    if (listOpen && shownFilter) {
       return overlay(
         'choices',
         20,
-        pk.options.map(o => (
-          <Box key={`choice-${o.value}`} height={1} flexShrink={0}>
-            <Button key={`milestone-${o.value}`} plain onPress={() => pickMilestone($, o.value)}>
-              <Text bold={o.value === pk.pick}>
+        shownFilter.options.map(o => (
+          <Box key={`choice-${filterKey(o.filter)}`} height={1} flexShrink={0}>
+            <Button key={`milestone-${filterKey(o.filter)}`} plain onPress={() => setFilter($, o.filter, o.label)}>
+              <Text bold={sameFilter(o.filter, shownFilter.set)}>
                 {fit(o.label, 13).padEnd(14)}
                 {dueDate('due', o.due ?? null, today, { form: 'short', bare: true, width: 6 })}
               </Text>
@@ -1908,7 +1876,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         ...blocks.map((x): [Ref, RefKind] => [x, 'blocks']),
         ...(i.pulls ?? []).map((x): [Ref, RefKind] => [x, 'pull']),
       ]
-      const login = s.kind === 'ready' ? s.login : null
+      const login = known?.me ?? null
       const refStanding = (x: Ref, kind: RefKind): Standing | null =>
         kind === 'pull' || x.state !== 'open'
           ? null
@@ -1993,7 +1961,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // Assign and close, when What's Next may: setup's Actions step says so.
       const acts = s.kind === 'ready' ? s.actions : ({ kind: 'read-only', reason: 'scope' } as const)
       const canAct = acts.kind !== 'read-only'
-      const mine = s.kind === 'ready' && i.assignees.includes(s.login)
+      const me = known?.me ?? null
+      const mine = me !== null && i.assignees.includes(me)
       const closed = i.state === 'closed'
       // Its mark before the number, as the lists draw it; closed a grey ✓.
       // Whom it is with at the right of the first line, dim.
@@ -2153,11 +2122,11 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // first, with how far it is from its own counts; then the last closed.
   if (e.requestId === MILESTONES_PANE && s.kind === 'ready' && r) {
     const now = await $.clock.now()
-    const known = await read($, milestones)
+    const openOnes = await read($, milestones)
     const folds = new Set(await read($, milestonesUnfolded))
     const rows: RenderChildren[] = []
-    if (known === null) rows.push(line('loading', 'Loading the milestones…', { dimColor: true }))
-    if (known !== null && known.length === 0) rows.push(para('none', `No open milestones in ${slug(r)}.`, { dimColor: true }))
+    if (openOnes === null) rows.push(line('loading', 'Loading the milestones…', { dimColor: true }))
+    if (openOnes !== null && openOnes.length === 0) rows.push(para('none', `No open milestones in ${slug(r)}.`, { dimColor: true }))
     const issuesOf = await read($, msIssues)
     const closedOnes = await read($, closedMilestones)
     const showClosed = await read($, closedShown)
@@ -2240,9 +2209,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // A milestone open: its detail in place of the list. One no longer
     // listed after a Refresh shows the list.
     const inDetail = await read($, milestoneOpen)
-    const shownMs = inDetail === null ? undefined : [...(known ?? []), ...closedOnes].find(m => m.title === inDetail)
+    const shownMs = inDetail === null ? undefined : [...(openOnes ?? []), ...closedOnes].find(m => m.title === inDetail)
     if (shownMs) {
-      const isClosed = !(known ?? []).includes(shownMs)
+      const isClosed = !(openOnes ?? []).includes(shownMs)
       const issues = issuesOf[shownMs.title]
       const plain = (issues ?? []).filter(c => c.children === undefined)
       const parts = issues ? forYou(tally(plain)) : []
@@ -2379,7 +2348,6 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const drawn = new Map<number, number>()
     // A milestone's row and, folded open, its issues. A closed one is a grey
     // row ending in ✓, its closed epics grey under its open issues.
-    const depsOn = !(await off($, 'deps'))
     const draw = (ms: Milestone, isClosed: boolean) => {
       const open = folds.has(ms.title)
       // Once asked: its open issues, its epics first, and what there is for
@@ -2388,7 +2356,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const plain = (issues ?? []).filter(c => c.children === undefined)
       // Folded and never asked: only what is known without asking (yours,
       // the rest once every issue not yours was checked).
-      const seen = issues || !memory ? null : milestoneKnown(memory, ms.title, depsOn)
+      const seen = issues || !known ? null : known.forYou(ms.title)
       const parts = issues
         ? forYou(tally(plain))
         : seen
@@ -2408,7 +2376,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         // amber (the milestone is done, close it), or what there is for you.
         // Folded, issues it could not list say so; folded open, the list does.
         const allClosed = ms.total > 0 && ms.closed === ms.total
-        const unknown = !open && (issues === null || (issues === undefined && memory !== null && !memory.listed))
+        const unknown = !open && (issues === null || (issues === undefined && known !== null && !known.listed))
         const under: Part[] = [
           ...duePart('due', ms.due, now, { form: 'short' }),
           ...(allClosed ? [{ text: 'all closed', color: 'warning' }] : unknown ? [{ text: 'issues unknown' }] : parts),
@@ -2444,10 +2412,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>,
       )
     }
-    for (const ms of dueFirst(known ?? [])) draw(ms, false)
+    for (const ms of dueFirst(openOnes ?? [])) draw(ms, false)
     if (closedOnes.length > 0) {
       // The open milestones' rows leave an empty line only without Compact.
-      if ((known ?? []).length > 0) rows.push(...sectionEnd('closed'))
+      if ((openOnes ?? []).length > 0) rows.push(...sectionEnd('closed'))
       rows.push(
         <Box key="closed-rule" flexShrink={0} marginBottom={showClosed ? 0 : gap}>
           {rule('closed-rule-line', 'Closed', [{ text: `${closedOnes.length}` }], {
@@ -2733,7 +2701,7 @@ async function runNext($: EngineInterface, name: string, word: string) {
     await update($, panesOpen, ids => (ids.includes(PANE) ? ids : [...ids, PANE]))
   }
   // The milestone filter starts where you work again: a choice holds until /next.
-  await update($, milestonePick, () => null)
+  await update($, filterChosen, () => null)
   // Epics alone opens nothing until it knows there are epics to show.
   if (want !== 'epics') await openNext("What's Next")
   const r = await refresh($)
@@ -2774,9 +2742,9 @@ async function runNext($: EngineInterface, name: string, word: string) {
   }
   const o = await read($, overview)
   if (s.kind !== 'ready' || !r) return { text: "What's Next needs setting up: see its pane." }
-  const pk = await read($, picker)
-  // The filter's word, but None, which reads as nothing in a sentence.
-  const showing = pk?.pick === 'none' ? 'no milestone' : (pk?.options.find(x => x.value === pk.pick)?.label ?? 'All')
+  const shownFilter = await read($, filterShown)
+  // The filter's word in a sentence.
+  const showing = shownFilter ? filterWord(shownFilter.set) : 'All'
   if (want === 'epics' && ep.kind === 'ok') {
     return { text: `Epics for ${slug(r)}: ${ep.openEpics} open, showing ${showing}.` }
   }
@@ -2787,7 +2755,7 @@ async function runNext($: EngineInterface, name: string, word: string) {
   const scope = o.next ? o.scopes[o.next.number] : undefined
   const where = scope?.kind === 'epic' ? `, in epic #${scope.number}` : scope?.kind === 'milestone' ? `, in ${scope.title}` : ''
   const then = o.next ? `next is #${o.next.number}${where}` : o.blocked.length > 0 ? 'nothing available' : 'nothing else open'
-  const filter = pk && pk.pick !== 'all' ? ` (${showing})` : ''
+  const filter = shownFilter && shownFilter.set.kind !== 'all' ? ` (${showing})` : ''
   return { text: `What's Next is ready for ${slug(r)}: ${o.inProgress.length} in progress, ${then}${filter}.` }
 }
 

@@ -36,6 +36,8 @@ type World = {
   // The issues with the Epic label.
   epics?: unknown[]
   deps?: Record<number, unknown[]>
+  // The issues whose dependencies request fails.
+  failDeps?: number[]
   // Whether the list of open issues answers 500.
   failIssues?: boolean
   // The commands run, each joined by spaces.
@@ -103,6 +105,7 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
       return reply(200, page === 0 ? (w.issues ?? []) : [])
     }
     const dep = /\/issues\/(\d+)\/dependencies$/.exec(url.pathname)
+    if (dep && w.failDeps?.includes(Number(dep[1]))) return reply(500, { message: 'boom' })
     if (dep) return reply(200, w.deps?.[Number(dep[1])] ?? [])
     const one = /\/repos\/boats\/radar\/issues\/(\d+)$/.exec(url.pathname)
     if (one) {
@@ -486,6 +489,26 @@ test('epics in a milestone come first, folded, with their bar and what there is 
   const at = t.indexOf('▱▱▱▱▱▱')
   // Its facts line, as any issue row's, the Epic label too; then what there is for you (#64).
   expect(t.slice(at + 1, at + 13)).toEqual(['   1/4', '        epic · ✎ 1d', 'epic', ' · ', '✎ 1d', '        children ● 1 · ○ 1 · ◌ 1', 'children ', '● 1', ' · ', '○ 1', ' · ', '◌ 1'])
+})
+
+// #88: a children request that fails leaves that epic's children unknown,
+// as in Epics and under a row; the milestone's issues still show.
+test("an epic in a milestone whose children the forge would not say has them unknown, folded and unfolded", TOKEN, async ($, on) => {
+  const clock = world(on, { ...EPIC_WORK, failDeps: [29] })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const pane = await $.ui.mount({ ...MILESTONES_PANE, surface: 'terminal' })
+  await pane.press({ key: 'ms-fold-GitHub' })
+  const t = await texts(pane)
+  expect(t.slice(t.findIndex(x => x.startsWith('#29 ')))).toContain('        children unknown')
+  expect(t.some(x => x.includes('issues unknown'))).toBe(false)
+  // Its children unknown, they are not known to be its: they show in the list.
+  expect(t.filter(x => /^ {2}[●○◌⊘] #\d/.test(x)).map(x => x.slice(4, 7)).sort()).toEqual(['#30', '#33', '#36', '#40'])
+  await pane.press({ key: 'fold-29' })
+  const open = await texts(pane)
+  const at = open.findIndex(x => x.startsWith('#29 '))
+  expect(open[at - 1]).toBe('⊖ ')
+  expect(open.slice(at)).toContain('        children unknown')
 })
 
 test('an epic in a milestone unfolds on its tree, its mark first so Tab stops on it', TOKEN, async ($, on) => {

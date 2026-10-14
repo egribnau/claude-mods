@@ -1,7 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { bar, forYou, groupsFor, inMilestone, markOf, openChildren, pickerOptions, roots, summary, tally, tree, type TreeLine } from '../hooks/epics'
+import { bar, forYou, groupsFor, inMilestone, markOf, openChildren, roots, summary, tally, tree, type TreeLine } from '../hooks/epics'
+import { ALL, filterOptions, NONE, ofMilestone } from '../hooks/filter'
 import type { EpicChild } from '../types'
 
 const EPICS_PANE = {
@@ -50,8 +51,10 @@ const epic = (number: number, title: string, extra: Extra = {}) => issue(number,
 type World = {
   epics?: unknown[]
   milestones?: unknown[]
-  // Each issue's dependencies, as Forgejo lists them.
+  // Each issue's dependencies, as Forgejo lists them, and the issues whose
+  // dependencies request fails.
   deps?: Record<number, unknown[]>
+  failDeps?: number[]
   // The label the Epic label setting names; Forgejo filters by it.
   label?: string
   // Whether alice may push, so the detail offers Assign me and Close.
@@ -100,6 +103,7 @@ function world(on: On, w: World, asked: string[] = [], opened: Opened[] = [], cl
       return reply(200, wanted === (w.label ?? 'epic') && page === 0 ? (w.epics ?? []) : [])
     }
     if (url.pathname.endsWith('/repos/boats/radar/milestones')) return reply(200, page === 0 ? (w.milestones ?? []) : [])
+    if (dep && w.failDeps?.includes(Number(dep[1]))) return reply(500, { message: 'boom' })
     if (dep) return reply(200, (w.deps?.[Number(dep[1])] ?? []).map(shut))
     // An issue itself, for its detail view; the rest of the detail answers 404.
     const one = /\/repos\/boats\/radar\/issues\/(\d+)$/.exec(url.pathname)
@@ -401,6 +405,25 @@ test('starts on the open milestone due first, its epics folded', TOKEN, async ($
   expect(all.find(t => t.text === 'all closed')?.props.color).toBe('warning')
   // A closed epic is grey, not dim: grey means closed.
   expect(all.find(t => t.text.startsWith('   #3 '))?.props.color).toBe('inactive')
+})
+
+// #88: a children request that fails leaves that epic's children unknown,
+// as in a milestone and under a row; the other epics draw as they are.
+test('an epic whose children the forge would not say has them unknown, folded and unfolded; the other epics as they are', TOKEN, async ($, on) => {
+  const clock = world(on, { ...REPO, failDeps: [25] })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  const all = await texts(ui)
+  expect(all.slice(all.findIndex(t => t.startsWith('#25 ')))).toContain('      children unknown')
+  expect(all).toContain('      children ● 2 · ○ 2 · ⊘ 1')
+  expect(all).toContain('      children ● 1 · ○ 1 · ◌ 1 · ⊘ 1')
+  // Unfolded, the tree says it in place of its children.
+  await ui.press({ key: 'fold-25' })
+  const open = await texts(ui)
+  const at = open.findIndex(t => t.startsWith('#25 '))
+  expect(open[at - 1]).toBe('⊖ ')
+  expect(open.slice(at)).toContain('      children unknown')
 })
 
 test('the fold mark folds an epic open: its children with their marks, the closed ones counted', TOKEN, async ($, on) => {
@@ -1023,21 +1046,21 @@ const MS = [
   { title: 'soon', due: '2026-10-10T00:00:00Z', closed: 0, total: 1 },
 ]
 
-test('pickerOptions: open milestones with an epic, due first, then No milestone and All', () => {
-  expect(pickerOptions(MS, [{ milestone: 'undated' }, { milestone: 'later' }, { milestone: null }])).toEqual([
-    { value: 'm:later', label: 'later', due: '2026-12-01T00:00:00Z' },
-    { value: 'm:undated', label: 'undated', due: null },
-    { value: 'none', label: 'None' },
-    { value: 'all', label: 'All' },
+test('filterOptions: open milestones with an epic, due first, then None and All', () => {
+  expect(filterOptions(MS, [{ milestone: 'undated' }, { milestone: 'later' }, { milestone: null }])).toEqual([
+    { filter: { kind: 'milestone', title: 'later' }, label: 'later', due: '2026-12-01T00:00:00Z' },
+    { filter: { kind: 'milestone', title: 'undated' }, label: 'undated', due: null },
+    { filter: { kind: 'none' }, label: 'None' },
+    { filter: { kind: 'all' }, label: 'All' },
   ])
-  expect(pickerOptions(MS, [{ milestone: 'gone' }])).toEqual([{ value: 'all', label: 'All' }])
+  expect(filterOptions(MS, [{ milestone: 'gone' }])).toEqual([{ filter: { kind: 'all' }, label: 'All' }])
 })
 
-test('groupsFor: one milestone, the epics without one, or all of them in picker order', () => {
+test("groupsFor: one milestone, the epics without one, or all of them in the milestone filter's order", () => {
   const epics = [{ milestone: 'later' }, { milestone: 'soon' }, { milestone: null }, { milestone: 'closed one' }]
-  expect(groupsFor('m:soon', MS, epics).map(g => g.milestone?.title ?? null)).toEqual(['soon'])
-  expect(groupsFor('none', MS, epics).map(g => g.epics.length)).toEqual([1])
-  expect(groupsFor('all', MS, epics).map(g => g.milestone?.title ?? null)).toEqual(['soon', 'later', null])
+  expect(groupsFor(ofMilestone('soon'), MS, epics).map(g => g.milestone?.title ?? null)).toEqual(['soon'])
+  expect(groupsFor(NONE, MS, epics).map(g => g.epics.length)).toEqual([1])
+  expect(groupsFor(ALL, MS, epics).map(g => g.milestone?.title ?? null)).toEqual(['soon', 'later', null])
 })
 
 test('Refresh opens the Epics pane once the first open epic exists, without the focus', TOKEN, async ($, on) => {

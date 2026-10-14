@@ -210,12 +210,12 @@ export type Epic = {
 // milestone's due date and how many of its issues are closed.
 export type EpicGroup = { title: string | null; due: string | null; closed: number; total: number; epics: Epic[] }
 
-// The Epics pane: the groups the milestone picked shows, and how many open
+// The Epics pane: the groups the milestone filter shows, and how many open
 // epics the repo has in all, which decides whether the pane opens.
 export type Epics =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  // `held`: the open epics in the pick shown under a parent epic, not at the
+  // `held`: the open epics in the milestone filter shown under a parent epic, not at the
   // top of a group.
   | { kind: 'ok'; groups: EpicGroup[]; openEpics: number; held: Epic[] }
   | { kind: 'error'; message: string }
@@ -237,9 +237,13 @@ export type Milestone = {
   group?: string
 }
 
-// The milestone picker both panes share: what it offers (a milestone's option
-// carries its due date) and which is picked: `m:<title>`, `none` or `all`.
-export type Picker = { options: { value: string; label: string; due?: string | null }[]; pick: string }
+// What the milestone filter is set to: one milestone, None (the issues
+// without one) or All. hooks/filter.ts says what each means.
+export type MilestoneFilter = { kind: 'all' } | { kind: 'none' } | { kind: 'milestone'; title: string }
+
+// The milestone filter both panes share: what it offers (a milestone's
+// option carries its due date) and what it is set to.
+export type FilterShown = { options: { filter: MilestoneFilter; label: string; due?: string | null }[]; set: MilestoneFilter }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -269,11 +273,12 @@ declare module 'claude-code' {
       // What's Next's panes that are open, by id: with more than one the engine draws
       // tabs naming them, so the title rows leave the names out.
       panesOpen: string[]
-      // The milestone the person picked; null starts on the picker's first.
-      milestonePick: string | null
-      // What the picker offers and shows picked, once loaded.
-      picker: Picker | null
-      // Whether the picker's list is open.
+      // What the person set the milestone filter to; null starts it where
+      // you work (docs/whats-next/ORDERING.md).
+      filterChosen: MilestoneFilter | null
+      // What the milestone filter offers and is set to, once loaded.
+      filterShown: FilterShown | null
+      // Whether the milestone filter's list is open.
       pickerOpen: boolean
       // With Debug on: the last action, the requests it sent the forge, and
       // the requests of the session so far.

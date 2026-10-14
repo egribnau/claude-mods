@@ -116,10 +116,13 @@ already makes.
 
 - plugins/whats-next/hooks/next.ts: `order`, the scopes and keys, pure;
   `pickNext` walks its result for blockers.
-- plugins/whats-next/hooks/load.ts: `whatsNext` finds where you work and
-  builds the scopes; `lastClosedIn`, `epicsAbove` (through `parentOf`) and
-  `membersOf` ask and remember per milestone filter setting;
-  `startingPick` is where the milestone filter starts.
+- plugins/whats-next/hooks/load.ts, what is known of the repo (`loadRepo`
+  builds it): its `whatsNext` finds where you work and builds the scopes;
+  `lastClosedIn`, `epicsAbove` (through `parentOf`) and `membersOf` ask and
+  remember per milestone filter setting; its `startingFilter` is where the
+  milestone filter starts.
+- plugins/whats-next/hooks/filter.ts: the milestone filter as a value, and
+  whether an issue is in it.
 - Each forge's tracker: `lastClosed`, `parentOf`, `members` and `nested`.
 
 No other place orders Next or the Queue.

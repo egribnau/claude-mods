@@ -459,6 +459,8 @@ type World = {
   // The issues with the Epic label, and each epic's sub-issues.
   epics?: unknown[]
   subs?: Record<number, unknown[]>
+  // The issues whose sub-issues request fails.
+  failSubs?: number[]
   asked?: { url: string; auth: string | undefined }[]
 }
 
@@ -486,6 +488,7 @@ function world(on: On, w: World) {
     const blockedBy = /^\/repos\/boats\/radar\/issues\/(\d+)\/dependencies\/blocked_by$/.exec(p)
     if (blockedBy) return reply(200, w.deps?.[Number(blockedBy[1])] ?? [])
     const subs = /^\/repos\/boats\/radar\/issues\/(\d+)\/sub_issues$/.exec(p)
+    if (subs && w.failSubs?.includes(Number(subs[1]))) return reply(500, { message: 'Server Error' })
     if (subs) return reply(200, w.subs?.[Number(subs[1])] ?? [])
     if (p === '/repos/boats/radar/issues') {
       if (u.searchParams.get('per_page') === '20') {
@@ -858,6 +861,27 @@ test('github.com: sub-issues with sub-issues of their own fold in the tree, labe
   expect(all).toContain('      ○ #40 Issue 40')
   expect(all).toContain('    ✓ 1 closed')
   expect(subsAsked()).toEqual(['20', '14', '30'])
+})
+
+// #88: a children request that fails leaves that row's children unknown, as
+// in Epics and in a milestone; the rest of the tree is as it is.
+test('github.com: a sub-issue whose sub-issues GitHub would not list unfolds on children unknown', GH, async ($, on) => {
+  const clock = world(on, {
+    mine: [MINE],
+    open: OPEN,
+    milestones: [V12],
+    epics: [epicIssue(20, 'Radar sweep', 'open', ['Epic'], V12)],
+    subs: { 20: [{ ...sub(14), sub_issues_summary: { total: 2, completed: 1, percent_completed: 50 } }, sub(15)] },
+    failSubs: [14],
+  })
+  await clock.set(NOW)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ ...EPICS_PANE, surface: 'terminal' })
+  await ui.press({ key: 'fold-20' })
+  await ui.press({ key: 'fold-14' })
+  const all = await texts(ui)
+  expect(all).toContain('        children unknown')
+  expect(all).toContain('  ○ #15 Issue 15')
 })
 
 // A row that folds keeps its standing (#45): the fold mark takes its colour.

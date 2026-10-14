@@ -2,7 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { TestBody } from 'claude-code/testing'
 
-import { whatsNext, type Memory } from '../hooks/load'
+import { ALL } from '../hooks/filter'
+import { loadRepo } from '../hooks/load'
 import type { Tracker } from '../hooks/tracker'
 import type { IssueRow } from '../types'
 
@@ -338,25 +339,25 @@ test('↦ leaves out the epic that waits on an issue: it is that issue’s epic'
     body: '',
     updated: '2026-10-01T00:00:00Z',
   })
-  const known: Memory = {
-    milestones: [],
-    closedMilestones: [],
-    mine: [],
-    free: [row(29), row(31)],
-    taken: [],
-    listed: true,
-    // Epic #30 and issue #31 both wait on #29.
-    blockers: new Map([
-      [30, [29]],
-      [31, [29]],
-    ]),
-    epics: [{ number: 30, title: 'Epic', state: 'open', milestone: null, due: null }],
-    children: new Map(),
-    lastClosed: new Map(),
-    parents: new Map(),
-    members: new Map(),
-  }
-  const next = await whatsNext({ nested: false } as unknown as Tracker, known, 'all', false)
+  // Epic #30 and issue #31 both wait on #29.
+  const blockers: Record<number, number[]> = { 29: [], 30: [29], 31: [29] }
+  const t = {
+    nested: false,
+    milestones: async () => [],
+    closedMilestones: async () => [],
+    mine: async () => [],
+    open: async () => [row(29), row(31)].map(i => ({ ...i, assignees: [] })),
+    epics: async () => [{ number: 30, title: 'Epic', state: 'open', milestone: null, due: null }],
+    blockers: async (n: number) => blockers[n] ?? [],
+    children: async () => [],
+    members: async () => [],
+    parentOf: async () => null,
+    lastClosed: async () => null,
+  } as unknown as Tracker
+  const known = await loadRepo(t, { me: null, features: { time: true, deps: true, epics: true } })
+  // Epics asks what the epic waits on, What's next what its issues wait on.
+  await known.epics(ALL)
+  const next = await known.whatsNext(ALL)
   expect(next.unblocks[29]).toBe(1)
 })
 

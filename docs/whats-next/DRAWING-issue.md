@@ -163,7 +163,10 @@ say it already and get no word before them. Where all its children are
 closed: `children all closed`,
 amber, as for every epic or milestone still open (DRAWING.md, Counts and
 states; #45, built 0.65.0). With no children, `no children`; not known,
-`children unknown` (`summary`).
+`children unknown` (`summary`). In Epics, a children request that fails
+leaves only that epic's children unknown, folded and open; the other epics
+draw as they are, as in a milestone and under a row (#88, built 0.75.0,
+decided 1).
 
 Drawn by: `forYou` and `summary` (plugins/whats-next/hooks/epics.ts) say
 what, `duePart` the due date before it; `partsLine` draws it, one text.
