@@ -549,7 +549,7 @@ const MILESTONES = [
   { title: 'v1.2', due_on: '2026-10-31T00:00:00Z', open_issues: 3, closed_issues: 9 },
 ]
 type Btn = { key: string; props: Record<string, unknown> }
-const pickerLabel = async (ui: { find: (q: { key: string }) => Promise<unknown> }) =>
+const filterLabel = async (ui: { find: (q: { key: string }) => Promise<unknown> }) =>
   ((await ui.find({ key: 'milestone' })) as Btn | undefined)?.props.label
 
 test('starts where you work, and every section keeps to it', TOKEN, async ($, on) => {
@@ -559,14 +559,14 @@ test('starts where you work, and every section keeps to it', TOKEN, async ($, on
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const all = await texts(ui)
 
-  expect(await pickerLabel(ui)).toBe('v1.2 ▾')
+  expect(await filterLabel(ui)).toBe('v1.2 ▾')
   expect(all).toContain(rule('In progress · 1'))
   expect(all).toContain(rule('Next'))
   expect(all).toContain(rule('Queue'))
   expect(all).toContain('○ #37 Issue 37')
   expect(all.some(t => t.includes('#29') || t.includes('#33'))).toBe(false)
   expect(all.slice(-bottom().length)).toEqual(bottom())
-  // The milestone picked is not repeated under every issue.
+  // The milestone the filter is set to is not repeated under every issue.
   expect(all).toContain('bug · ✎ 2w')
   expect(all.some(t => t.startsWith('v1.2 · '))).toBe(false)
   expect(out).toEqual(expect.objectContaining({ text: "What's Next is ready for boats/radar: 1 in progress, next is #37 (v1.2)." }))
@@ -579,7 +579,7 @@ test('picking No milestone shows the issues without one, and All shows every one
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-none' })
   let all = await texts(ui)
-  expect(await pickerLabel(ui)).toBe('None ▾')
+  expect(await filterLabel(ui)).toBe('None ▾')
   expect(all).toContain(rule('In progress · 0'))
   expect(all).toContain('○ #29 Issue 29')
   expect(all).toContain('⊘ #33 Issue 33')
@@ -592,7 +592,7 @@ test('picking No milestone shows the issues without one, and All shows every one
 })
 
 for (const rows of [60, 12]) {
-  test(`the picker stays in the title row on All and No milestone, ${rows} rows high`, TOKEN, async ($, on) => {
+  test(`the milestone filter stays in the title row on All and No milestone, ${rows} rows high`, TOKEN, async ($, on) => {
     const many = Array.from({ length: 30 }, (_, k) => issue(300 + k, '2026-09-20T00:00:00Z'))
     world(on, { ...REPO, open: [[...(REPO.open?.[0] ?? []), ...many]], milestones: MILESTONES })
     await $.command.run(RUN)
@@ -600,8 +600,8 @@ for (const rows of [60, 12]) {
     for (const [pick, label] of [['none', 'None ▾'], ['all', 'All ▾'], ['m:v1.2', 'v1.2 ▾']] as const) {
       await ui.press({ key: 'milestone' })
       await ui.press({ key: `milestone-${pick}` })
-      expect(await pickerLabel(ui)).toBe(label)
-      // The title row and the picker's list sit in one block that keeps its rows.
+      expect(await filterLabel(ui)).toBe(label)
+      // The title row and the milestone filter's list sit in one block that keeps its rows.
       const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Btn[]
       expect(boxes.find(b => b.key === 'top')?.props.flexShrink).toBe(0)
     }
@@ -612,8 +612,8 @@ test('a milestone with nothing open in it says so', TOKEN, async ($, on) => {
   world(on, { open: [[issue(29, '2026-09-18T09:00:00Z', { milestone: 'v1.2' })]], milestones: MILESTONES })
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  // v1.3 has no open issue, so the picker does not offer it and v1.2 is first.
-  expect(await pickerLabel(ui)).toBe('v1.2 ▾')
+  // v1.3 has no open issue, so the milestone filter does not offer it and v1.2 is first.
+  expect(await filterLabel(ui)).toBe('v1.2 ▾')
   await ui.press({ key: 'milestone' })
   const keys = ((await ui.findAll({ type: 'Button' })) as unknown as Btn[]).map(b => b.key).filter(k => k.startsWith('milestone-'))
   expect(keys).toEqual(['milestone-m:v1.2', 'milestone-all'])
@@ -935,12 +935,12 @@ test('the milestone filter starts where you work, and /next brings it back there
   await $.command.run(RUN)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   // v1.2 is due first, but you closed #41 in v1.3.
-  expect(await pickerLabel(ui)).toBe('v1.3 ▾')
+  expect(await filterLabel(ui)).toBe('v1.3 ▾')
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-all' })
-  expect(await pickerLabel(ui)).toBe('All ▾')
+  expect(await filterLabel(ui)).toBe('All ▾')
   await $.command.run(RUN)
-  expect(await pickerLabel(ui)).toBe('v1.3 ▾')
+  expect(await filterLabel(ui)).toBe('v1.3 ▾')
 })
 
 test('with Compact on, rows have no empty line between them, but each section still ends in one', { options: { token: 'secret', icons: 'text', compact: 'on' } }, async ($, on) => {

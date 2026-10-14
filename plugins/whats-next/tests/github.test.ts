@@ -550,7 +550,7 @@ test("github.com: What's next shows your issue and the free ones, pull requests 
   expect(asked?.some(a => a.url.includes('/timeline') || a.url.includes('dependencies') || a.url.includes('sub_issues'))).toBe(false)
 })
 
-test('github.com: the milestone picker starts on the one due first and narrows to another', GH, async ($, on) => {
+test('github.com: the milestone filter starts on the one due first and narrows to another', GH, async ($, on) => {
   const clock = world(on, { mine: [MINE], open: OPEN, milestones: [V13, V12] })
   await clock.set(NOW)
 

@@ -282,7 +282,7 @@ declare module 'claude-code' {
       // What the milestone filter offers and is set to, once loaded.
       filterShown: FilterShown | null
       // Whether the milestone filter's list is open.
-      pickerOpen: boolean
+      filterOpen: boolean
       // With Debug on: the last action, the requests it sent the forge, and
       // the requests of the session so far.
       requests: { label: string; count: number; total: number } | null

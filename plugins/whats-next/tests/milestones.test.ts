@@ -337,7 +337,7 @@ test('the bottom line counts nothing: it is the rule naming What\'s Next, as in 
   expect(t).toContain("── What's Next ".padEnd(50, '─'))
 })
 
-test('the Milestones pane has Refresh and no milestone picker', TOKEN, async ($, on) => {
+test('the Milestones pane has Refresh and no milestone filter', TOKEN, async ($, on) => {
   const clock = world(on, REPO)
   await clock.set(NOW)
   await $.command.run(RUN)

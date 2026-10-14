@@ -645,7 +645,7 @@ const texts = async (ui: Ui) => ((await ui.findAll({ type: 'Text' })) as { text:
 const keys = async (ui: Ui) => ((await ui.findAll({ type: 'Button' })) as { key: string }[]).map(b => b.key)
 const labelOf = async (ui: Ui, key: string) => ((await ui.find({ key })) as { props: Record<string, unknown> } | undefined)?.props.label
 
-// /next, then #14 picked from What's next.
+// /next, then #14 opened from What's next.
 async function opened($: Engine) {
   await $.command.run(RUN)
   const ui = (await $.ui.mount({ ...PANE, surface: 'terminal' })) as Ui

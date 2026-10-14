@@ -19,8 +19,9 @@ there. Notes for working on a mod live in `docs/<name>/`.
   `Co-Authored-By:` stays.
 - The repo is public: tests, docs, commit messages and the README name no
   real host, repo, person or path of the maintainer (use `git.example.org`,
-  `boats/radar`, `alice`, `jdoe`). The author name in the manifests and the
-  copyright line are the only exceptions.
+  `boats/radar`, `alice`, `jdoe`). The only exceptions: the author name in
+  the manifests, the copyright line, and the public repo and marketplace
+  (`egribnau/claude-mods`, `egribnau-mods`), which users install from.
 - No em-dashes in anything written; commas and periods instead.
 
 ## Mods

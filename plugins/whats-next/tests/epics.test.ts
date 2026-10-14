@@ -663,7 +663,7 @@ const label = async (ui: { find: (q: { key: string }) => Promise<unknown> }) =>
 const choices = async (ui: { findAll: (q: { type: string }) => Promise<unknown[]> }) =>
   ((await ui.findAll({ type: 'Button' })) as Btn[]).map(b => b.key).filter(k => k.startsWith('milestone-'))
 
-test('the picker shows what is picked, and opens on the open milestones with epics, No milestone and All', TOKEN, async ($, on) => {
+test('the milestone filter shows what it is set to, and opens on the open milestones with epics, No milestone and All', TOKEN, async ($, on) => {
   const clock = world(on, REPO)
   await clock.set(NOW)
   await $.command.run(RUN)
@@ -789,7 +789,7 @@ test('Refresh forgets the epics and asks again', TOKEN, async ($, on) => {
   expect(count(asked, u => u.pathname.endsWith('/milestones') && u.searchParams.get('state') === 'open')).toBe(2)
 })
 
-test('who you are comes from the setup check, so a picker switch asks Forgejo nothing', TOKEN, async ($, on) => {
+test('who you are comes from the setup check, so a milestone filter switch asks Forgejo nothing', TOKEN, async ($, on) => {
   const asked: string[] = []
   world(on, REPO, asked)
   await $.command.run(RUN)

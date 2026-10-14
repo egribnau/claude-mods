@@ -47,7 +47,7 @@ const closedMilestones = atom({ plugin: 'whats-next', key: 'closedMilestones' } 
 const panesOpen = atom({ plugin: 'whats-next', key: 'panesOpen' } as const, [])
 const filterChosen = atom({ plugin: 'whats-next', key: 'filterChosen' } as const, null)
 const filterShown = atom({ plugin: 'whats-next', key: 'filterShown' } as const, null)
-const pickerOpen = atom({ plugin: 'whats-next', key: 'pickerOpen' } as const, false)
+const filterOpen = atom({ plugin: 'whats-next', key: 'filterOpen' } as const, false)
 const requests = atom({ plugin: 'whats-next', key: 'requests' } as const, null)
 
 // Every request What's Next sends the forge, counted, so Debug can say what each action cost.
@@ -298,7 +298,7 @@ async function foldIssue($: EngineInterface, n: number) {
 
 // Sets the milestone filter for both panes and closes its list.
 async function setFilter($: EngineInterface, filter: MilestoneFilter, label: string) {
-  await update($, pickerOpen, () => false)
+  await update($, filterOpen, () => false)
   await update($, filterChosen, () => filter)
   if (!known) return
   await counted($, label, async () => {
@@ -360,7 +360,7 @@ async function openIssue($: EngineInterface, pane: string, n: number) {
 async function showHelp($: EngineInterface, pane: string) {
   if ((await placeOf($, pane)).help) return
   await go($, pane, step.help)
-  await update($, pickerOpen, () => false)
+  await update($, filterOpen, () => false)
 }
 
 const leaveHelp = ($: EngineInterface, pane: string) => go($, pane, step.leaveHelp)

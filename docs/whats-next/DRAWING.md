@@ -77,7 +77,7 @@ joins the table:
 | Milestone detail | `9/17 · 8 open`, or `9/17 · all closed` |
 | Milestone detail, the Issues rule | `− Issues · 8 open` |
 | Milestones pane, the Closed rule | `+ Closed · 3` |
-| What's next, section rules | `In progress · 2`; Next and the Queue have none: what the Queue's limit leaves out is the line `and 14 more` under its rows (#57, built 0.67.0) |
+| What's next, section rules | `In progress · 2`; Next and the Queue have none: what the Queue's limit leaves out is the line `and 14 more` under its available rows, above the blocked ones (#57, built 0.67.0) |
 | Bottom lines | none: the bottom of a pane counts nothing, its rows and rules already do; it is a rule (Rules; #65, built 0.74.0, decided 1, 1b and 3; 0.74.2) |
 
 When every issue or child is closed, it says `all closed`, in every place
@@ -102,7 +102,7 @@ right edge. One look everywhere (#45, built 0.65.0):
   added, never a second one (`sectionEnd`, and in What's next `pushRule`;
   #57, built 0.67.0). The places: What's next's sections and Last closed,
   the groups in Epics, Closed in Milestones, the milestone detail's Issues
-  and Description, the issue detail's Description and Last comment, and
+  and Description, the issue detail's Description and Comments, and
   the bottom line of every pane and detail, its empty line a row of its
   own that stays when what is above it is cut (#65, built 0.74.1)
 - a count follows the name after ` · `: `In progress · 2`,
@@ -229,8 +229,8 @@ many rows there are and where each control sits, `measure`
 text is wrapped into lines first, never left to wrap.
 
 Tab and the arrows stop on every control of a detail, top to bottom: in
-the issue detail `[ ← ]`, `[ Prompt ]`, `[ ☰ ]`, each Epic, Blocked by and
-Blocks line, the Description rule, the Comments rule, each comment, and
+the issue detail `[ ← ]`, `[ Prompt ]`, `[ ☰ ]`, the Epic or Parent line, each open
+Children, Blocked by and Blocks line, the Description rule, the Comments rule, each comment, and
 each `… n more lines` under Description or a comment, then the bottom
 line, which opens the repository and does not scroll the detail (#65,
 built 0.74.0).
@@ -251,7 +251,8 @@ cuts the last parts first. Nothing is kept whole at the right: the
 bottom line's version is cut as any part (#65, built 0.74.0, decided 5).
 
 Drawn by: `partsLine` (its parts joined by `joined`) for a facts line, a
-for-you line, the line under a milestone and Debug's line under the bottom
+for-you line (under a folded epic `forChildren`, which leads with a dim
+`children`), the line under a milestone and Debug's line under the bottom
 line, `↯ Refresh: 6 requests · 41 this session`, all dim (#65, built 0.74.0, decided 4);
 `rule` for a rule.
 
@@ -263,7 +264,9 @@ filter opens its list (#62, built 0.68.0, decided 7). Refresh is in it in
 every pane, so the top row holds no Refresh button of its own; in a list
 it and Help are the menu's only lines until the pane has more to do.
 Help (hotkey `h`) is its last line in every pane and view but the help
-page itself (The help page). The issue
+page itself (The help page). Setup has no menu: until it is done its last
+step has `Check Again`, once done its top row a Refresh button (hotkey
+`r`), and its one-time choices only their heading (#97). The issue
 detail keeps `[ Prompt ]` (hotkey `p`) as a button of its own, on the
 top row just before `☰` (#62, built 0.68.0, decided 7b and 7c); Assign Me or
 Unassign Me, Close or Reopen, Open in Browser and Refresh go in the
@@ -322,7 +325,7 @@ themselves, the gutter left empty, never cut (decided 3d).
 
 A new sign or colour joins the help page with the
 place that draws it. The page is a table in plugins/whats-next/hooks/help.ts,
-its signs drawn by the panes' own helpers (`markOf`, `dueDate`, `barText`):
+its signs drawn by the panes' own helpers (`markOf`, `dueDate`, `countText`):
 a colour cannot drift from the panes, only words. tests/help.test.ts checks
 that every glyph `markOf` draws and every term of How an issue stands for
 you is on it (decided 5).

@@ -100,7 +100,7 @@ blocks that show are joined by ` · `, dim, in one text cut once at its end.
 | 2 | due date | it has one (Forgejo and GitLab send it with the lists; GitHub issues have none) | `⧗ 14 Oct`, short form, red once passed, amber within 7 days, dim otherwise (DRAWING.md, Due dates; #45, built 0.66.0) |
 | 3 | milestone | it has one, and the list is not that milestone's (the milestone filter is set to it, or the row is under it) | `v0.3.0`, dim |
 | 4 | labels | it has any | each in its colour, commas dim |
-| 5 | age | always | `✎ 3d`: the pencil (U+270E, one cell), how long ago it was opened, dim (#45, built 0.66.0) |
+| 5 | age | it is known (a row made from a reference may not have it) | `✎ 3d`: the pencil (U+270E, one cell), how long ago it was opened, dim (#45, built 0.66.0) |
 
 Not on the line: when it was updated, how many comments; the detail
 shows both (#45). What blocks the issue and what it blocks are only
@@ -148,7 +148,7 @@ The line under a milestone (#45, built 0.66.0):
 | # | Block | Shown when | Drawn as |
 |---|---|---|---|
 | 1 | due date | it has one | `⧗ 14 Oct`, short form, red, amber or dim |
-| 2 | for you | any of it is known | `● 2 · ○ 2 · ◌ 3 · ⊘ 1`; or `all closed`, amber; or alone `children unknown`, `no children`, `issues unknown` |
+| 2 | for you | any of it is known | `● 2 · ○ 2 · ◌ 3 · ⊘ 1`; or `all closed`, amber; or alone `issues unknown` |
 
 A milestone without a due date says nothing of it there; how many of its
 issues are open is read from its count. Folded, a milestone whose issues
@@ -210,8 +210,8 @@ decided 6). A milestone has no author, so no `✎`.
 Under the rule `− Comments · 3`, which folds the section, the newest
 comment first and unfolded: its line `− jdoe · 2d ago` (the name bold,
 the age dim), then its text, 3 lines and `… n more lines` from 5 lines on, as
-Description. Each older one, newest to oldest, is one dim line,
-`+ jdoe · 5d ago · its first words…`, cut once at its end; pressing it
+Description. Each older one, newest to oldest, is one line,
+`+ jdoe · 5d ago · its first words…`, dim but for the name, bold, cut once at its end; pressing it
 unfolds that comment. The newest is so always right under the rule, and
 no older comment pushes it away (#62, built 0.68.0, decided 4b). No comments:
 no rule.
@@ -229,7 +229,7 @@ Drawn by: `issueView` (hooks/views/issue.tsx), the rule by `rule`.
 
 Epic (or Parent), Children, Blocked by, Blocks and Pull requests in the
 issue detail: one line each,
-`#n title state`, under a dim key in an 11-column gutter, the key on the
+`● #n title`, under a dim key in an 11-column gutter, the key on the
 first line of its group only, as every key of the detail. The keys are
 words, as GitHub and GitLab have them: `Blocked by`, `Blocks`, the longest
 key, 10 columns, setting the gutter (#62, built 0.68.0, decided 2; signs as
@@ -248,11 +248,11 @@ a red number for Blocked by).
 
 | Line | Mark | Number | At the right |
 |---|---|---|---|
-| Epic, open | `●` `◌` `○` as Marks, as its own heading: its children not counted as what blocks it | blue | with others: their name, dim |
-| Children, open | `●` `⊘` `◌` `○` as Marks; blocked dims the line | blue | with others: their name, dim |
+| Epic, open | `●` `⊘` `◌` `○` as Marks, as its own heading: its children not counted as what blocks it | blue | with others, or blocked and held by someone: their name, dim |
+| Children, open | `●` `⊘` `◌` `○` as Marks; blocked dims the mark and title | blue | with others, or blocked and held by someone: their name, dim |
 | Children, closed | none: one grey line for them all, `✓ 3 closed`, in the mark column, as under an unfolded epic in the lists (DRAWING.md, Counts and states) | | nothing |
-| Blocked by, open | `●` `⊘` `◌` `○` as Marks; blocked dims the line | blue, as everywhere: the key says it holds this one up | with others: their name, dim |
-| Blocks, open | `⊘`, the line dim: it waits on this issue, so it stands blocked; `●` green when it is yours (yours wins over blocked) | blue | nothing |
+| Blocked by, open | `●` `⊘` `◌` `○` as Marks; blocked dims the mark and title | blue, as everywhere: the key says it holds this one up | with others, or blocked and held by someone: their name, dim |
+| Blocks, open | while this issue is open, `⊘`, mark and title dim: it waits on this issue, so it stands blocked; `●` green when it is yours (yours wins over blocked). Once this issue is closed, asked as a blocker is: `●` `⊘` `◌` `○` | blue | someone holds it: their name, dim |
 | Pull request, open | none: marks are for issues | blue | nothing |
 | Pull request, merged | none | blue | `merged` purple |
 | any, closed | `✓`, the whole line grey, no strikethrough | grey | nothing |

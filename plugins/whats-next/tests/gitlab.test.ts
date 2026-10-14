@@ -1030,7 +1030,7 @@ test("gitlab.com: What's next shows your issue and the free ones by iid", GL, as
 })
 
 type Btn = { key: string; props: Record<string, unknown> }
-const pickerLabel = async (ui: { find: (q: { key: string }) => Promise<unknown> }) =>
+const filterLabel = async (ui: { find: (q: { key: string }) => Promise<unknown> }) =>
   ((await ui.find({ key: 'milestone' })) as Btn | undefined)?.props.label
 
 test('gitlab.com: the milestone filter starts where you work and narrows to another', GL, async ($, on) => {
@@ -1041,7 +1041,7 @@ test('gitlab.com: the milestone filter starts where you work and narrows to anot
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   let all = await texts(ui)
   // #12, yours, is in v1.2.
-  expect(await pickerLabel(ui)).toBe('v1.2 ▾')
+  expect(await filterLabel(ui)).toBe('v1.2 ▾')
   expect(all).toContain(rule('In progress · 1'))
   expect(all).toContain('○ #14 Issue 14')
   expect(all.some(t => t.includes('#21'))).toBe(false)
@@ -1049,7 +1049,7 @@ test('gitlab.com: the milestone filter starts where you work and narrows to anot
   await ui.press({ key: 'milestone' })
   await ui.press({ key: 'milestone-m:v1.3' })
   all = await texts(ui)
-  expect(await pickerLabel(ui)).toBe('v1.3 ▾')
+  expect(await filterLabel(ui)).toBe('v1.3 ▾')
   expect(all).toContain(rule('In progress · 0'))
   expect(all).toContain('○ #21 Issue 21')
   expect(all.some(t => t.includes('#12') || t.includes('#14'))).toBe(false)

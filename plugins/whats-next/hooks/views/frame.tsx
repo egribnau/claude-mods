@@ -14,7 +14,7 @@ import { go } from '../panes'
 
 // The state the frame reads and writes (the contract in types/index.d.ts).
 const panesOpen = atom({ plugin: 'whats-next', key: 'panesOpen' } as const, [])
-const pickerOpen = atom({ plugin: 'whats-next', key: 'pickerOpen' } as const, false)
+const filterOpen = atom({ plugin: 'whats-next', key: 'filterOpen' } as const, false)
 const treeKids = atom({ plugin: 'whats-next', key: 'treeKids' } as const, {})
 
 // What every view of a pane shares: what it is given to draw with, and the
@@ -97,7 +97,7 @@ export async function frame($: EngineInterface, p: Pane) {
   const counter = d.requestsLine(p.requests)
   // The milestone filter both panes share, and what it is set to.
   const shownFilter = look.filter
-  const pickedOption = shownFilter?.options.find(o => sameFilter(o.filter, shownFilter.set))
+  const setOption = shownFilter?.options.find(o => sameFilter(o.filter, shownFilter.set))
   const refreshAction: Action = { key: 'refresh', label: 'Refresh', hotkey: 'r', onPress: acts.refresh }
   // Help, the last line of every menu but the help page's own.
   const helpAction: Action = { key: 'help', label: 'Help', hotkey: 'h', onPress: acts.showHelp }
@@ -113,7 +113,7 @@ export async function frame($: EngineInterface, p: Pane) {
       key="menu"
       label="☰"
       onPress={async () => {
-        await update($, pickerOpen, () => false)
+        await update($, filterOpen, () => false)
         await go($, id, step.toggleMenu)
       }}
     />
@@ -179,8 +179,8 @@ export async function frame($: EngineInterface, p: Pane) {
   // The title row both lists share: the pane's name when no tab names it,
   // the milestone filter, the menu. Milestones, which shows every milestone,
   // has no milestone filter.
-  const titleRow = (name: string, withPicker = true) => {
-    const shown = withPicker ? pickedOption : undefined
+  const titleRow = (name: string, withFilter = true) => {
+    const shown = withFilter ? setOption : undefined
     return (
       <Box key="top" flexDirection="column" flexShrink={0}>
         <Box key="title" height={1} flexShrink={0}>
@@ -198,7 +198,7 @@ export async function frame($: EngineInterface, p: Pane) {
               hotkey="m"
               onPress={async () => {
                 await go($, id, step.shutMenu)
-                await update($, pickerOpen, o => !o)
+                await update($, filterOpen, o => !o)
               }}
             />
           )}
@@ -210,8 +210,8 @@ export async function frame($: EngineInterface, p: Pane) {
   }
   // What a list draws over its rows: the milestone filter's list, open, each
   // milestone with its due date and the one set in bold; or the menu.
-  const listOverlay = async (withPicker = true) => {
-    const listOpen = withPicker && shownFilter !== null && pickedOption !== undefined && (await read($, pickerOpen))
+  const listOverlay = async (withFilter = true) => {
+    const listOpen = withFilter && shownFilter !== null && setOption !== undefined && (await read($, filterOpen))
     if (listOpen && shownFilter) {
       return overlay(
         'choices',

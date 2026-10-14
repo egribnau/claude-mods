@@ -50,7 +50,8 @@ The available issues of the milestone filter are taken in scopes, in this order:
 A scope with nothing in it is skipped. When the issue you work from is in
 no epic, scopes 1 and 2 are skipped; without an issue to work from,
 only 4 is left, and the order is the keys below over the whole filter. With the
-filter set to a milestone, 3 and 4 hold the same issues, so 4 is empty.
+filter set to a milestone, 3 and 4 hold the same issues, so 3 is left
+out and its issues are in 4: the rules name no milestone.
 
 Next is the first available issue of the first scope that has one.
 The Queue goes on from there, through the same scopes, until its limit
