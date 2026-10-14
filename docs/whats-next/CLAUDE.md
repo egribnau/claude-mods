@@ -14,6 +14,7 @@ repo's CLAUDE.md.
 | settle a drawing rule, an ordering rule or a word in a design review | the four above, and write the decision into the right one at once |
 | add a token setting or a request, or show forge text in a new place | Testing and Hard rules below, and `tests/tokens.test.ts` |
 | change the marketplace name | `docs/whats-next/check-marketplace.sh` |
+| retake the README screenshots, after a change that shows in them | `docs/whats-next/shoot.py`: how to set it up and run it is at its top; the views and their settings are in #53 |
 
 ## Way of working
 
