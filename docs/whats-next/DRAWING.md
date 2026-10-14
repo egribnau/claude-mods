@@ -6,9 +6,15 @@ title, facts line, for-you line and the detail lines that name one) is in
 DRAWING-issue.md. A new view follows these rules; a change to a
 rule changes every place it lists. The words are in TERMINOLOGY.md; this
 file says how and where they are drawn. Each item names what draws it:
-those helpers are in plugins/whats-next/hooks/register.tsx (inside
-`renderPane`) unless named otherwise, and no other place builds that text
-or colour.
+those helpers are in plugins/whats-next/hooks/draw.tsx unless named
+otherwise, and no other place builds that text or colour. They read
+nothing but the look (columns, Compact, Icons, today, the milestone
+filter, unblocks) and their arguments; what a press does is handed in.
+The frame around a view (its top row, the menu, a detail's scrolling) is
+in plugins/whats-next/hooks/views/frame.tsx, and each view is a module of
+its own in hooks/views: `nextView`, `epicsView`, `milestonesView`,
+`issueView`, `helpView`, and setup with its one-time choices.
+`renderPane` in hooks/register.tsx only picks the view.
 
 Words carry the state; colour and the mark repeat it, never replace it.
 Two exceptions: closed is the mark `✓` alone, and an open issue is its
@@ -119,7 +125,7 @@ Drawn by: `rule`, for every rule.
 ## Due dates
 
 These rules hold everywhere a due date is shown, whatever it is the due
-date of. A due date is drawn only by `dueDate` in plugins/whats-next/hooks/register.tsx, its
+date of. A due date is drawn only by `dueDate` in plugins/whats-next/hooks/draw.tsx, its
 words by `dueWords` (for a line that measures itself); `day`, `dueText`
 and `dueLook` are called from nowhere else. A place keeps only what is
 around it (` · ` before it, padding to its column).
@@ -216,7 +222,7 @@ detail to its end, so the text under it (a long comment, unfolded) is
 reached with the arrows too; on the first control, to its top (#62, built
 0.68.3).
 
-Drawn by: `detailFrame`, the rows in a Box as tall as they are, moved up by `marginTop={-offset}` (a placed Box's negative `top` the engine does not keep); how
+Drawn by: `detailFrame` (hooks/views/frame.tsx), the rows in a Box as tall as they are, moved up by `marginTop={-offset}` (a placed Box's negative `top` the engine does not keep); how
 many rows there are and where each control sits, `measure`
 (hooks/measure.ts), so a detail's rows are lines, each one row: a long
 text is wrapped into lines first, never left to wrap.
@@ -276,7 +282,8 @@ the list covers shows again once it shuts. Each line is padded to the
 list's width, so nothing beneath shows through (#62, built 0.68.1).
 
 Drawn by: `menuButton`, `menuLines`, `listOverlay` for a list's, the frame
-by `overlay`, and `hotkeys` for the hidden ones.
+by `overlay`, and `hotkeys` for the hidden ones, all in
+hooks/views/frame.tsx.
 
 Buttons and the lines of the menu name an action in Title Case: every
 word capitalised but a short one inside (in, to, on): `Prompt`,
@@ -319,7 +326,7 @@ a colour cannot drift from the panes, only words. tests/help.test.ts checks
 that every glyph `markOf` draws and every term of How an issue stands for
 you is on it (decided 5).
 
-Drawn by: `helpPage`, in `detailFrame`.
+Drawn by: `helpView` (hooks/views/help.tsx), in `detailFrame`.
 
 ## Words for each state
 

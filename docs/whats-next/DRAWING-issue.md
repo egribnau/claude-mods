@@ -7,8 +7,9 @@ several parts) are in DRAWING.md; the words are in TERMINOLOGY.md. A new
 view follows these rules; a change to a rule changes every place it lists.
 
 Each item names what draws it. Those helpers are in
-plugins/whats-next/hooks/register.tsx (inside `renderPane`) unless named
-otherwise, and no other place builds that text or colour.
+plugins/whats-next/hooks/draw.tsx unless named otherwise, and no other
+place builds that text or colour; they read nothing but the look and their
+arguments (DRAWING.md says what the look holds).
 
 ## Marks
 
@@ -115,7 +116,7 @@ An age is minutes, hours, days, weeks, months or years (`5m`, `3h`, `6d`,
 `3w`, `4mo`, `2y`), from `age`: on the facts line after `✎`, elsewhere
 followed by `ago`.
 
-Drawn by: `issueRow`, its parts through `partsLine`; the due date by `duePart`; labels by `labelTexts`; unblocks from `waiting`, which reads What's next's count, so a pane knows it as far as What's next does.
+Drawn by: `issueRow`, its parts through `partsLine`; the due date by `duePart`; labels by `labelTexts`; unblocks from `waiting`, which reads the look's unblocks, What's next's count, so a pane knows it as far as What's next does.
 
 | Where | Drawn as |
 |---|---|
@@ -222,7 +223,7 @@ and unfolds Description as its rule does (#62, built 0.68.7). Pressing an unfold
 comment's line folds it. Where the forge would not list the comments,
 `comments unknown`, dim, under the rule (#62, built 0.68.0).
 
-Drawn by: the issue detail in `renderPane`, the rule by `rule`.
+Drawn by: `issueView` (hooks/views/issue.tsx), the rule by `rule`.
 
 ## Detail lines that name an issue
 
@@ -292,4 +293,4 @@ Labels, Commits (sha dim, message cut, age dim at the right; three at
 most). A line the forge would not answer for is left out, as is an empty
 one.
 
-Drawn by: `refLine`, under its key by `keyed`.
+Drawn by: `refLine`, under its key by `keyed`, in `issueView` (hooks/views/issue.tsx).

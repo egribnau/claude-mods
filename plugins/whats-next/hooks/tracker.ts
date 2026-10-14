@@ -1,8 +1,11 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { EpicChild, Features, IssueDetail, IssueRow, Setup } from '../types'
+import type { EpicChild, Features, IssueDetail, IssueRow, Repo, Setup } from '../types'
 import type { MilestoneRow } from './epics'
 import type { TokenSetting } from './forge'
+
+// Repo `r` as its owner and name: boats/radar.
+export const slug = (r: Repo) => `${r.owner}/${r.name}`
 
 // One HTTP request, as the pane sends it: counted, so Debug can say what
 // each action cost.
