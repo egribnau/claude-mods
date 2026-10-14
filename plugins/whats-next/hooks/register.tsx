@@ -1,7 +1,7 @@
 import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
-import type { Comment, Detail, DetailFolds, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneFilter, MilestoneIssue, Overview, Ref, Repo, Scope, Setup, TokenSource } from '../types'
+import type { Comment, Detail, DetailFolds, Epic, Epics, IssueDetail, IssueRow, Milestone, MilestoneFilter, MilestoneIssue, Overview, Ref, Repo, Scope, Setup, TokenSource, Where } from '../types'
 import { bar, dueFirst, forYou, inMilestone, isMine, markOf, openChildren, standing, summary, tally, tree, type Folding, type Mark, type Standing, type TreeLine } from './epics'
 import { HELP, type Look, type Sign } from './help'
 import { configureCommand, detect, forgeName, gitlabSetting, tokenFor, type Forge, type TokenSetting } from './forge'
@@ -14,6 +14,8 @@ import { changesSince, loadRepo, noteChange, type Known } from './load'
 import { measure } from './measure'
 import { waitingText } from './next'
 import { message, withoutToken, type Send, type Tracker } from './tracker'
+import * as step from './where'
+import { foldsOf, HERE, issueOf, milestoneOf } from './where'
 
 const PANE = 'next'
 const EPICS_PANE = 'next-epics'
@@ -27,17 +29,10 @@ const version = atom({ plugin: 'whats-next', key: 'version' } as const, null)
 const token = atom({ plugin: 'whats-next', key: 'token' } as const, null)
 const setup = atom({ plugin: 'whats-next', key: 'setup' } as const, { kind: 'checking' })
 const overview = atom({ plugin: 'whats-next', key: 'overview' } as const, { kind: 'idle' })
-// Per pane, keyed by its id: each opens issues in a detail view of its own.
-const picked = atom({ plugin: 'whats-next', key: 'picked' } as const, null)
+// Per pane, keyed by its id: where it is (hooks/where.ts), and what was
+// loaded for the issue it shows. Each pane opens issues in a detail of its own.
+const where = atom({ plugin: 'whats-next', key: 'where' } as const, HERE)
 const detail = atom({ plugin: 'whats-next', key: 'detail' } as const, { kind: 'idle' })
-const trail = atom({ plugin: 'whats-next', key: 'trail' } as const, [])
-// How an issue's detail opens (DRAWING.md, A detail scrolls): Description
-// folded, Comments open on the newest comment alone.
-const FOLDED: DetailFolds = { description: false, commentsShut: false, comments: null, whole: [] }
-const folds = atom({ plugin: 'whats-next', key: 'folds' } as const, FOLDED)
-const scrolled = atom({ plugin: 'whats-next', key: 'scrolled' } as const, 0)
-const menuOpen = atom({ plugin: 'whats-next', key: 'menuOpen' } as const, false)
-const helpShown = atom({ plugin: 'whats-next', key: 'helpShown' } as const, false)
 const iconsChosen = atom({ plugin: 'whats-next', key: 'icons' } as const, null)
 const compactChosen = atom({ plugin: 'whats-next', key: 'compact' } as const, null)
 const epics = atom({ plugin: 'whats-next', key: 'epics' } as const, { kind: 'idle' })
@@ -47,7 +42,6 @@ const issuesFolded = atom({ plugin: 'whats-next', key: 'issuesFolded' } as const
 const descriptionUnfolded = atom({ plugin: 'whats-next', key: 'descriptionUnfolded' } as const, false)
 const milestones = atom({ plugin: 'whats-next', key: 'milestones' } as const, null)
 const milestonesUnfolded = atom({ plugin: 'whats-next', key: 'milestonesUnfolded' } as const, [])
-const milestoneOpen = atom({ plugin: 'whats-next', key: 'milestoneOpen' } as const, null)
 const milestoneError = atom({ plugin: 'whats-next', key: 'milestoneError' } as const, null)
 const msIssues = atom({ plugin: 'whats-next', key: 'milestoneIssues' } as const, {})
 const closedMilestones = atom({ plugin: 'whats-next', key: 'closedMilestones' } as const, [])
@@ -57,6 +51,12 @@ const filterChosen = atom({ plugin: 'whats-next', key: 'filterChosen' } as const
 const filterShown = atom({ plugin: 'whats-next', key: 'filterShown' } as const, null)
 const pickerOpen = atom({ plugin: 'whats-next', key: 'pickerOpen' } as const, false)
 const requests = atom({ plugin: 'whats-next', key: 'requests' } as const, null)
+
+// Where pane `pane` is, and the pane moved by one of where.ts's steps.
+const placeOf = ($: EngineInterface, pane: string): Promise<Where> => read($, memberOf(where, { requestId: pane }))
+const go = ($: EngineInterface, pane: string, change: (w: Where) => Where) => update($, memberOf(where, { requestId: pane }), change)
+// The milestone the Milestones pane has open, null when it shows its list.
+const milestoneShown = async ($: EngineInterface) => milestoneOf(await placeOf($, MILESTONES_PANE))
 
 // Every request What's Next sends the forge, counted, so Debug can say what each action cost.
 let requestsMade = 0
@@ -261,7 +261,7 @@ async function load($: EngineInterface, r: Repo) {
   // the rest cost nothing.
   await update($, msIssues, () => ({}))
   const asked = await read($, milestonesUnfolded)
-  const inDetail = await read($, milestoneOpen)
+  const inDetail = await milestoneShown($)
   for (const title of inDetail === null || asked.includes(inDetail) ? asked : [...asked, inDetail]) await showMilestone($, title)
 }
 
@@ -280,7 +280,7 @@ async function showTree($: EngineInterface) {
   const ep = await read($, epics)
   const trees: Epic[][] = ep.kind === 'ok' ? [ep.groups.flatMap(g => g.epics)] : []
   const issuesOf = await read($, msIssues)
-  const inDetail = await read($, milestoneOpen)
+  const inDetail = await milestoneShown($)
   for (const title of new Set([...(await read($, milestonesUnfolded)), ...(inDetail === null ? [] : [inDetail])])) {
     const issues = issuesOf[title]
     if (issues) trees.push(inMilestone(issues).epics.map(e => ({ number: e.number, title: e.title, state: e.state, due: e.due, children: e.children ?? null })))
@@ -301,11 +301,10 @@ async function foldMilestone($: EngineInterface, title: string) {
 // issues are asked unless a fold already did.
 // It opens as its rules say, every time (DRAWING.md, A detail scrolls).
 async function openMilestone($: EngineInterface, title: string | null) {
-  await update($, milestoneOpen, () => title)
+  await go($, MILESTONES_PANE, w => step.openMilestone(w, title))
   await update($, milestoneError, () => null)
   await update($, issuesFolded, () => false)
   await update($, descriptionUnfolded, () => false)
-  await startOver($, MILESTONES_PANE)
   if (!known || title === null || title in (await read($, msIssues))) return
   await counted($, title, () => showMilestone($, title))
 }
@@ -345,7 +344,10 @@ async function showNext($: EngineInterface) {
   const next = await k.whatsNext(await filterSet($), await $.clock.now())
   await update($, overview, (): Overview => ({ kind: 'ok', ...next }))
   // An issue that is closed, or now with others, closes: What's next shows.
-  await update($, memberOf(picked, { requestId: PANE }), n => (n !== null && k.listedOpen(n) ? n : null))
+  await go($, PANE, w => {
+    const n = issueOf(w)
+    return n !== null && !k.listedOpen(n) ? step.closed(w) : w
+  })
 }
 
 // The epics within the milestone filter, by milestone. What was shown stays
@@ -415,69 +417,46 @@ async function loadDetail($: EngineInterface, r: Repo, pane: string, n: number) 
     const blocked = await blockedOf(issue)
     issuesRead.set(key, issue)
     // Another issue opened while this one loaded wins.
-    if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
+    if (issueOf(await placeOf($, pane)) !== n) return
     await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'ok', issue, parent, blocked, children }))
   } catch (err) {
-    if ((await read($, memberOf(picked, { requestId: pane }))) !== n) return
+    if (issueOf(await placeOf($, pane)) !== n) return
     await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'error', number: n, message: message(err) }))
   }
 }
 
-// Shows issue `n` in the detail view of pane `pane`, or its list again for
-// null. Opened from a list, so Back goes to the list.
-async function openIssue($: EngineInterface, pane: string, n: number | null) {
-  await update($, memberOf(trail, { requestId: pane }), () => [])
-  await showIssue($, pane, n)
+// Opens issue `n` in the detail of pane `pane`, from its list: Back goes to
+// the list.
+async function openIssue($: EngineInterface, pane: string, n: number) {
+  await go($, pane, w => step.open(w, n))
+  await loadIssue($, pane, n)
 }
-
-// How far a pane's detail was scrolled when the help page opened over it,
-// by pane id: Back scrolls it there again.
-const scrolledBeforeHelp = new Map<string, number>()
 
 // The help page (DRAWING.md, The help page) in pane `pane`, over what it
 // shows, at its top; Back returns to that, as it was.
 async function showHelp($: EngineInterface, pane: string) {
-  if (await read($, memberOf(helpShown, { requestId: pane }))) return
-  scrolledBeforeHelp.set(pane, await read($, memberOf(scrolled, { requestId: pane })))
-  await update($, memberOf(menuOpen, { requestId: pane }), () => false)
+  if ((await placeOf($, pane)).help) return
+  await go($, pane, step.help)
   await update($, pickerOpen, () => false)
-  await update($, memberOf(scrolled, { requestId: pane }), () => 0)
-  await update($, memberOf(helpShown, { requestId: pane }), () => true)
 }
 
-async function leaveHelp($: EngineInterface, pane: string) {
-  await update($, memberOf(menuOpen, { requestId: pane }), () => false)
-  await update($, memberOf(scrolled, { requestId: pane }), () => scrolledBeforeHelp.get(pane) ?? 0)
-  await update($, memberOf(helpShown, { requestId: pane }), () => false)
-}
+const leaveHelp = ($: EngineInterface, pane: string) => go($, pane, step.leaveHelp)
 
-// Shows issue `n` in pane `pane`, reached from issue `from`'s Blocked by or
-// Blocks: Back returns to `from`.
-async function followIssue($: EngineInterface, pane: string, from: number, n: number) {
-  await update($, memberOf(trail, { requestId: pane }), t => [...t, from])
-  await showIssue($, pane, n)
+// Opens issue `n` in pane `pane`, reached from the one shown through its
+// Blocked by or Blocks: Back returns to that one.
+async function followIssue($: EngineInterface, pane: string, n: number) {
+  await go($, pane, w => step.follow(w, n))
+  await loadIssue($, pane, n)
 }
 
 // Back: the issue the open one was reached from, else the list.
 async function goBack($: EngineInterface, pane: string) {
-  const t = await read($, memberOf(trail, { requestId: pane }))
-  const from = t.at(-1)
-  if (from === undefined) return openIssue($, pane, null)
-  await update($, memberOf(trail, { requestId: pane }), () => t.slice(0, -1))
-  await showIssue($, pane, from)
+  await go($, pane, step.back)
+  await loadIssue($, pane, issueOf(await placeOf($, pane)))
 }
 
-// Another issue, or the same one again, opens as its rules say: folded
-// where they say so, at its top, its menu shut (DRAWING.md, A detail scrolls).
-async function startOver($: EngineInterface, pane: string) {
-  await update($, memberOf(folds, { requestId: pane }), () => FOLDED)
-  await update($, memberOf(scrolled, { requestId: pane }), () => 0)
-  await update($, memberOf(menuOpen, { requestId: pane }), () => false)
-}
-
-async function showIssue($: EngineInterface, pane: string, n: number | null) {
-  await startOver($, pane)
-  await update($, memberOf(picked, { requestId: pane }), () => n)
+// Loads issue `n` for pane `pane`, which has moved to it; null shows no detail.
+async function loadIssue($: EngineInterface, pane: string, n: number | null) {
   const r = await read($, repo)
   if (n === null || !r) {
     await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
@@ -488,9 +467,7 @@ async function showIssue($: EngineInterface, pane: string, n: number | null) {
 
 // Pane `pane` shows its list again: What's next or the epics.
 async function backToList($: EngineInterface, pane: string) {
-  await startOver($, pane)
-  await update($, memberOf(trail, { requestId: pane }), () => [])
-  await update($, memberOf(picked, { requestId: pane }), () => null)
+  await go($, pane, step.list)
   await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
 }
 
@@ -509,7 +486,7 @@ async function refresh($: EngineInterface): Promise<Repo | null> {
     }
     await followPane($, MILESTONES_PANE, 'Milestones', hadMilestones, ((await read($, milestones)) ?? []).length > 0)
     for (const pane of [PANE, EPICS_PANE, MILESTONES_PANE]) {
-      const n = await read($, memberOf(picked, { requestId: pane }))
+      const n = issueOf(await placeOf($, pane))
       if (n !== null) await loadDetail($, r, pane, n)
       else await update($, memberOf(detail, { requestId: pane }), (): Detail => ({ kind: 'idle' }))
     }
@@ -614,7 +591,7 @@ async function writeIssue(
   issuesRead.delete(key)
   await backToList($, pane)
   for (const p of [PANE, EPICS_PANE, MILESTONES_PANE]) {
-    if ((await read($, memberOf(picked, { requestId: p }))) === n) await loadDetail($, r, p, n)
+    if (issueOf(await placeOf($, p)) === n) await loadDetail($, r, p, n)
   }
   // The issue as the change left it, read again unless a pane just did, so
   // the lists show the change even where the forge's lists lag it.
@@ -813,7 +790,7 @@ const scrollDetail: Hook<'ui.scroll'> = async ($, e, next) => {
   const v = views.get(e.requestId)
   if (!v) return next(e)
   const max = Math.max(0, v.rows - v.room)
-  await update($, memberOf(scrolled, { requestId: e.requestId }), o => Math.min(max, Math.max(0, o + e.by)))
+  await go($, e.requestId, w => step.scrollTo(w, Math.min(max, Math.max(0, w.scroll + e.by))))
   return {}
 }
 
@@ -832,8 +809,7 @@ const focusMoved: Hook<'ui.focus'> = async ($, e, next) => {
   const v = views.get(e.requestId)
   const row = e.element === undefined ? undefined : v?.at.get(e.element)
   if (v && row !== undefined) {
-    const at = memberOf(scrolled, { requestId: e.requestId })
-    const off = await read($, at)
+    const off = (await placeOf($, e.requestId)).scroll
     const rows = [...v.at.values()]
     const to =
       row === Math.max(...rows)
@@ -845,7 +821,7 @@ const focusMoved: Hook<'ui.focus'> = async ($, e, next) => {
             : row >= off + v.room
               ? row - v.room + 1
               : off
-    if (to !== off) await update($, at, () => to)
+    if (to !== off) await go($, e.requestId, w => step.scrollTo(w, to))
   }
   return next(e)
 }
@@ -854,7 +830,7 @@ const focusMoved: Hook<'ui.focus'> = async ($, e, next) => {
 // names itself in its title row again.
 const paneClosed: Hook<'ui.close'> = async ($, e, next) => {
   await update($, panesOpen, ids => ids.filter(id => id !== e.id))
-  await update($, memberOf(helpShown, { requestId: e.id }), () => false)
+  await go($, e.id, step.dropHelp)
   return next(e)
 }
 
@@ -1473,9 +1449,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const refreshAction: Action = { key: 'refresh', label: 'Refresh', hotkey: 'r', onPress: () => counted($, 'Refresh', () => refresh($)) }
   // Help, the last line of every menu but the help page's own.
   const helpAction: Action = { key: 'help', label: 'Help', hotkey: 'h', onPress: () => showHelp($, e.requestId) }
-  const menuShown = await read($, memberOf(menuOpen, e))
+  const menuShown = (await placeOf($, e.requestId)).menu
   const run = (a: Action) => async () => {
-    await update($, memberOf(menuOpen, e), () => false)
+    await go($, e.requestId, step.shutMenu)
     await a.onPress()
   }
   // [ ☰ ] at the right of a top row; it shuts the milestone filter's list,
@@ -1486,7 +1462,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
       label="☰"
       onPress={async () => {
         await update($, pickerOpen, () => false)
-        await update($, memberOf(menuOpen, e), o => !o)
+        await go($, e.requestId, step.toggleMenu)
       }}
     />
   )
@@ -1566,7 +1542,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               label={`${shown.label} ▾`}
               hotkey="m"
               onPress={async () => {
-                await update($, memberOf(menuOpen, e), () => false)
+                await go($, e.requestId, step.shutMenu)
                 await update($, pickerOpen, o => !o)
               }}
             />
@@ -1605,7 +1581,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const detailFrame = async (top: RenderChildren, body: RenderChildren[], over: RenderChildren) => {
     const shown = measure(body)
     const room = Math.max(1, height - measure(top).rows - 1 - 2 - (counter ? 1 : 0))
-    const offset = Math.min(Math.max(0, shown.rows - room), await read($, memberOf(scrolled, e)))
+    const offset = Math.min(Math.max(0, shown.rows - room), (await placeOf($, e.requestId)).scroll)
     views.set(e.requestId, { rows: shown.rows, room, at: shown.at })
     return (
       <Box flexDirection="column" height={height}>
@@ -1644,7 +1620,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // The help page, in place of the list or detail it was opened over
   // (DRAWING.md, The help page): each sign drawn by the helpers the panes
   // draw it with, in a gutter, and its words wrapped under themselves.
-  if (await read($, memberOf(helpShown, e))) {
+  if ((await placeOf($, e.requestId)).help) {
     const now = await $.clock.now()
     const LOOK: Record<Look, Record<string, unknown>> = {
       plain: {},
@@ -1818,12 +1794,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   }
 
   // An issue open: its detail in place of the list.
-  const open = await read($, memberOf(picked, e))
+  const place = await placeOf($, e.requestId)
+  const open = issueOf(place)
   if (s.kind === 'ready' && r && open !== null) {
     const d = await read($, memberOf(detail, e))
     const now = await $.clock.now()
-    const f = await read($, memberOf(folds, e))
-    const setFolds = (change: (x: DetailFolds) => DetailFolds) => () => update($, memberOf(folds, e), change)
+    const f = foldsOf(place)
+    const setFolds = (change: (x: DetailFolds) => DetailFolds) => () => go($, e.requestId, w => step.fold(w, change))
     const body: RenderChildren[] = []
     const gapRow = (key: string) => <Box key={key} height={1} flexShrink={0} />
     // Lines of text that may run long, each cut to the pane: a detail counts its rows.
@@ -1907,7 +1884,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           kind === 'pull' ? (
             row
           ) : (
-            <Button key={`follow-${x.number}`} plain onPress={() => followIssue($, e.requestId, i.number, x.number)}>
+            <Button key={`follow-${x.number}`} plain onPress={() => followIssue($, e.requestId, x.number)}>
               {row}
             </Button>
           ),
@@ -2204,7 +2181,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
     // A milestone open: its detail in place of the list. One no longer
     // listed after a Refresh shows the list.
-    const inDetail = await read($, milestoneOpen)
+    const inDetail = await milestoneShown($)
     const shownMs = inDetail === null ? undefined : [...(openOnes ?? []), ...closedOnes].find(m => m.title === inDetail)
     if (shownMs) {
       const isClosed = !(openOnes ?? []).includes(shownMs)

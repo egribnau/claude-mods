@@ -150,6 +150,20 @@ export type Comment = { author: string; when: string; body: string }
 // alone; `whole`: those of them shown whole, past their first 3 lines.
 export type DetailFolds = { description: boolean; commentsShut: boolean; comments: string[] | null; whole: string[] }
 
+// Where a pane is (hooks/where.ts): what it shows, apart from the data
+// loaded for it. `page`: the list, a milestone's detail, or an issue's
+// detail, with the issues it was reached from through Blocked by and Blocks
+// (`trail`, oldest first; Back returns to the last), what is folded in it,
+// and the milestone detail it was opened from (Back returns there when the
+// trail is empty), else the list. `scroll`: how far the page is scrolled, in
+// rows; `menu`: whether its menu is open; `help`: the help page shown over
+// the page, with the scroll the page had when it opened (Back returns there).
+export type Page =
+  | { kind: 'list' }
+  | { kind: 'milestone'; title: string }
+  | { kind: 'issue'; number: number; trail: number[]; folds: DetailFolds; milestone: string | null }
+export type Where = { page: Page; scroll: number; menu: boolean; help: { scroll: number } | null }
+
 export type Detail =
   | { kind: 'idle' }
   | { kind: 'loading'; number: number }
@@ -256,21 +270,9 @@ declare module 'claude-code' {
       token: TokenSource
       setup: Setup
       overview: Overview
-      // Per pane: the issue open in its detail view, by number (null shows
-      // the pane's list), and what was loaded for it.
-      picked: StateFamily<number | null>
+      // Per pane: where it is, and what was loaded for the issue it shows.
+      where: StateFamily<Where>
       detail: StateFamily<Detail>
-      // Per pane: the issues the open one was reached from through its
-      // Blocked by and Blocks lines, oldest first; Back returns to the last.
-      trail: StateFamily<number[]>
-      // Per pane: what is folded in the issue detail open there.
-      folds: StateFamily<DetailFolds>
-      // Per pane: how far its detail is scrolled, in rows, and whether its
-      // menu is open.
-      scrolled: StateFamily<number>
-      menuOpen: StateFamily<boolean>
-      // Per pane: whether the help page is shown, over its list or detail.
-      helpShown: StateFamily<boolean>
       epics: Epics
       // What's Next's panes that are open, by id: with more than one the engine draws
       // tabs naming them, so the title rows leave the names out.
@@ -298,9 +300,6 @@ declare module 'claude-code' {
       milestones: Milestone[] | null
       // The milestones folded open in the Milestones pane, by title.
       milestonesUnfolded: string[]
-      // The milestone open in its detail on the Milestones pane, by title;
-      // null shows the list.
-      milestoneOpen: string | null
       // Why the forge refused to close or reopen the milestone in its detail;
       // null when nothing was refused.
       milestoneError: string | null
