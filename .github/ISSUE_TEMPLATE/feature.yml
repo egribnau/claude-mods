@@ -1,0 +1,21 @@
+name: Feature request
+description: Something you want What's Next to do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Code is not accepted here, in an issue or a pull request: describe what you want, and if it is taken on, it is built here.
+  - type: textarea
+    id: want
+    attributes:
+      label: What you want to do
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What it is for, and what you do now without it.
+    validations:
+      required: true

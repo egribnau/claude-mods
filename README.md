@@ -1,6 +1,6 @@
 # What's Next for Claude Code
 
-[Install](#install-and-update) · [What's Next](#whats-next) · [In pictures](#in-pictures) · [What it needs](#what-it-needs) · [Settings](#settings)
+[Install](#install-and-update) · [What's Next](#whats-next) · [In pictures](#in-pictures) · [What it needs](#what-it-needs) · [Settings](#settings) · [Bugs and ideas](#bugs-and-ideas)
 
 Your next issue, in a docked pane beside the conversation. From Forgejo,
 GitLab or GitHub.
@@ -118,6 +118,16 @@ app they stay empty, so the pane stops at setup's Token step: What's Next is
 for the terminal.
 
 How the panes draw and order issues is in [docs/whats-next](docs/whats-next).
+
+## Bugs and ideas
+
+Report a bug or ask for a feature in an issue on
+[GitHub](https://github.com/egribnau/claude-mods/issues/new/choose), with
+the bug report or feature request template.
+
+The mods take no code from others: no pull requests, patches or code in
+issues. Code from someone else would have to be checked for anything
+malicious, and that is not done here. Pull requests are closed unread.
 
 ## Working on a mod
 

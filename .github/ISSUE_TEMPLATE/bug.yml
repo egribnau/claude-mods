@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in What's Next does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Leave out tokens, and any host, repo or name you do not want public. Code is not accepted here, in an issue or a pull request: describe the bug, and it is fixed here.
+  - type: dropdown
+    id: forge
+    attributes:
+      label: Forge
+      options:
+        - Forgejo or Gitea
+        - GitLab.com
+        - GitLab, another host
+        - GitHub.com
+        - GitHub Enterprise
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Claude Code's, from `claude --version`, and What's Next's, from `claude plugin list`.
+      placeholder: Claude Code 2.4.1, What's Next 0.75.7
+    validations:
+      required: true
+  - type: textarea
+    id: did
+    attributes:
+      label: What you did
+      description: The steps, from opening the pane.
+    validations:
+      required: true
+  - type: textarea
+    id: showed
+    attributes:
+      label: What the pane showed
+      description: The pane as text, or a screenshot.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
