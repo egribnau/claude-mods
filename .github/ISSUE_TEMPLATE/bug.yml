@@ -23,7 +23,7 @@ body:
     attributes:
       label: Versions
       description: Claude Code's, from `claude --version`, and What's Next's, from `claude plugin list`.
-      placeholder: Claude Code 2.4.1, What's Next 0.75.7
+      placeholder: Claude Code 2.4.1, What's Next 1.0.0
     validations:
       required: true
   - type: textarea

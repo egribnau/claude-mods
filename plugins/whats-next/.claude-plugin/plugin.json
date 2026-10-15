@@ -1,6 +1,6 @@
 {
   "name": "whats-next",
-  "version": "0.75.7",
+  "version": "1.0.0",
   "description": "What's next, epics and milestones from Forgejo, GitLab or GitHub, in docked panes",
   "author": {
     "name": "Erwin Gribnau"
