@@ -1,11 +1,11 @@
 # What's Next for Claude Code
 
+[Install](#install-and-update) · [What's Next](#whats-next) · [In pictures](#in-pictures) · [What it needs](#what-it-needs) · [Settings](#settings)
+
 Your next issue, in a docked pane beside the conversation. From Forgejo,
 GitLab or GitHub.
 
 <img src="docs/whats-next/images/whats-next.png" alt="What's next in a terminal: an issue in progress, the next issue, the Queue and the issue closed last" width="1100">
-
-[Install](#install-and-update) · [What's Next](#whats-next) · [In pictures](#in-pictures) · [What it needs](#what-it-needs) · [Settings](#settings)
 
 - Next: the first available issue, ordered by where you work, its due date
   and how many issues wait on it.
